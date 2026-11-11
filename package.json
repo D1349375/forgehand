@@ -1,0 +1,43 @@
+{
+  "name": "forgehand",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "tsx server/index.ts",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx server/index.ts --production",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "verify:real": "tsx scripts/verify-real-provider.ts",
+    "verify:edit": "tsx scripts/verify-real-edit.ts",
+    "check": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "1.2.2",
+    "dotenv": "18.0.10",
+    "express": "5.3.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "three": "0.187.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/express": "5.0.6",
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/supertest": "7.2.1",
+    "@types/three": "0.187.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "supertest": "7.3.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vite": "8.3.7",
+    "vitest": "5.1.0"
+  }
+}
