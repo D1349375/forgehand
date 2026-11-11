@@ -1,0 +1,3087 @@
+{
+  "schemaVersion": 1,
+  "runs": [
+    {
+      "startedAt": "2026-11-11T06:20:38.722Z",
+      "timezone": "Asia/Taipei",
+      "provider": "codex",
+      "transport": "app-server",
+      "selectedModel": "gpt-6.1-sol",
+      "startupMs": 1936,
+      "timeoutMs": 180000,
+      "baseModel": {
+        "source": "artifacts/real-provider-2026-11-11.json P01",
+        "name": "紅色四腳小桌子",
+        "parts": 5
+      },
+      "runtime": {
+        "node": "v24.22.1",
+        "platform": "win32",
+        "cpu": "Intel(R) Core(TM) i5-7200U CPU @ 2.50GHz",
+        "logicalCpus": 4,
+        "memoryGiB": 8
+      },
+      "measurement": "修改請求送出→provider 回覆→schema 驗證→套用到基準模型並驗證；序列執行、不含瀏覽器繪製。",
+      "results": [
+        {
+          "id": "E1",
+          "kind": "改尺寸＋連動",
+          "instruction": "四條桌腳都加長到 50 公分，桌面跟著升高，桌腳仍要碰到地面",
+          "selected": [],
+          "elapsedMs": 32233,
+          "plan": {
+            "status": "applied",
+            "explanation": "四條桌腿均加長至 50 公分，桌面升高 4 公分，總高為 54 公分；桌腳底端維持接地。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.6,
+                    "y": 0.04,
+                    "z": 0.6
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.52,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg1",
+                "part": {
+                  "id": "leg1",
+                  "name": "左前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.25,
+                    "y": -0.27,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg2",
+                "part": {
+                  "id": "leg2",
+                  "name": "右前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.25,
+                    "y": -0.27,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg3",
+                "part": {
+                  "id": "leg3",
+                  "name": "左後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.25,
+                    "y": -0.27,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg4",
+                "part": {
+                  "id": "leg4",
+                  "name": "右後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.25,
+                    "y": -0.27,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": null,
+            "summary": null,
+            "assumptions": [
+              "使用者指定：紅色、四條腿、小桌子。",
+              "桌面尺寸 0.6 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺為暫定值；高度依使用者指定為 0.50 公尺，桌腳底端接地，桌子總高為 0.54 公尺。",
+              "此為概念模型，不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 5,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top",
+              "leg1",
+              "leg2",
+              "leg3",
+              "leg4"
+            ],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "四條桌腳高約 500 mm（±10）",
+              "passed": true,
+              "detail": [
+                0.5,
+                0.5,
+                0.5,
+                0.5
+              ]
+            },
+            {
+              "name": "桌面底與桌腳頂相接（≤5 mm）",
+              "passed": true,
+              "detail": 4.470348535789981e-10
+            },
+            {
+              "name": "桌腳底仍在地面（≤5 mm）",
+              "passed": true,
+              "detail": 0
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E2",
+          "kind": "改顏色（選取）",
+          "instruction": "把這個改成藍色",
+          "selected": [
+            "top"
+          ],
+          "elapsedMs": 22089,
+          "plan": {
+            "status": "applied",
+            "explanation": "已將選取的桌面改為藍色，四條桌腿維持紅色。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.6,
+                    "y": 0.04,
+                    "z": 0.6
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.48,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2563eb",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": "藍色桌面四腳小桌子",
+            "summary": "藍色矩形桌面搭配四條紅色圓柱形桌腿的小桌子概念模型。",
+            "assumptions": [
+              "使用者指定四條腿的小桌子；本次將選取的桌面改為藍色，桌腿保留紅色。",
+              "桌面尺寸 0.6 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺、高度 0.46 公尺為暫定值,總高約 0.5 公尺。",
+              "此為概念模型,不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 1,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top"
+            ],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "只變更桌面",
+              "passed": true,
+              "detail": {
+                "added": [],
+                "updated": [
+                  "top"
+                ],
+                "removed": [],
+                "modelFields": true
+              }
+            },
+            {
+              "name": "桌面為藍色（色相 200–250°）",
+              "passed": true,
+              "detail": {
+                "h": 232.15002580304798,
+                "s": 0.9564326586049475,
+                "l": 0.42463504844749406
+              }
+            },
+            {
+              "name": "桌腳顏色未變",
+              "passed": true
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E3",
+          "kind": "新增零件",
+          "instruction": "在桌面中央放一個綠色杯子",
+          "selected": [],
+          "elapsedMs": 75806,
+          "plan": {
+            "status": "applied",
+            "explanation": "在桌面中央新增綠色中空杯子，直徑 0.08 公尺、總高 0.10 公尺，附杯底與圓環把手。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "cup",
+                "part": {
+                  "id": "cup",
+                  "name": "綠色中空杯身",
+                  "parentId": "top",
+                  "primitive": "tube",
+                  "dimensions": {
+                    "x": 0.08,
+                    "y": 0.094,
+                    "z": 0.08
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.073,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2EAA4F",
+                  "role": "exterior",
+                  "tubeRatio": 0.85
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "cup_base",
+                "part": {
+                  "id": "cup_base",
+                  "name": "綠色杯底",
+                  "parentId": "cup",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.08,
+                    "y": 0.006,
+                    "z": 0.08
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": -0.05,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2EAA4F",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "cup_handle",
+                "part": {
+                  "id": "cup_handle",
+                  "name": "綠色杯把",
+                  "parentId": "cup",
+                  "primitive": "torus",
+                  "dimensions": {
+                    "x": 0.04,
+                    "y": 0.04,
+                    "z": 0.008
+                  },
+                  "position": {
+                    "x": 0.055,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2EAA4F",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": "紅色四腳小桌與綠色杯子",
+            "summary": "紅色矩形四腳小桌，桌面中央放置一個附圓環把手的綠色中空杯子。",
+            "assumptions": [
+              "使用者指定:紅色、四條腿、小桌子。",
+              "桌面尺寸 0.6 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺、高度 0.46 公尺為暫定值,總高約 0.5 公尺。",
+              "此為概念模型,不代表精確工程尺寸或結構測試。",
+              "新增杯子暫定外徑 0.08 公尺、總高 0.10 公尺，杯壁與杯底厚度均為 0.006 公尺。",
+              "杯把暫定為外徑 0.04 公尺、截面直徑 0.008 公尺的圓環，設於杯身右側。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 3,
+          "changes": {
+            "added": [
+              "cup",
+              "cup_base",
+              "cup_handle"
+            ],
+            "updated": [],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "新增 1 件且原零件未變更",
+              "passed": false,
+              "detail": {
+                "added": [
+                  "cup",
+                  "cup_base",
+                  "cup_handle"
+                ],
+                "updated": [],
+                "removed": [],
+                "modelFields": true
+              }
+            },
+            {
+              "name": "新零件為綠色（色相 90–160°）",
+              "passed": true,
+              "detail": "#2EAA4F"
+            },
+            {
+              "name": "放在桌面上（底部與桌面頂差 ≤5 mm）",
+              "passed": false,
+              "detail": {
+                "bottom": 0.5060000016093253,
+                "tableTop": 0.49999999955296515
+              }
+            },
+            {
+              "name": "靠近桌面中央（水平 ≤30 mm）",
+              "passed": true,
+              "detail": {
+                "x": 0,
+                "y": 0.5529999999999999,
+                "z": 0
+              }
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": false
+        },
+        {
+          "id": "E4",
+          "kind": "刪除零件",
+          "instruction": "把右前桌腿刪掉",
+          "selected": [],
+          "elapsedMs": 21116,
+          "plan": {
+            "status": "applied",
+            "explanation": "已刪除右前桌腿，其餘三條桌腿保持不變。",
+            "operations": [
+              {
+                "op": "remove",
+                "partId": "leg2",
+                "part": null
+              }
+            ],
+            "name": "紅色三腳小桌子",
+            "summary": "紅色矩形桌面搭配三條圓柱形桌腿，右前桌腿已移除。",
+            "assumptions": [
+              "依使用者要求移除右前桌腿，保留紅色桌面及其餘三條桌腿。",
+              "桌面尺寸 0.6 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺、高度 0.46 公尺為暫定值，總高約 0.5 公尺。",
+              "此為概念模型，不代表精確工程尺寸或結構測試；移除桌腿後的穩定性未經驗證。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 1,
+          "changes": {
+            "added": [],
+            "updated": [],
+            "removed": [
+              "leg2"
+            ],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "只刪除右前桌腿",
+              "passed": true,
+              "detail": {
+                "added": [],
+                "updated": [],
+                "removed": [
+                  "leg2"
+                ],
+                "modelFields": true
+              }
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E5",
+          "kind": "相對調整＋連動",
+          "instruction": "桌面再寬一點，四條桌腳跟著往外移，仍然撐在桌面四角下方",
+          "selected": [],
+          "elapsedMs": 35264,
+          "plan": {
+            "status": "applied",
+            "explanation": "桌面左右加寬 20%，由 0.6 增至 0.72 公尺；左右兩側桌腳各向外移 0.06 公尺，維持支撐於桌面四角下方。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.72,
+                    "y": 0.04,
+                    "z": 0.6
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.48,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg1",
+                "part": {
+                  "id": "leg1",
+                  "name": "左前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.31,
+                    "y": -0.25,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg2",
+                "part": {
+                  "id": "leg2",
+                  "name": "右前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.31,
+                    "y": -0.25,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg3",
+                "part": {
+                  "id": "leg3",
+                  "name": "左後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.31,
+                    "y": -0.25,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg4",
+                "part": {
+                  "id": "leg4",
+                  "name": "右後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.31,
+                    "y": -0.25,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": null,
+            "summary": null,
+            "assumptions": [
+              "使用者指定：紅色、四條腿、小桌子。",
+              "桌面左右加寬至 0.72 公尺，尺寸 0.72 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺、高度 0.46 公尺為暫定值，總高約 0.5 公尺。",
+              "此為概念模型，不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 5,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top",
+              "leg1",
+              "leg2",
+              "leg3",
+              "leg4"
+            ],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "桌面變寬",
+              "passed": true,
+              "detail": {
+                "before": 0.6,
+                "after": 0.72
+              }
+            },
+            {
+              "name": "四條桌腳都往外移",
+              "passed": true
+            },
+            {
+              "name": "桌腳仍在桌面範圍內",
+              "passed": true
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E6",
+          "kind": "模糊指令",
+          "instruction": "把它變大",
+          "selected": [],
+          "elapsedMs": 15541,
+          "plan": {
+            "status": "clarify",
+            "explanation": "你想放大整張桌子，還是只放大桌面或桌腿？",
+            "operations": [],
+            "name": null,
+            "summary": null,
+            "assumptions": null
+          },
+          "status": "clarify",
+          "operationCount": 0,
+          "expectedStatus": "clarify",
+          "passed": true
+        }
+      ],
+      "completedAt": "2026-11-11T06:24:02.890Z",
+      "summary": {
+        "cases": 6,
+        "passed": 5,
+        "failed": 0,
+        "minMs": 15541,
+        "maxMs": 75806,
+        "medianMs": 32233,
+        "observedModel": "gpt-6.1-sol"
+      }
+    },
+    {
+      "startedAt": "2026-11-11T06:25:51.790Z",
+      "timezone": "Asia/Taipei",
+      "provider": "claude",
+      "transport": "print",
+      "selectedModel": "claude-sonnet-5-5",
+      "startupMs": 3457,
+      "timeoutMs": 180000,
+      "baseModel": {
+        "source": "artifacts/real-provider-2026-11-11.json P01",
+        "name": "紅色四腳小桌子",
+        "parts": 5
+      },
+      "runtime": {
+        "node": "v24.22.1",
+        "platform": "win32",
+        "cpu": "Intel(R) Core(TM) i5-7200U CPU @ 2.50GHz",
+        "logicalCpus": 4,
+        "memoryGiB": 8
+      },
+      "measurement": "修改請求送出→provider 回覆→schema 驗證→套用到基準模型並驗證；序列執行、不含瀏覽器繪製。",
+      "results": [
+        {
+          "id": "E1",
+          "kind": "改尺寸＋連動",
+          "instruction": "四條桌腳都加長到 50 公分，桌面跟著升高，桌腳仍要碰到地面",
+          "selected": [],
+          "elapsedMs": 13415,
+          "plan": {
+            "status": "applied",
+            "explanation": "四條桌腳高度由 0.46 公尺加長為 0.5 公尺；桌面中心高度由 0.48 公尺升到 0.52 公尺，桌面底面剛好在 0.5 公尺處接住桌腳。桌腳相對桌面的 Y 位置改為 -0.27 公尺，底端仍在地面 (y=0)。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.6,
+                    "y": 0.04,
+                    "z": 0.6
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.52,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg1",
+                "part": {
+                  "id": "leg1",
+                  "name": "左前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.25,
+                    "y": -0.27,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg2",
+                "part": {
+                  "id": "leg2",
+                  "name": "右前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.25,
+                    "y": -0.27,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg3",
+                "part": {
+                  "id": "leg3",
+                  "name": "左後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.25,
+                    "y": -0.27,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg4",
+                "part": {
+                  "id": "leg4",
+                  "name": "右後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.25,
+                    "y": -0.27,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": null,
+            "summary": null,
+            "assumptions": [
+              "使用者指定:紅色、四條腿、小桌子。",
+              "桌面尺寸 0.6 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺為暫定值,高度已依使用者要求改為 0.5 公尺,總高約 0.54 公尺。",
+              "此為概念模型,不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 5,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top",
+              "leg1",
+              "leg2",
+              "leg3",
+              "leg4"
+            ],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "四條桌腳高約 500 mm（±10）",
+              "passed": true,
+              "detail": [
+                0.5,
+                0.5,
+                0.5,
+                0.5
+              ]
+            },
+            {
+              "name": "桌面底與桌腳頂相接（≤5 mm）",
+              "passed": true,
+              "detail": 4.470348535789981e-10
+            },
+            {
+              "name": "桌腳底仍在地面（≤5 mm）",
+              "passed": true,
+              "detail": 0
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E2",
+          "kind": "改顏色（選取）",
+          "instruction": "把這個改成藍色",
+          "selected": [
+            "top"
+          ],
+          "elapsedMs": 8429,
+          "plan": {
+            "status": "applied",
+            "explanation": "已將選取的「桌面」顏色由紅色改為藍色(#2563d9),桌腿維持紅色不變。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.6,
+                    "y": 0.04,
+                    "z": 0.6
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.48,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2563d9",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": null,
+            "summary": null,
+            "assumptions": null
+          },
+          "status": "applied",
+          "operationCount": 1,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top"
+            ],
+            "removed": [],
+            "modelFields": false
+          },
+          "checks": [
+            {
+              "name": "只變更桌面",
+              "passed": true,
+              "detail": {
+                "added": [],
+                "updated": [
+                  "top"
+                ],
+                "removed": [],
+                "modelFields": false
+              }
+            },
+            {
+              "name": "桌面為藍色（色相 200–250°）",
+              "passed": true,
+              "detail": {
+                "h": 230.55883249880782,
+                "s": 0.9480602252564546,
+                "l": 0.3561859907048532
+              }
+            },
+            {
+              "name": "桌腳顏色未變",
+              "passed": true
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E3",
+          "kind": "新增零件",
+          "instruction": "在桌面中央放一個綠色杯子",
+          "selected": [],
+          "elapsedMs": 11105,
+          "plan": {
+            "status": "applied",
+            "explanation": "在桌面中央新增綠色杯子:杯身為中空圓管(外徑 0.08 m、高 0.09 m),下方有厚 0.01 m 的杯底圓盤,放在桌面上表面。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "cupbase",
+                "part": {
+                  "id": "cupbase",
+                  "name": "杯底",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.08,
+                    "y": 0.01,
+                    "z": 0.08
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.025,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#22a447",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "cupbody",
+                "part": {
+                  "id": "cupbody",
+                  "name": "杯身",
+                  "parentId": "top",
+                  "primitive": "tube",
+                  "dimensions": {
+                    "x": 0.08,
+                    "y": 0.09,
+                    "z": 0.08
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.075,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#22a447",
+                  "role": "exterior",
+                  "tubeRatio": 0.85
+                }
+              }
+            ],
+            "name": null,
+            "summary": "紅色矩形桌面搭配四條圓柱形桌腿的小桌子,桌面中央放有一個綠色杯子。",
+            "assumptions": [
+              "使用者指定:紅色、四條腿、小桌子。",
+              "桌面尺寸 0.6 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺、高度 0.46 公尺為暫定值,總高約 0.5 公尺。",
+              "杯子外徑 0.08 公尺、高約 0.1 公尺為暫定值,綠色。",
+              "此為概念模型,不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 2,
+          "changes": {
+            "added": [
+              "cupbase",
+              "cupbody"
+            ],
+            "updated": [],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "新增零件且原零件未變更",
+              "passed": true,
+              "detail": {
+                "added": [
+                  "cupbase",
+                  "cupbody"
+                ],
+                "updated": [],
+                "removed": [],
+                "modelFields": true
+              }
+            },
+            {
+              "name": "新零件皆為綠色（色相 90–160°）",
+              "passed": true,
+              "detail": [
+                "#22a447",
+                "#22a447"
+              ]
+            },
+            {
+              "name": "放在桌面上（組件最低點與桌面頂差 ≤5 mm）",
+              "passed": true,
+              "detail": {
+                "bottom": 0.5000000001117587,
+                "tableTop": 0.49999999955296515
+              }
+            },
+            {
+              "name": "靠近桌面中央（水平 ≤30 mm）",
+              "passed": true,
+              "detail": {
+                "x": 0,
+                "y": 0.550000000949949,
+                "z": 0
+              }
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E4",
+          "kind": "刪除零件",
+          "instruction": "把右前桌腿刪掉",
+          "selected": [],
+          "elapsedMs": 8984,
+          "plan": {
+            "status": "applied",
+            "explanation": "已刪除「右前桌腿」(leg2),其餘桌面與三條桌腿維持不變。",
+            "operations": [
+              {
+                "op": "remove",
+                "partId": "leg2",
+                "part": null
+              }
+            ],
+            "name": null,
+            "summary": "紅色矩形桌面搭配三條圓柱形桌腿的小桌子概念模型(已移除右前桌腿)。",
+            "assumptions": null
+          },
+          "status": "applied",
+          "operationCount": 1,
+          "changes": {
+            "added": [],
+            "updated": [],
+            "removed": [
+              "leg2"
+            ],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "只刪除右前桌腿",
+              "passed": true,
+              "detail": {
+                "added": [],
+                "updated": [],
+                "removed": [
+                  "leg2"
+                ],
+                "modelFields": true
+              }
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E5",
+          "kind": "相對調整＋連動",
+          "instruction": "桌面再寬一點，四條桌腳跟著往外移，仍然撐在桌面四角下方",
+          "selected": [],
+          "elapsedMs": 18398,
+          "plan": {
+            "status": "applied",
+            "explanation": "桌面由 0.6×0.6 加寬為 0.8×0.8 公尺。四條桌腿的 x、z 位置由 ±0.25 改為 ±0.35，距桌邊仍為 0.05 公尺，所以還撐在四角下方。桌腿高度和 y 位置沒有改。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.8,
+                    "y": 0.04,
+                    "z": 0.8
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.48,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg1",
+                "part": {
+                  "id": "leg1",
+                  "name": "左前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.35,
+                    "y": -0.25,
+                    "z": 0.35
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg2",
+                "part": {
+                  "id": "leg2",
+                  "name": "右前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.35,
+                    "y": -0.25,
+                    "z": 0.35
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg3",
+                "part": {
+                  "id": "leg3",
+                  "name": "左後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.35,
+                    "y": -0.25,
+                    "z": -0.35
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg4",
+                "part": {
+                  "id": "leg4",
+                  "name": "右後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.35,
+                    "y": -0.25,
+                    "z": -0.35
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": null,
+            "summary": "紅色矩形桌面(0.8×0.8 公尺)搭配四條圓柱形桌腿的小桌子概念模型。",
+            "assumptions": [
+              "使用者指定:紅色、四條腿、小桌子。",
+              "桌面尺寸 0.8 × 0.04 × 0.8 公尺為暫定值(已由 0.6 加寬)。",
+              "桌腿直徑 0.05 公尺、高度 0.46 公尺為暫定值,總高約 0.5 公尺。",
+              "桌腿距桌面邊緣 0.05 公尺。",
+              "此為概念模型,不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 5,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top",
+              "leg1",
+              "leg2",
+              "leg3",
+              "leg4"
+            ],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "桌面變寬",
+              "passed": true,
+              "detail": {
+                "before": 0.6,
+                "after": 0.8
+              }
+            },
+            {
+              "name": "四條桌腳都往外移",
+              "passed": true
+            },
+            {
+              "name": "桌腳仍在桌面範圍內",
+              "passed": true
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E6",
+          "kind": "模糊指令",
+          "instruction": "把它變大",
+          "selected": [],
+          "elapsedMs": 23725,
+          "plan": {
+            "status": "applied",
+            "explanation": "未選取零件,因此將整張桌子等比例放大 1.5 倍:桌面 0.9×0.06×0.9 公尺、桌腿直徑 0.075 公尺、高 0.69 公尺,總高約 0.75 公尺,桌腿位置同步調整以保持貼合。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.9,
+                    "y": 0.06,
+                    "z": 0.9
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.72,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg1",
+                "part": {
+                  "id": "leg1",
+                  "name": "左前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.075,
+                    "y": 0.69,
+                    "z": 0.075
+                  },
+                  "position": {
+                    "x": -0.375,
+                    "y": -0.375,
+                    "z": 0.375
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg2",
+                "part": {
+                  "id": "leg2",
+                  "name": "右前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.075,
+                    "y": 0.69,
+                    "z": 0.075
+                  },
+                  "position": {
+                    "x": 0.375,
+                    "y": -0.375,
+                    "z": 0.375
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg3",
+                "part": {
+                  "id": "leg3",
+                  "name": "左後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.075,
+                    "y": 0.69,
+                    "z": 0.075
+                  },
+                  "position": {
+                    "x": -0.375,
+                    "y": -0.375,
+                    "z": -0.375
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg4",
+                "part": {
+                  "id": "leg4",
+                  "name": "右後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.075,
+                    "y": 0.69,
+                    "z": 0.075
+                  },
+                  "position": {
+                    "x": 0.375,
+                    "y": -0.375,
+                    "z": -0.375
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": "紅色四腳桌子",
+            "summary": "紅色矩形桌面搭配四條圓柱形桌腿的桌子概念模型(已放大 1.5 倍)。",
+            "assumptions": [
+              "使用者指定:紅色、四條腿。",
+              "「變大」解讀為整體等比例放大 1.5 倍。",
+              "桌面尺寸 0.9 × 0.06 × 0.9 公尺為暫定值。",
+              "桌腿直徑 0.075 公尺、高度 0.69 公尺為暫定值,總高約 0.75 公尺。",
+              "此為概念模型,不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 5,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top",
+              "leg1",
+              "leg2",
+              "leg3",
+              "leg4"
+            ],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [],
+          "expectedStatus": "clarify",
+          "passed": false
+        }
+      ],
+      "completedAt": "2026-11-11T06:27:19.506Z",
+      "summary": {
+        "cases": 6,
+        "passed": 5,
+        "failed": 0,
+        "minMs": 8429,
+        "maxMs": 23725,
+        "medianMs": 13415,
+        "observedModel": "claude-sonnet-5-5"
+      }
+    },
+    {
+      "startedAt": "2026-11-11T06:29:04.084Z",
+      "timezone": "Asia/Taipei",
+      "provider": "claude",
+      "transport": "print",
+      "selectedModel": "claude-sonnet-5-5",
+      "startupMs": 3286,
+      "timeoutMs": 180000,
+      "baseModel": {
+        "source": "artifacts/real-provider-2026-11-11.json P01",
+        "name": "紅色四腳小桌子",
+        "parts": 5
+      },
+      "runtime": {
+        "node": "v24.22.1",
+        "platform": "win32",
+        "cpu": "Intel(R) Core(TM) i5-7200U CPU @ 2.50GHz",
+        "logicalCpus": 4,
+        "memoryGiB": 8
+      },
+      "measurement": "修改請求送出→provider 回覆→schema 驗證→套用到基準模型並驗證；序列執行、不含瀏覽器繪製。",
+      "results": [
+        {
+          "id": "E1",
+          "kind": "改尺寸＋連動",
+          "instruction": "四條桌腳都加長到 50 公分，桌面跟著升高，桌腳仍要碰到地面",
+          "selected": [],
+          "elapsedMs": 17006,
+          "plan": {
+            "status": "applied",
+            "explanation": "四條桌腿高度從 0.46 公尺加長到 0.5 公尺。桌面中心高度從 0.48 公尺升到 0.52 公尺，桌面底部剛好在 0.5 公尺。桌腿的相對位置 y 改為 -0.27，讓腿底維持在地面 y=0。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.6,
+                    "y": 0.04,
+                    "z": 0.6
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.52,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg1",
+                "part": {
+                  "id": "leg1",
+                  "name": "左前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.25,
+                    "y": -0.27,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg2",
+                "part": {
+                  "id": "leg2",
+                  "name": "右前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.25,
+                    "y": -0.27,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg3",
+                "part": {
+                  "id": "leg3",
+                  "name": "左後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.25,
+                    "y": -0.27,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg4",
+                "part": {
+                  "id": "leg4",
+                  "name": "右後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.25,
+                    "y": -0.27,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": null,
+            "summary": null,
+            "assumptions": [
+              "使用者指定:紅色、四條腿、小桌子。",
+              "桌面尺寸 0.6 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺、高度 0.5 公尺(依使用者要求),總高約 0.54 公尺。",
+              "此為概念模型,不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 5,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top",
+              "leg1",
+              "leg2",
+              "leg3",
+              "leg4"
+            ],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "四條桌腳高約 500 mm（±10）",
+              "passed": true,
+              "detail": [
+                0.5,
+                0.5,
+                0.5,
+                0.5
+              ]
+            },
+            {
+              "name": "桌面底與桌腳頂相接（≤5 mm）",
+              "passed": true,
+              "detail": 4.470348535789981e-10
+            },
+            {
+              "name": "桌腳底仍在地面（≤5 mm）",
+              "passed": true,
+              "detail": 0
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E2",
+          "kind": "改顏色（選取）",
+          "instruction": "把這個改成藍色",
+          "selected": [
+            "top"
+          ],
+          "elapsedMs": 9925,
+          "plan": {
+            "status": "applied",
+            "explanation": "已將選取的「桌面」顏色由紅色改為藍色(#2653d9),其餘部分不變。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.6,
+                    "y": 0.04,
+                    "z": 0.6
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.48,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2653d9",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": null,
+            "summary": null,
+            "assumptions": null
+          },
+          "status": "applied",
+          "operationCount": 1,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top"
+            ],
+            "removed": [],
+            "modelFields": false
+          },
+          "checks": [
+            {
+              "name": "只變更桌面",
+              "passed": true,
+              "detail": {
+                "added": [],
+                "updated": [
+                  "top"
+                ],
+                "removed": [],
+                "modelFields": false
+              }
+            },
+            {
+              "name": "桌面為藍色（色相 200–250°）",
+              "passed": true,
+              "detail": {
+                "h": 234.02943016962573,
+                "s": 0.9456508967893463,
+                "l": 0.3566270611190814
+              }
+            },
+            {
+              "name": "桌腳顏色未變",
+              "passed": true
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E3",
+          "kind": "新增零件",
+          "instruction": "在桌面中央放一個綠色杯子",
+          "selected": [],
+          "elapsedMs": 13086,
+          "plan": {
+            "status": "applied",
+            "explanation": "在桌面中央新增綠色杯子:杯底圓盤(直徑 0.08 m、厚 0.008 m)與空心杯身(外徑 0.08 m、高 0.09 m、內外徑比 0.85),放在桌面上表面。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "cupbase",
+                "part": {
+                  "id": "cupbase",
+                  "name": "杯底",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.08,
+                    "y": 0.008,
+                    "z": 0.08
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.024,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2eb82e",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "cupbody",
+                "part": {
+                  "id": "cupbody",
+                  "name": "杯身",
+                  "parentId": "top",
+                  "primitive": "tube",
+                  "dimensions": {
+                    "x": 0.08,
+                    "y": 0.09,
+                    "z": 0.08
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.073,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2eb82e",
+                  "role": "exterior",
+                  "tubeRatio": 0.85
+                }
+              }
+            ],
+            "name": null,
+            "summary": null,
+            "assumptions": [
+              "使用者指定:紅色、四條腿、小桌子。",
+              "桌面尺寸 0.6 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺、高度 0.46 公尺為暫定值,總高約 0.5 公尺。",
+              "杯子外徑 0.08 公尺、高 0.09 公尺、杯底厚 0.008 公尺為暫定值。",
+              "此為概念模型,不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 2,
+          "changes": {
+            "added": [
+              "cupbase",
+              "cupbody"
+            ],
+            "updated": [],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "新增零件且原零件未變更",
+              "passed": true,
+              "detail": {
+                "added": [
+                  "cupbase",
+                  "cupbody"
+                ],
+                "updated": [],
+                "removed": [],
+                "modelFields": true
+              }
+            },
+            {
+              "name": "新零件皆為綠色（色相 90–160°）",
+              "passed": true,
+              "detail": [
+                "#2eb82e",
+                "#2eb82e"
+              ]
+            },
+            {
+              "name": "放在桌面上（組件最低點與桌面頂差 ≤5 mm）",
+              "passed": true,
+              "detail": {
+                "bottom": 0.4999999998100102,
+                "tableTop": 0.49999999955296515
+              }
+            },
+            {
+              "name": "靠近桌面中央（水平 ≤30 mm）",
+              "passed": true,
+              "detail": {
+                "x": 0,
+                "y": 0.5490000007990747,
+                "z": 0
+              }
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E4",
+          "kind": "刪除零件",
+          "instruction": "把右前桌腿刪掉",
+          "selected": [],
+          "elapsedMs": 8062,
+          "plan": {
+            "status": "applied",
+            "explanation": "已刪除「右前桌腿」(leg2),其餘三條桌腿與桌面維持不變。",
+            "operations": [
+              {
+                "op": "remove",
+                "partId": "leg2",
+                "part": null
+              }
+            ],
+            "name": null,
+            "summary": null,
+            "assumptions": null
+          },
+          "status": "applied",
+          "operationCount": 1,
+          "changes": {
+            "added": [],
+            "updated": [],
+            "removed": [
+              "leg2"
+            ],
+            "modelFields": false
+          },
+          "checks": [
+            {
+              "name": "只刪除右前桌腿",
+              "passed": true,
+              "detail": {
+                "added": [],
+                "updated": [],
+                "removed": [
+                  "leg2"
+                ],
+                "modelFields": false
+              }
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E5",
+          "kind": "相對調整＋連動",
+          "instruction": "桌面再寬一點，四條桌腳跟著往外移，仍然撐在桌面四角下方",
+          "selected": [],
+          "elapsedMs": 14912,
+          "plan": {
+            "status": "applied",
+            "explanation": "桌面 X 方向寬度從 0.6 m 加寬到 0.8 m。四條桌腳的 X 位置從 ±0.25 m 外移到 ±0.35 m，Z 位置不變，所以仍在桌面四角下方，離邊緣 0.05 m。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.8,
+                    "y": 0.04,
+                    "z": 0.6
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.48,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg1",
+                "part": {
+                  "id": "leg1",
+                  "name": "左前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.35,
+                    "y": -0.25,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg2",
+                "part": {
+                  "id": "leg2",
+                  "name": "右前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.35,
+                    "y": -0.25,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg3",
+                "part": {
+                  "id": "leg3",
+                  "name": "左後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.35,
+                    "y": -0.25,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg4",
+                "part": {
+                  "id": "leg4",
+                  "name": "右後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.35,
+                    "y": -0.25,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": null,
+            "summary": "紅色加寬矩形桌面搭配四條圓柱形桌腿的小桌子概念模型。",
+            "assumptions": [
+              "使用者指定:紅色、四條腿、小桌子。",
+              "桌面尺寸 0.8 × 0.04 × 0.6 公尺為暫定值(已加寬)。",
+              "桌腿直徑 0.05 公尺、高度 0.46 公尺為暫定值,總高約 0.5 公尺。",
+              "桌腿位於桌面四角內縮約 0.05 公尺處。",
+              "此為概念模型,不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 5,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top",
+              "leg1",
+              "leg2",
+              "leg3",
+              "leg4"
+            ],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "桌面變寬",
+              "passed": true,
+              "detail": {
+                "before": 0.6,
+                "after": 0.8
+              }
+            },
+            {
+              "name": "四條桌腳都往外移",
+              "passed": true
+            },
+            {
+              "name": "桌腳仍在桌面範圍內",
+              "passed": true
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E6",
+          "kind": "模糊指令",
+          "instruction": "把它變大",
+          "selected": [],
+          "elapsedMs": 8867,
+          "plan": {
+            "status": "clarify",
+            "explanation": "請問「它」指的是哪個部分?是要把整張桌子變大,還是只放大特定零件(例如桌面或某條桌腿)?請先選取零件或說明範圍。",
+            "operations": [],
+            "name": null,
+            "summary": null,
+            "assumptions": null
+          },
+          "status": "clarify",
+          "operationCount": 0,
+          "expectedStatus": "clarify",
+          "passed": true
+        }
+      ],
+      "completedAt": "2026-11-11T06:30:19.434Z",
+      "summary": {
+        "cases": 6,
+        "passed": 6,
+        "failed": 0,
+        "minMs": 8062,
+        "maxMs": 17006,
+        "medianMs": 13086,
+        "observedModel": "claude-sonnet-5-5"
+      }
+    },
+    {
+      "startedAt": "2026-11-11T06:30:49.758Z",
+      "timezone": "Asia/Taipei",
+      "provider": "codex",
+      "transport": "app-server",
+      "selectedModel": "gpt-6.1-sol",
+      "startupMs": 3158,
+      "timeoutMs": 180000,
+      "baseModel": {
+        "source": "artifacts/real-provider-2026-11-11.json P01",
+        "name": "紅色四腳小桌子",
+        "parts": 5
+      },
+      "runtime": {
+        "node": "v24.22.1",
+        "platform": "win32",
+        "cpu": "Intel(R) Core(TM) i5-7200U CPU @ 2.50GHz",
+        "logicalCpus": 4,
+        "memoryGiB": 8
+      },
+      "measurement": "修改請求送出→provider 回覆→schema 驗證→套用到基準模型並驗證；序列執行、不含瀏覽器繪製。",
+      "results": [
+        {
+          "id": "E1",
+          "kind": "改尺寸＋連動",
+          "instruction": "四條桌腳都加長到 50 公分，桌面跟著升高，桌腳仍要碰到地面",
+          "selected": [],
+          "elapsedMs": 34464,
+          "plan": {
+            "status": "applied",
+            "explanation": "四條桌腳皆加長至 50 公分，桌面同步升高 4 公分，總高為 54 公分；所有桌腳底端仍接觸地面。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.6,
+                    "y": 0.04,
+                    "z": 0.6
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.52,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg1",
+                "part": {
+                  "id": "leg1",
+                  "name": "左前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.25,
+                    "y": -0.27,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg2",
+                "part": {
+                  "id": "leg2",
+                  "name": "右前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.25,
+                    "y": -0.27,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg3",
+                "part": {
+                  "id": "leg3",
+                  "name": "左後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.25,
+                    "y": -0.27,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg4",
+                "part": {
+                  "id": "leg4",
+                  "name": "右後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.5,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.25,
+                    "y": -0.27,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": null,
+            "summary": null,
+            "assumptions": [
+              "使用者指定：紅色、四條腿、小桌子。",
+              "桌面尺寸 0.6 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺為暫定值；依使用者指定，四條桌腿高度皆為 0.50 公尺，底端接觸地面，桌子總高為 0.54 公尺。",
+              "此為概念模型，不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 5,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top",
+              "leg1",
+              "leg2",
+              "leg3",
+              "leg4"
+            ],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "四條桌腳高約 500 mm（±10）",
+              "passed": true,
+              "detail": [
+                0.5,
+                0.5,
+                0.5,
+                0.5
+              ]
+            },
+            {
+              "name": "桌面底與桌腳頂相接（≤5 mm）",
+              "passed": true,
+              "detail": 4.470348535789981e-10
+            },
+            {
+              "name": "桌腳底仍在地面（≤5 mm）",
+              "passed": true,
+              "detail": 0
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E2",
+          "kind": "改顏色（選取）",
+          "instruction": "把這個改成藍色",
+          "selected": [
+            "top"
+          ],
+          "elapsedMs": 21314,
+          "plan": {
+            "status": "applied",
+            "explanation": "已將選取的桌面改為藍色，四條桌腿維持紅色。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.6,
+                    "y": 0.04,
+                    "z": 0.6
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.48,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2563eb",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": "藍色桌面四腳小桌子",
+            "summary": "藍色矩形桌面搭配四條紅色圓柱形桌腿的小桌子概念模型。",
+            "assumptions": [
+              "桌面依本次要求改為藍色，四條桌腿維持紅色。",
+              "桌面尺寸 0.6 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺、高度 0.46 公尺為暫定值,總高約 0.5 公尺。",
+              "此為概念模型,不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 1,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top"
+            ],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "只變更桌面",
+              "passed": true,
+              "detail": {
+                "added": [],
+                "updated": [
+                  "top"
+                ],
+                "removed": [],
+                "modelFields": true
+              }
+            },
+            {
+              "name": "桌面為藍色（色相 200–250°）",
+              "passed": true,
+              "detail": {
+                "h": 232.15002580304798,
+                "s": 0.9564326586049475,
+                "l": 0.42463504844749406
+              }
+            },
+            {
+              "name": "桌腳顏色未變",
+              "passed": true
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E3",
+          "kind": "新增零件",
+          "instruction": "在桌面中央放一個綠色杯子",
+          "selected": [],
+          "elapsedMs": 81302,
+          "plan": {
+            "status": "applied",
+            "explanation": "已在桌面中央放置綠色杯子，外徑 0.08 公尺、總高 0.10 公尺，附杯底與圓環把手。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "cup",
+                "part": {
+                  "id": "cup",
+                  "name": "綠色杯身",
+                  "parentId": "top",
+                  "primitive": "tube",
+                  "dimensions": {
+                    "x": 0.08,
+                    "y": 0.094,
+                    "z": 0.08
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.073,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#279447",
+                  "role": "exterior",
+                  "tubeRatio": 0.9
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "cupbase",
+                "part": {
+                  "id": "cupbase",
+                  "name": "綠色杯底",
+                  "parentId": "cup",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.08,
+                    "y": 0.006,
+                    "z": 0.08
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": -0.05,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#279447",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "cuphandle",
+                "part": {
+                  "id": "cuphandle",
+                  "name": "綠色杯把",
+                  "parentId": "cup",
+                  "primitive": "torus",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.05,
+                    "z": 0.008
+                  },
+                  "position": {
+                    "x": 0.061,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#279447",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": null,
+            "summary": "紅色矩形桌面搭配四條圓柱形桌腿，桌面中央放置一個帶把手的綠色杯子。",
+            "assumptions": [
+              "使用者指定：紅色、四條腿、小桌子。",
+              "桌面尺寸 0.6 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺、高度 0.46 公尺為暫定值，總高約 0.5 公尺。",
+              "此為概念模型，不代表精確工程尺寸或結構測試。",
+              "杯子尺寸暫定為外徑 0.08 公尺、總高 0.10 公尺、杯壁厚 0.004 公尺、杯底厚 0.006 公尺；把手外徑 0.05 公尺、厚度 0.008 公尺。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 3,
+          "changes": {
+            "added": [
+              "cup",
+              "cupbase",
+              "cuphandle"
+            ],
+            "updated": [],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "新增零件且原零件未變更",
+              "passed": true,
+              "detail": {
+                "added": [
+                  "cup",
+                  "cupbase",
+                  "cuphandle"
+                ],
+                "updated": [],
+                "removed": [],
+                "modelFields": true
+              }
+            },
+            {
+              "name": "新零件皆為綠色（色相 90–160°）",
+              "passed": true,
+              "detail": [
+                "#279447",
+                "#279447",
+                "#279447"
+              ]
+            },
+            {
+              "name": "放在桌面上（組件最低點與桌面頂差 ≤5 mm）",
+              "passed": true,
+              "detail": {
+                "bottom": 0.49999999997392286,
+                "tableTop": 0.49999999955296515
+              }
+            },
+            {
+              "name": "靠近桌面中央（水平 ≤30 mm）",
+              "passed": true,
+              "detail": {
+                "x": 0.02300000063329935,
+                "y": 0.5499999991822987,
+                "z": 0
+              }
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E4",
+          "kind": "刪除零件",
+          "instruction": "把右前桌腿刪掉",
+          "selected": [],
+          "elapsedMs": 24487,
+          "plan": {
+            "status": "applied",
+            "explanation": "已刪除右前桌腿，保留桌面及其餘三條桌腿。",
+            "operations": [
+              {
+                "op": "remove",
+                "partId": "leg2",
+                "part": null
+              }
+            ],
+            "name": "紅色三腳小桌子",
+            "summary": "紅色矩形桌面搭配三條圓柱形桌腿的小桌子概念模型，右前桌腿已移除。",
+            "assumptions": [
+              "使用者指定：紅色小桌子，並刪除右前桌腿，目前保留三條腿。",
+              "桌面尺寸 0.6 × 0.04 × 0.6 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺、高度 0.46 公尺為暫定值，總高約 0.5 公尺。",
+              "此為概念模型，不代表精確工程尺寸或結構測試。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 1,
+          "changes": {
+            "added": [],
+            "updated": [],
+            "removed": [
+              "leg2"
+            ],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "只刪除右前桌腿",
+              "passed": true,
+              "detail": {
+                "added": [],
+                "updated": [],
+                "removed": [
+                  "leg2"
+                ],
+                "modelFields": true
+              }
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E5",
+          "kind": "相對調整＋連動",
+          "instruction": "桌面再寬一點，四條桌腳跟著往外移，仍然撐在桌面四角下方",
+          "selected": [],
+          "elapsedMs": 49521,
+          "plan": {
+            "status": "applied",
+            "explanation": "桌面沿 X 軸加寬 0.10 公尺至 0.70 公尺；四條桌腳各向左右外移 0.05 公尺，維持在桌面四角下方。",
+            "operations": [
+              {
+                "op": "upsert",
+                "partId": "top",
+                "part": {
+                  "id": "top",
+                  "name": "桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.7,
+                    "y": 0.04,
+                    "z": 0.6
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.48,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg1",
+                "part": {
+                  "id": "leg1",
+                  "name": "左前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.3,
+                    "y": -0.25,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg2",
+                "part": {
+                  "id": "leg2",
+                  "name": "右前桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.3,
+                    "y": -0.25,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg3",
+                "part": {
+                  "id": "leg3",
+                  "name": "左後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": -0.3,
+                    "y": -0.25,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              },
+              {
+                "op": "upsert",
+                "partId": "leg4",
+                "part": {
+                  "id": "leg4",
+                  "name": "右後桌腿",
+                  "parentId": "top",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.05,
+                    "y": 0.46,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0.3,
+                    "y": -0.25,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#d92626",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              }
+            ],
+            "name": null,
+            "summary": null,
+            "assumptions": [
+              "使用者指定：紅色、四條腿、小桌子。",
+              "桌面尺寸 0.70 × 0.04 × 0.60 公尺為暫定值。",
+              "桌腿直徑 0.05 公尺、高度 0.46 公尺為暫定值，總高約 0.5 公尺。",
+              "此為概念模型，不代表精確工程尺寸或結構測試。",
+              "加寬僅沿 X 軸，深度維持不變；桌腿中心距相鄰桌邊維持 0.05 公尺。"
+            ]
+          },
+          "status": "applied",
+          "operationCount": 5,
+          "changes": {
+            "added": [],
+            "updated": [
+              "top",
+              "leg1",
+              "leg2",
+              "leg3",
+              "leg4"
+            ],
+            "removed": [],
+            "modelFields": true
+          },
+          "checks": [
+            {
+              "name": "桌面變寬",
+              "passed": true,
+              "detail": {
+                "before": 0.6,
+                "after": 0.7
+              }
+            },
+            {
+              "name": "四條桌腳都往外移",
+              "passed": true
+            },
+            {
+              "name": "桌腳仍在桌面範圍內",
+              "passed": true
+            }
+          ],
+          "expectedStatus": "applied",
+          "passed": true
+        },
+        {
+          "id": "E6",
+          "kind": "模糊指令",
+          "instruction": "把它變大",
+          "selected": [],
+          "elapsedMs": 10009,
+          "plan": {
+            "status": "clarify",
+            "explanation": "請問要放大桌面、桌腿，還是整張桌子？",
+            "operations": [],
+            "name": null,
+            "summary": null,
+            "assumptions": null
+          },
+          "status": "clarify",
+          "operationCount": 0,
+          "expectedStatus": "clarify",
+          "passed": true
+        }
+      ],
+      "completedAt": "2026-11-11T06:34:34.184Z",
+      "summary": {
+        "cases": 6,
+        "passed": 6,
+        "failed": 0,
+        "minMs": 10009,
+        "maxMs": 81302,
+        "medianMs": 34464,
+        "observedModel": "gpt-6.1-sol"
+      }
+    }
+  ]
+}

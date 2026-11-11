@@ -1,0 +1,1739 @@
+{
+  "schemaVersion": 1,
+  "runs": [
+    {
+      "startedAt": "2026-11-10T07:57:50.051Z",
+      "timezone": "Asia/Taipei",
+      "provider": "codex",
+      "selectedModel": "CLI default",
+      "cliVersion": "codex-cli 0.166.0-alpha.5.1",
+      "timeoutMs": 180000,
+      "concurrency": 2,
+      "generatorVersion": "controlled-primitives/1.0.0",
+      "runtime": {
+        "node": "v24.15.0",
+        "platform": "win32",
+        "architecture": "x64",
+        "cpu": "Intel(R) Core(TM) i5-7200U CPU @ 2.50GHz",
+        "logicalCpus": 4,
+        "memoryGiB": 8,
+        "zod": "4.6.7",
+        "three": "0.187.0"
+      },
+      "measurement": "真實provider呼叫→完整schema/階層驗證→Node中建立科技透視幾何；不包含瀏覽器、GPU、攝影機或首幀。",
+      "limitations": [
+        "自動名稱/顏色/配置初篩不能代替人工外形判讀。",
+        "approximation資料在此僅離線驗證；實際UI仍須使用者先確認。",
+        "首個可辨識草案與完整首稿的瀏覽器時間未在本腳本量測，因此不能用此數據宣稱5秒/15秒目標通過。",
+        "CLI default只代表未指定--model；未從私密使用者設定推斷實際模型。"
+      ],
+      "results": [
+        {
+          "id": "P01",
+          "prompt": "一個紅色、有四條腿的小桌子",
+          "requestedHumanChecks": [
+            "紅色桌面",
+            "四條獨立桌腿",
+            "桌面在桌腿上方"
+          ],
+          "status": "ready",
+          "source": "codex",
+          "model": "gpt-6.1-sol",
+          "elapsedMs": 20931,
+          "schemaValid": true,
+          "geometryValid": true,
+          "partCount": 5,
+          "meshes": 5,
+          "edgeObjects": 5,
+          "triangles": 60,
+          "dimensionsMetres": {
+            "x": 0.6000000238418579,
+            "y": 0.4499999931082129,
+            "z": 0.4000000059604645
+          },
+          "automaticChecks": [
+            {
+              "label": "四條獨立桌腿",
+              "passed": true,
+              "evidence": "[\"左前桌腿\",\"右前桌腿\",\"左後桌腿\",\"右後桌腿\"]"
+            },
+            {
+              "label": "紅色桌面",
+              "passed": true,
+              "evidence": "[{\"name\":\"紅色桌面\",\"color\":\"#E53935\"}]"
+            },
+            {
+              "label": "桌面中心高於桌腿中心",
+              "passed": true,
+              "evidence": "[{\"name\":\"紅色桌面\",\"y\":0.435},{\"name\":\"左前桌腿\",\"y\":0.21},{\"name\":\"右前桌腿\",\"y\":0.21},{\"name\":\"左後桌腿\",\"y\":0.21},{\"name\":\"右後桌腿\",\"y\":0.21}]"
+            }
+          ],
+          "automaticChecksPassed": true,
+          "humanSemanticReview": "pending-browser-review",
+          "firstRecognizableDraftMs": null,
+          "completeBrowserDraftMs": null,
+          "requiresUserApproval": false,
+          "design": {
+            "status": "ready",
+            "explanation": "以一個紅色長方形桌面與四條紅色桌腿呈現小桌子。",
+            "model": {
+              "schemaVersion": "1.0",
+              "name": "紅色四腳小桌",
+              "summary": "紅色長方形小桌，四條直桌腿分別位於桌面下方四角。",
+              "units": "m",
+              "assumptions": [
+                "使用者指定紅色與四條桌腿；未指定桌面形狀與尺寸。",
+                "暫定採長方形桌面，長0.6公尺、寬0.4公尺，桌子總高0.45公尺；桌面厚0.03公尺，桌腿截面為0.04公尺見方。"
+              ],
+              "parts": [
+                {
+                  "id": "top",
+                  "name": "紅色桌面",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.6,
+                    "y": 0.03,
+                    "z": 0.4
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.435,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#E53935",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "leg1",
+                  "name": "左前桌腿",
+                  "parentId": "top",
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.04,
+                    "y": 0.42,
+                    "z": 0.04
+                  },
+                  "position": {
+                    "x": -0.25,
+                    "y": -0.225,
+                    "z": 0.15
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#E53935",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "leg2",
+                  "name": "右前桌腿",
+                  "parentId": "top",
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.04,
+                    "y": 0.42,
+                    "z": 0.04
+                  },
+                  "position": {
+                    "x": 0.25,
+                    "y": -0.225,
+                    "z": 0.15
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#E53935",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "leg3",
+                  "name": "左後桌腿",
+                  "parentId": "top",
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.04,
+                    "y": 0.42,
+                    "z": 0.04
+                  },
+                  "position": {
+                    "x": -0.25,
+                    "y": -0.225,
+                    "z": -0.15
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#E53935",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "leg4",
+                  "name": "右後桌腿",
+                  "parentId": "top",
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.04,
+                    "y": 0.42,
+                    "z": 0.04
+                  },
+                  "position": {
+                    "x": 0.25,
+                    "y": -0.225,
+                    "z": -0.15
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#E53935",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P02",
+          "prompt": "請給我一張矮凳，圓圓的藍色座面下面平均分布三隻腳",
+          "requestedHumanChecks": [
+            "藍色圓座面",
+            "三條腿",
+            "矮凳比例"
+          ],
+          "status": "ready",
+          "source": "codex",
+          "model": "gpt-6.1-sol",
+          "elapsedMs": 22900,
+          "schemaValid": true,
+          "geometryValid": true,
+          "partCount": 4,
+          "meshes": 4,
+          "edgeObjects": 4,
+          "triangles": 768,
+          "dimensionsMetres": {
+            "x": 0.3400000035762787,
+            "y": 0.3200000057369471,
+            "z": 0.3400000035762787
+          },
+          "automaticChecks": [
+            {
+              "label": "三條獨立腳",
+              "passed": true,
+              "evidence": "[\"第一隻凳腳\",\"第二隻凳腳\",\"第三隻凳腳\"]"
+            },
+            {
+              "label": "藍色圓座面",
+              "passed": true,
+              "evidence": "[{\"name\":\"藍色圓形座面\",\"primitive\":\"cylinder\",\"color\":\"#2478D4\"}]"
+            }
+          ],
+          "automaticChecksPassed": true,
+          "humanSemanticReview": "pending-browser-review",
+          "firstRecognizableDraftMs": null,
+          "completeBrowserDraftMs": null,
+          "requiresUserApproval": false,
+          "design": {
+            "status": "ready",
+            "explanation": "以圓柱座面與等角分布的三隻腳，呈現藍色圓座矮凳。",
+            "model": {
+              "schemaVersion": "1.0",
+              "name": "藍色圓座三腳矮凳",
+              "summary": "圓形藍色座面下方配置三隻直腳，沿圓周每隔 120 度平均分布。",
+              "units": "m",
+              "assumptions": [
+                "使用者指定圓形藍色座面與平均分布的三隻腳。",
+                "暫定凳高 0.32 公尺、座面直徑 0.34 公尺、厚度 0.05 公尺；腳長 0.27 公尺、直徑 0.04 公尺。",
+                "三隻腳的中心距座面中心軸 0.115 公尺，暫定為垂直直腳，並沿用座面的藍色。"
+              ],
+              "parts": [
+                {
+                  "id": "seat",
+                  "name": "藍色圓形座面",
+                  "parentId": null,
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.34,
+                    "y": 0.05,
+                    "z": 0.34
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.295,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2478D4",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "leg1",
+                  "name": "第一隻凳腳",
+                  "parentId": "seat",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.04,
+                    "y": 0.27,
+                    "z": 0.04
+                  },
+                  "position": {
+                    "x": 0.115,
+                    "y": -0.16,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2478D4",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "leg2",
+                  "name": "第二隻凳腳",
+                  "parentId": "seat",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.04,
+                    "y": 0.27,
+                    "z": 0.04
+                  },
+                  "position": {
+                    "x": -0.0575,
+                    "y": -0.16,
+                    "z": 0.099593
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2478D4",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "leg3",
+                  "name": "第三隻凳腳",
+                  "parentId": "seat",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.04,
+                    "y": 0.27,
+                    "z": 0.04
+                  },
+                  "position": {
+                    "x": -0.0575,
+                    "y": -0.16,
+                    "z": -0.099593
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2478D4",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P03",
+          "prompt": "帶兩個鏡頭與側邊電池的裝置",
+          "requestedHumanChecks": [
+            "兩個獨立鏡頭",
+            "側邊電池",
+            "外殼與分件"
+          ],
+          "status": "ready",
+          "source": "codex",
+          "model": "gpt-6.1-sol",
+          "elapsedMs": 23967,
+          "schemaValid": true,
+          "geometryValid": true,
+          "partCount": 6,
+          "meshes": 6,
+          "edgeObjects": 6,
+          "triangles": 6552,
+          "dimensionsMetres": {
+            "x": 0.19499999828636647,
+            "y": 0.09000000357627869,
+            "z": 0.07100000046752393
+          },
+          "automaticChecks": [
+            {
+              "label": "兩個鏡頭主件（依名稱初篩）",
+              "passed": false,
+              "evidence": "[\"左鏡頭外筒\",\"左鏡頭前緣\",\"右鏡頭外筒\",\"右鏡頭前緣\"]"
+            },
+            {
+              "label": "側邊電池有橫向偏移",
+              "passed": true,
+              "evidence": "[{\"name\":\"右側電池模組\",\"x\":0.0975}]"
+            }
+          ],
+          "automaticChecksPassed": false,
+          "humanSemanticReview": "pending-browser-review",
+          "firstRecognizableDraftMs": null,
+          "completeBrowserDraftMs": null,
+          "requiresUserApproval": false,
+          "design": {
+            "status": "ready",
+            "explanation": "以長方體機身、兩個圓柱鏡頭及側邊電池呈現裝置概念；尺寸與配置為暫定。",
+            "model": {
+              "schemaVersion": "1.0",
+              "name": "雙鏡頭側置電池裝置",
+              "summary": "青色長方體裝置，正面並排兩個鏡頭，右側裝有電池模組。",
+              "units": "m",
+              "assumptions": [
+                "使用者指定兩個鏡頭與側邊電池；未指定尺寸、顏色或用途。",
+                "暫定機身寬0.16公尺、高0.09公尺、深0.05公尺；兩個鏡頭並排於正面，電池位於右側。",
+                "未指定顏色，所有部件採用預設青色；鏡頭以圓柱與圓環表達外觀。",
+                "電池模組暫定寬0.035公尺、高0.07公尺、深0.045公尺；未建模內部配置或固定機構。"
+              ],
+              "parts": [
+                {
+                  "id": "body",
+                  "name": "裝置機身",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.16,
+                    "y": 0.09,
+                    "z": 0.05
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.045,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#59d9e8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "lens_l",
+                  "name": "左鏡頭外筒",
+                  "parentId": "body",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.044,
+                    "y": 0.018,
+                    "z": 0.044
+                  },
+                  "position": {
+                    "x": -0.039,
+                    "y": 0,
+                    "z": 0.034
+                  },
+                  "rotation": {
+                    "x": 90,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#59d9e8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "rim_l",
+                  "name": "左鏡頭前緣",
+                  "parentId": "body",
+                  "primitive": "torus",
+                  "dimensions": {
+                    "x": 0.044,
+                    "y": 0.044,
+                    "z": 0.004
+                  },
+                  "position": {
+                    "x": -0.039,
+                    "y": 0,
+                    "z": 0.044
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#59d9e8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "lens_r",
+                  "name": "右鏡頭外筒",
+                  "parentId": "body",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.044,
+                    "y": 0.018,
+                    "z": 0.044
+                  },
+                  "position": {
+                    "x": 0.039,
+                    "y": 0,
+                    "z": 0.034
+                  },
+                  "rotation": {
+                    "x": 90,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#59d9e8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "rim_r",
+                  "name": "右鏡頭前緣",
+                  "parentId": "body",
+                  "primitive": "torus",
+                  "dimensions": {
+                    "x": 0.044,
+                    "y": 0.044,
+                    "z": 0.004
+                  },
+                  "position": {
+                    "x": 0.039,
+                    "y": 0,
+                    "z": 0.044
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#59d9e8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "battery",
+                  "name": "右側電池模組",
+                  "parentId": "body",
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.035,
+                    "y": 0.07,
+                    "z": 0.045
+                  },
+                  "position": {
+                    "x": 0.0975,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#59d9e8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P04",
+          "prompt": "我想放一個綠色的筆筒，頂部是開的，底部封住，別做成實心柱子",
+          "requestedHumanChecks": [
+            "綠色",
+            "可見中空筒壁",
+            "封閉底部"
+          ],
+          "status": "ready",
+          "source": "codex",
+          "model": "gpt-6.1-sol",
+          "elapsedMs": 12931,
+          "schemaValid": true,
+          "geometryValid": true,
+          "partCount": 2,
+          "meshes": 2,
+          "edgeObjects": 2,
+          "triangles": 704,
+          "dimensionsMetres": {
+            "x": 0.07999999821186066,
+            "y": 0.10000000144354998,
+            "z": 0.07999999821186066
+          },
+          "automaticChecks": [
+            {
+              "label": "以真正中空tube建立綠色筒壁",
+              "passed": true,
+              "evidence": "[{\"name\":\"綠色中空筒壁\",\"primitive\":\"tube\",\"color\":\"#43A047\"},{\"name\":\"綠色封閉底板\",\"primitive\":\"cylinder\",\"color\":\"#43A047\"}]"
+            },
+            {
+              "label": "有額外底部幾何",
+              "passed": true,
+              "evidence": "[\"綠色封閉底板\"]"
+            }
+          ],
+          "automaticChecksPassed": true,
+          "humanSemanticReview": "pending-browser-review",
+          "firstRecognizableDraftMs": null,
+          "completeBrowserDraftMs": null,
+          "requiresUserApproval": false,
+          "design": {
+            "status": "ready",
+            "explanation": "以綠色中空圓管搭配底板構成筆筒，頂部開放、底部封閉，保留可放筆的內部空間。",
+            "model": {
+              "schemaVersion": "1.0",
+              "name": "綠色開口筆筒",
+              "summary": "由中空筒壁與封閉底板組成的綠色圓形筆筒。",
+              "units": "m",
+              "assumptions": [
+                "使用者指定綠色、頂部開放與底部封閉。",
+                "未指定尺寸，暫定外徑 0.08 公尺、總高 0.10 公尺、壁厚與底厚各 0.003 公尺。"
+              ],
+              "parts": [
+                {
+                  "id": "wall",
+                  "name": "綠色中空筒壁",
+                  "parentId": null,
+                  "primitive": "tube",
+                  "dimensions": {
+                    "x": 0.08,
+                    "y": 0.097,
+                    "z": 0.08
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.0515,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#43A047",
+                  "role": "exterior",
+                  "tubeRatio": 0.925
+                },
+                {
+                  "id": "base",
+                  "name": "綠色封閉底板",
+                  "parentId": null,
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.08,
+                    "y": 0.003,
+                    "z": 0.08
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.0015,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#43A047",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P05",
+          "prompt": "橘色底座上接一根細柱，柱頂放一顆紫色球，球的左右各伸一根白色短桿",
+          "requestedHumanChecks": [
+            "橘底紫球白桿",
+            "左右兩根桿",
+            "相對位置符合描述"
+          ],
+          "status": "ready",
+          "source": "codex",
+          "model": "gpt-6.1-sol",
+          "elapsedMs": 21776,
+          "schemaValid": true,
+          "geometryValid": true,
+          "partCount": 5,
+          "meshes": 5,
+          "edgeObjects": 5,
+          "triangles": 2608,
+          "dimensionsMetres": {
+            "x": 0.29800000357627865,
+            "y": 0.4779999982118606,
+            "z": 0.23999999463558197
+          },
+          "automaticChecks": [
+            {
+              "label": "橘底與紫球",
+              "passed": true,
+              "evidence": "[{\"name\":\"橘色圓形底座\",\"color\":\"#F28C28\",\"primitive\":\"cylinder\"},{\"name\":\"青色細柱\",\"color\":\"#59d9e8\",\"primitive\":\"cylinder\"},{\"name\":\"柱頂紫色球\",\"color\":\"#8E44CC\",\"primitive\":\"sphere\"},{\"name\":\"左側白色短桿\",\"color\":\"#FFFFFF\",\"primitive\":\"cylinder\"},{\"name\":\"右側白色短桿\",\"color\":\"#FFFFFF\",\"primitive\":\"cylinder\"}]"
+            },
+            {
+              "label": "兩根白色短桿分居左右",
+              "passed": true,
+              "evidence": "[{\"name\":\"左側白色短桿\",\"x\":-0.104},{\"name\":\"右側白色短桿\",\"x\":0.104}]"
+            }
+          ],
+          "automaticChecksPassed": true,
+          "humanSemanticReview": "pending-browser-review",
+          "firstRecognizableDraftMs": null,
+          "completeBrowserDraftMs": null,
+          "requiresUserApproval": false,
+          "design": {
+            "status": "ready",
+            "explanation": "以橘色底座、細柱、紫色球及左右各一根白色短桿組成概念模型。",
+            "model": {
+              "schemaVersion": "1.0",
+              "name": "紫球雙側短桿立柱",
+              "summary": "橘色圓形底座支撐細柱，柱頂為紫色球體，球體左右各接一根白色水平短桿。",
+              "units": "m",
+              "assumptions": [
+                "使用者指定底座為橘色、球體為紫色、左右短桿為白色；細柱未指定顏色，採預設青色。",
+                "尺寸為暫定：底座直徑0.24公尺、厚0.04公尺；細柱直徑0.018公尺、長0.32公尺；球體直徑0.12公尺；兩根短桿各直徑0.014公尺、長0.09公尺。",
+                "底座採圓柱形，左右短桿沿水平方向對稱排列；接合處略微重疊以呈現連接。"
+              ],
+              "parts": [
+                {
+                  "id": "base",
+                  "name": "橘色圓形底座",
+                  "parentId": null,
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.24,
+                    "y": 0.04,
+                    "z": 0.24
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.02,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#F28C28",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "post",
+                  "name": "青色細柱",
+                  "parentId": "base",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.018,
+                    "y": 0.32,
+                    "z": 0.018
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.179,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#59d9e8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "ball",
+                  "name": "柱頂紫色球",
+                  "parentId": "post",
+                  "primitive": "sphere",
+                  "dimensions": {
+                    "x": 0.12,
+                    "y": 0.12,
+                    "z": 0.12
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.219,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#8E44CC",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "left",
+                  "name": "左側白色短桿",
+                  "parentId": "ball",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.014,
+                    "y": 0.09,
+                    "z": 0.014
+                  },
+                  "position": {
+                    "x": -0.104,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 90
+                  },
+                  "color": "#FFFFFF",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "right",
+                  "name": "右側白色短桿",
+                  "parentId": "ball",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.014,
+                    "y": 0.09,
+                    "z": 0.014
+                  },
+                  "position": {
+                    "x": 0.104,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 90
+                  },
+                  "color": "#FFFFFF",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P06",
+          "prompt": "做個長方形灰色盒子，正面上下疊兩顆黃色旋鈕，左邊加一支藍色提把",
+          "requestedHumanChecks": [
+            "灰色盒體",
+            "上下兩旋鈕",
+            "左側藍把手"
+          ],
+          "status": "ready",
+          "source": "codex",
+          "model": "gpt-6.1-sol",
+          "elapsedMs": 31125,
+          "schemaValid": true,
+          "geometryValid": true,
+          "partCount": 6,
+          "meshes": 6,
+          "edgeObjects": 6,
+          "triangles": 432,
+          "dimensionsMetres": {
+            "x": 0.37750000614672896,
+            "y": 0.2199999988079071,
+            "z": 0.18999999787658453
+          },
+          "automaticChecks": [
+            {
+              "label": "兩個黃色旋鈕上下排列",
+              "passed": true,
+              "evidence": "[{\"name\":\"上方黃色旋鈕\",\"y\":0.055},{\"name\":\"下方黃色旋鈕\",\"y\":-0.055}]"
+            },
+            {
+              "label": "左側藍色把手",
+              "passed": true,
+              "evidence": "[{\"name\":\"藍色提把握桿\",\"color\":\"#2474E8\",\"x\":-0.215},{\"name\":\"藍色提把上連接桿\",\"color\":\"#2474E8\",\"x\":-0.17625},{\"name\":\"藍色提把下連接桿\",\"color\":\"#2474E8\",\"x\":-0.17625}]"
+            }
+          ],
+          "automaticChecksPassed": true,
+          "humanSemanticReview": "pending-browser-review",
+          "firstRecognizableDraftMs": null,
+          "completeBrowserDraftMs": null,
+          "requiresUserApproval": false,
+          "design": {
+            "status": "ready",
+            "explanation": "以灰色長方形盒體、正面上下排列的兩顆黃色旋鈕，以及左側藍色提把組成。",
+            "model": {
+              "schemaVersion": "1.0",
+              "name": "灰色雙旋鈕提盒",
+              "summary": "灰色長方形盒子，正面有兩顆上下堆疊的黃色旋鈕，左側設藍色提把。",
+              "units": "m",
+              "assumptions": [
+                "使用者指定盒體為灰色、兩顆旋鈕為黃色、左側提把為藍色。",
+                "未指定尺寸，暫定盒體寬0.30公尺、高0.22公尺、深0.16公尺。",
+                "以正Z方向為正面；左側指面向正面時的左邊。",
+                "旋鈕暫定直徑0.042公尺、突出0.03公尺；提把以三段長方體構成，內部保留握持空間。"
+              ],
+              "parts": [
+                {
+                  "id": "body",
+                  "name": "灰色長方形盒體",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.3,
+                    "y": 0.22,
+                    "z": 0.16
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#808080",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "knob_top",
+                  "name": "上方黃色旋鈕",
+                  "parentId": "body",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.042,
+                    "y": 0.03,
+                    "z": 0.042
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.055,
+                    "z": 0.095
+                  },
+                  "rotation": {
+                    "x": 90,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#FFD529",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "knob_bottom",
+                  "name": "下方黃色旋鈕",
+                  "parentId": "body",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.042,
+                    "y": 0.03,
+                    "z": 0.042
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": -0.055,
+                    "z": 0.095
+                  },
+                  "rotation": {
+                    "x": 90,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#FFD529",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "handle_grip",
+                  "name": "藍色提把握桿",
+                  "parentId": "body",
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.025,
+                    "y": 0.15,
+                    "z": 0.03
+                  },
+                  "position": {
+                    "x": -0.215,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2474E8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "handle_top",
+                  "name": "藍色提把上連接桿",
+                  "parentId": "body",
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.0525,
+                    "y": 0.025,
+                    "z": 0.03
+                  },
+                  "position": {
+                    "x": -0.17625,
+                    "y": 0.0625,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2474E8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "handle_bottom",
+                  "name": "藍色提把下連接桿",
+                  "parentId": "body",
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.0525,
+                    "y": 0.025,
+                    "z": 0.03
+                  },
+                  "position": {
+                    "x": -0.17625,
+                    "y": -0.0625,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2474E8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P07",
+          "prompt": "一座只有兩層的白色小書架，每層之間留空，左右用兩片板支撐",
+          "requestedHumanChecks": [
+            "白色",
+            "兩層水平板",
+            "左右支撐與空隙"
+          ],
+          "status": "ready",
+          "source": "codex",
+          "model": "gpt-6.1-sol",
+          "elapsedMs": 38773,
+          "schemaValid": true,
+          "geometryValid": true,
+          "partCount": 4,
+          "meshes": 4,
+          "edgeObjects": 4,
+          "triangles": 48,
+          "dimensionsMetres": {
+            "x": 0.5999999995529651,
+            "y": 0.6499999878555536,
+            "z": 0.25
+          },
+          "automaticChecks": [
+            {
+              "label": "兩層白色水平板",
+              "passed": true,
+              "evidence": "[{\"name\":\"下層置物板\",\"y\":0.03},{\"name\":\"上層置物板\",\"y\":0.64}]"
+            }
+          ],
+          "automaticChecksPassed": true,
+          "humanSemanticReview": "pending-browser-review",
+          "firstRecognizableDraftMs": null,
+          "completeBrowserDraftMs": null,
+          "requiresUserApproval": false,
+          "design": {
+            "status": "ready",
+            "explanation": "以兩片白色層板及左右各一片白色側板組成，兩層之間保持開放留空。",
+            "model": {
+              "schemaVersion": "1.0",
+              "name": "白色兩層小書架",
+              "summary": "只有兩層的白色小書架，左右以兩片側板支撐，層間無隔板。",
+              "units": "m",
+              "assumptions": [
+                "使用者指定白色、兩層層板、層間留空，以及左右各一片支撐板。",
+                "未指定尺寸，暫定整體寬0.60公尺、深0.25公尺、高0.65公尺，板厚0.02公尺。",
+                "兩層解讀為兩片水平置物層板；採無背板設計。"
+              ],
+              "parts": [
+                {
+                  "id": "side_l",
+                  "name": "左側支撐板",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.02,
+                    "y": 0.65,
+                    "z": 0.25
+                  },
+                  "position": {
+                    "x": -0.29,
+                    "y": 0.325,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#FFFFFF",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "side_r",
+                  "name": "右側支撐板",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.02,
+                    "y": 0.65,
+                    "z": 0.25
+                  },
+                  "position": {
+                    "x": 0.29,
+                    "y": 0.325,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#FFFFFF",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "shelf_low",
+                  "name": "下層置物板",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.56,
+                    "y": 0.02,
+                    "z": 0.25
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.03,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#FFFFFF",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "shelf_up",
+                  "name": "上層置物板",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.56,
+                    "y": 0.02,
+                    "z": 0.25
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.64,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#FFFFFF",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P08",
+          "prompt": "把一個青色圓環豎在黑色方形底座上，圓環中央懸一個小紅球",
+          "requestedHumanChecks": [
+            "豎直圓環",
+            "黑色方底",
+            "中心紅球"
+          ],
+          "status": "ready",
+          "source": "codex",
+          "model": "gpt-6.1-sol",
+          "elapsedMs": 21880,
+          "schemaValid": true,
+          "geometryValid": true,
+          "partCount": 3,
+          "meshes": 3,
+          "edgeObjects": 3,
+          "triangles": 4924,
+          "dimensionsMetres": {
+            "x": 0.4000000059604645,
+            "y": 0.46000000230967997,
+            "z": 0.36000001430511475
+          },
+          "automaticChecks": [
+            {
+              "label": "青色圓環豎直",
+              "passed": true,
+              "evidence": "[{\"name\":\"直立青色圓環\",\"rotation\":{\"x\":0,\"y\":0,\"z\":0}}]"
+            },
+            {
+              "label": "黑色方底與紅球",
+              "passed": true,
+              "evidence": "[{\"name\":\"黑色方形底座\",\"color\":\"#000000\",\"primitive\":\"box\"},{\"name\":\"直立青色圓環\",\"color\":\"#59d9e8\",\"primitive\":\"torus\"},{\"name\":\"中央懸浮小紅球\",\"color\":\"#E53935\",\"primitive\":\"sphere\"}]"
+            }
+          ],
+          "automaticChecksPassed": true,
+          "humanSemanticReview": "pending-browser-review",
+          "firstRecognizableDraftMs": null,
+          "completeBrowserDraftMs": null,
+          "requiresUserApproval": false,
+          "design": {
+            "status": "ready",
+            "explanation": "以直立青色圓環、黑色方形底座與中央小紅球組成；紅球以概念性懸浮方式呈現。",
+            "model": {
+              "schemaVersion": "1.0",
+              "name": "青色圓環與懸浮紅球",
+              "summary": "青色圓環直立於黑色方形底座，中央懸浮一顆小紅球。",
+              "units": "m",
+              "assumptions": [
+                "未指定尺寸，暫定底座寬深各0.36公尺、高0.06公尺；圓環外徑0.4公尺、截面厚度0.04公尺；紅球直徑0.08公尺。",
+                "圓環底部與底座頂面相接；紅球不加支撐構件，懸浮效果僅為概念呈現。"
+              ],
+              "parts": [
+                {
+                  "id": "base",
+                  "name": "黑色方形底座",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.36,
+                    "y": 0.06,
+                    "z": 0.36
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.03,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#000000",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "ring",
+                  "name": "直立青色圓環",
+                  "parentId": "base",
+                  "primitive": "torus",
+                  "dimensions": {
+                    "x": 0.4,
+                    "y": 0.4,
+                    "z": 0.04
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.23,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#59d9e8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "ball",
+                  "name": "中央懸浮小紅球",
+                  "parentId": "ring",
+                  "primitive": "sphere",
+                  "dimensions": {
+                    "x": 0.08,
+                    "y": 0.08,
+                    "z": 0.08
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#E53935",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P09",
+          "prompt": "一台概念小車，黃色長方車身下裝四個黑色輪子，頂部前方有一個短圓筒",
+          "requestedHumanChecks": [
+            "四輪",
+            "黃車身黑輪",
+            "頂部前方短筒"
+          ],
+          "status": "ready",
+          "source": "codex",
+          "model": "gpt-6.1-sol",
+          "elapsedMs": 46999,
+          "schemaValid": true,
+          "geometryValid": true,
+          "partCount": 6,
+          "meshes": 6,
+          "edgeObjects": 6,
+          "triangles": 972,
+          "dimensionsMetres": {
+            "x": 0.5600000002980232,
+            "y": 0.44000000014901164,
+            "z": 0.800000011920929
+          },
+          "automaticChecks": [
+            {
+              "label": "四個黑色輪子",
+              "passed": true,
+              "evidence": "[{\"name\":\"左前黑色輪子\",\"color\":\"#171717\"},{\"name\":\"右前黑色輪子\",\"color\":\"#171717\"},{\"name\":\"左後黑色輪子\",\"color\":\"#171717\"},{\"name\":\"右後黑色輪子\",\"color\":\"#171717\"}]"
+            },
+            {
+              "label": "黃色長方車身",
+              "passed": true,
+              "evidence": "[\"黃色長方車身\"]"
+            }
+          ],
+          "automaticChecksPassed": true,
+          "humanSemanticReview": "pending-browser-review",
+          "firstRecognizableDraftMs": null,
+          "completeBrowserDraftMs": null,
+          "requiresUserApproval": false,
+          "design": {
+            "status": "ready",
+            "explanation": "以長方體車身、四個黑色圓筒輪子及頂部前方的短圓筒，呈現概念小車。",
+            "model": {
+              "schemaVersion": "1.0",
+              "name": "黃色概念小車",
+              "summary": "黃色長方車身下方配置四個黑色輪子，頂部前方設有一個短圓筒。",
+              "units": "m",
+              "assumptions": [
+                "使用者指定黃色長方車身、四個黑色輪子，以及頂部前方的一個短圓筒。",
+                "未指定尺寸，暫定車身長0.8公尺、寬0.42公尺、高0.2公尺；輪子直徑0.22公尺、厚0.07公尺。",
+                "以負Z方向為車頭；頂部短圓筒暫定直立，直徑0.12公尺、高0.1公尺，顏色採預設青色。",
+                "此為外觀概念，未建模內部機構。"
+              ],
+              "parts": [
+                {
+                  "id": "body",
+                  "name": "黃色長方車身",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.42,
+                    "y": 0.2,
+                    "z": 0.8
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.24,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#FFD52A",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "wheel_fl",
+                  "name": "左前黑色輪子",
+                  "parentId": "body",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.22,
+                    "y": 0.07,
+                    "z": 0.22
+                  },
+                  "position": {
+                    "x": -0.245,
+                    "y": -0.13,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 90
+                  },
+                  "color": "#171717",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "wheel_fr",
+                  "name": "右前黑色輪子",
+                  "parentId": "body",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.22,
+                    "y": 0.07,
+                    "z": 0.22
+                  },
+                  "position": {
+                    "x": 0.245,
+                    "y": -0.13,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 90
+                  },
+                  "color": "#171717",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "wheel_rl",
+                  "name": "左後黑色輪子",
+                  "parentId": "body",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.22,
+                    "y": 0.07,
+                    "z": 0.22
+                  },
+                  "position": {
+                    "x": -0.245,
+                    "y": -0.13,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 90
+                  },
+                  "color": "#171717",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "wheel_rr",
+                  "name": "右後黑色輪子",
+                  "parentId": "body",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.22,
+                    "y": 0.07,
+                    "z": 0.22
+                  },
+                  "position": {
+                    "x": 0.245,
+                    "y": -0.13,
+                    "z": 0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 90
+                  },
+                  "color": "#171717",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "top_cyl",
+                  "name": "頂部前方短圓筒",
+                  "parentId": "body",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.12,
+                    "y": 0.1,
+                    "z": 0.12
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.15,
+                    "z": -0.25
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#59d9e8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P10",
+          "prompt": "透明概念外殼裡有一片綠色電路板，上面兩顆紅色圓柱，右側另接一個藍色電池盒",
+          "requestedHumanChecks": [
+            "已建內部板件",
+            "兩顆紅圓柱",
+            "右側藍電池"
+          ],
+          "status": "ready",
+          "source": "codex",
+          "model": "gpt-6.1-sol",
+          "elapsedMs": 103981,
+          "schemaValid": true,
+          "geometryValid": true,
+          "partCount": 5,
+          "meshes": 5,
+          "edgeObjects": 5,
+          "triangles": 420,
+          "dimensionsMetres": {
+            "x": 0.215999999076128,
+            "y": 0.07000000104308128,
+            "z": 0.10999999940395355
+          },
+          "automaticChecks": [
+            {
+              "label": "綠色內部電路板",
+              "passed": true,
+              "evidence": "[{\"name\":\"綠色電路板\",\"role\":\"interior\",\"color\":\"#248B45\"}]"
+            },
+            {
+              "label": "兩顆紅色圓柱",
+              "passed": true,
+              "evidence": "[\"左側紅色圓柱\",\"右側紅色圓柱\"]"
+            },
+            {
+              "label": "右側藍色電池盒",
+              "passed": true,
+              "evidence": "[{\"name\":\"右側藍色電池盒\",\"color\":\"#2468D8\",\"x\":0.108}]"
+            }
+          ],
+          "automaticChecksPassed": true,
+          "humanSemanticReview": "pending-browser-review",
+          "firstRecognizableDraftMs": null,
+          "completeBrowserDraftMs": null,
+          "requiresUserApproval": false,
+          "design": {
+            "status": "ready",
+            "explanation": "以概念外殼、內部綠色電路板、兩顆紅色圓柱及右側藍色電池盒呈現。外殼透明效果須由渲染器設定，模型本身不包含透明度屬性。",
+            "model": {
+              "schemaVersion": "1.0",
+              "name": "透明外殼電路概念組件",
+              "summary": "透明概念外殼內放置一片綠色電路板，板上配置兩顆紅色圓柱，右側相接藍色電池盒。",
+              "units": "m",
+              "assumptions": [
+                "使用者指定外殼透明、電路板綠色、兩顆圓柱紅色，以及右側電池盒藍色。",
+                "暫定外殼寬 0.16、公高 0.07、深 0.11 公尺；電池盒寬 0.056、高 0.045、深 0.08 公尺。",
+                "電路板暫定水平配置，兩顆圓柱垂直立於板上；內部布局僅為概念，未確認實際電路功能。",
+                "外殼以單一盒狀幾何表示外觀包絡，未建立壁厚；透明顯示由渲染器處理。",
+                "右側電池盒以側面貼合表示相接，未假設接頭或固定機構。"
+              ],
+              "parts": [
+                {
+                  "id": "case",
+                  "name": "透明概念外殼",
+                  "parentId": null,
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.16,
+                    "y": 0.07,
+                    "z": 0.11
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0.035,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#59d9e8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "pcb",
+                  "name": "綠色電路板",
+                  "parentId": "case",
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.136,
+                    "y": 0.002,
+                    "z": 0.086
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": -0.02,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#248B45",
+                  "role": "interior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "red1",
+                  "name": "左側紅色圓柱",
+                  "parentId": "pcb",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.022,
+                    "y": 0.028,
+                    "z": 0.022
+                  },
+                  "position": {
+                    "x": -0.033,
+                    "y": 0.015,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#E53935",
+                  "role": "interior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "red2",
+                  "name": "右側紅色圓柱",
+                  "parentId": "pcb",
+                  "primitive": "cylinder",
+                  "dimensions": {
+                    "x": 0.022,
+                    "y": 0.028,
+                    "z": 0.022
+                  },
+                  "position": {
+                    "x": 0.033,
+                    "y": 0.015,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#E53935",
+                  "role": "interior",
+                  "tubeRatio": 0.75
+                },
+                {
+                  "id": "battery",
+                  "name": "右側藍色電池盒",
+                  "parentId": "case",
+                  "primitive": "box",
+                  "dimensions": {
+                    "x": 0.056,
+                    "y": 0.045,
+                    "z": 0.08
+                  },
+                  "position": {
+                    "x": 0.108,
+                    "y": -0.0125,
+                    "z": 0
+                  },
+                  "rotation": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "color": "#2468D8",
+                  "role": "exterior",
+                  "tubeRatio": 0.75
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "completedAt": "2026-11-10T08:01:18.757Z",
+      "summary": {
+        "attempts": 10,
+        "validSchemaAndGeometry": 10,
+        "failures": 0,
+        "observedModels": [
+          "gpt-6.1-sol"
+        ],
+        "automaticStructuralChecksPassed": 9,
+        "p95RenderableDataMs": 103981,
+        "humanSemanticReview": "pending-browser-review",
+        "firstRecognizableDraftP95Ms": null,
+        "completeBrowserDraftP95Ms": null
+      }
+    }
+  ]
+}
