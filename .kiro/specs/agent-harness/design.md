@@ -43,14 +43,14 @@ export const AgentStepSchema = z.strictObject({
 
 `validateAgentStep(input)` parses, then enforces consistency:
 - `type === 'tool_calls'` → `calls` non-null and non-empty, `reply` null.
-- `type === 'final'` → `reply` non-null, `calls` null, `note` null.
+- `type === 'final'` → `reply` non-null, `calls` null; a stray `note` is dropped (not rejected), so a harmless extra note costs no retry round.
 - Per tool, the required arg fields are non-null and the rest are null (e.g. `generate_design` requires `prompt`, everything else null). Returns `AgentToolCalls | AgentFinal`.
 
-This flat-nullable form is strict-mode safe for all three back ends (every property is `required`, nullable values are `null`), so we can send `z.toJSONSchema(AgentStepSchema, { target: 'draft-7' })` exactly like `designJsonSchema()` / `editJsonSchema()`.
+This flat-nullable form is strict-mode safe for all three back ends (every property is `required`, nullable values are `null`). Nullable fields do produce `anyOf: [T, { type: 'null' }]` in the draft-7 output, exactly as `editJsonSchema()` already does (five such fields) and all three back ends accept — so we send `z.toJSONSchema(AgentStepSchema, { target: 'draft-7' })` with `$schema` stripped, like `designJsonSchema()` / `editJsonSchema()`. The top-level node is a single object (no `anyOf`/`oneOf` at the root).
 
 ### 2.2 Tool results
 
-Each tool returns a `ToolResult`. The `summary` + `detail` are what the model sees next round and what the UI renders (req 14). A `ToolError` (invalid args, no model on screen, etc.) is one result shape, not an exception (req 15).
+Each tool returns a `ToolResult`. The `summary` + `detail` are what the model sees next round and what the UI renders (req 14). A local `ToolError` (invalid args, no model on screen, an `EditError` from `applyEditPlan`) is one result shape, not an exception (req 15). A provider abort or `GenerationError` from `provider.run` is **not** a `ToolResult` — it propagates and ends the run (see §4).
 
 ```ts
 // Everything the client needs to build a full DisplayModel and commit it.
@@ -97,7 +97,7 @@ export const AgentTurnSchema = z.strictObject({
 export const AgentRequestSchema = z.strictObject({
   instruction: z.string().trim().min(1).max(4000),
   requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
-  model: z.unknown().nullable(),            // null when the scene is empty; else validated by validateModel
+  model: z.union([z.null(), z.unknown().refine(v => v !== undefined)]),  // required key; null = empty scene; missing/undefined = structural error
   selectedPartIds: z.array(...).max(64),     // must be empty when model is null
   explode: z.number().min(0).max(1),
   tryOn: z.boolean(),
@@ -106,7 +106,7 @@ export const AgentRequestSchema = z.strictObject({
 });
 ```
 
-`model` is nullable: the first instruction often arrives with nothing on screen, so the working copy starts with `model = null`. Tools that need a model return a `ToolError` when it is null (see §5); `generate_design` works with or without a model.
+`model` is a required field: an explicit `null` means the scene is empty (the working copy starts `model = null`); a missing key or an explicit `undefined` is a structural error (INVALID_REQUEST, before SSE headers); any non-null value is validated by `validateModel` and, on failure, becomes `INVALID_MODEL` with a fixed sanitized Traditional Chinese message (no Zod detail leaked). Tools that need a model return a `ToolError` when it is null (see §5); `generate_design` works with or without a model.
 
 ### 2.4 SSE events
 
@@ -120,7 +120,7 @@ Events the server writes over the stream. Defined in `shared/agent.ts` so the cl
 // state    { model?, selection?, explode?, tryOn? }   a state change to apply (client commits model)
 // final    { reply }                      run ended with a final reply
 // error    { message }                    run ended on failure (sanitized, Traditional Chinese)
-// done     {}                             terminal marker, always last
+// done     {}                             terminal marker, always last (except cancel, which emits nothing)
 ```
 
 `state` is separate from `result` so a model change carries the full `ModelSpec` exactly once — in the `state` event (as a `ModelStateChange`), for the client to `commit`. The `result` event carries the same `ToolResult` but with `stateChange.model` stripped to `null`, so the big payload is never duplicated. The compact `summary` + `detail` in `result` is all the model and UI need from a finished tool; the round history sent to the model stores only that compact form (`{ ok, summary, detail }`), never a full `ModelSpec` or a `stateChange`.
@@ -133,59 +133,71 @@ New files only; no existing file is moved. The server never imports `src/` (req 
 shared/agent.ts        NEW  AgentStep, ToolCall, ToolResult, ModelStateChange, AgentRequest,
                             AgentTurn, SSE event helpers, validateAgentStep + per-tool arg validators.
                             Re-uses ModelSpecSchema/PartSchema from model.ts and applyEditPlan from edit.ts.
-server/agent.ts        NEW  runAgent(provider, req, opts, emit, signal): the loop, round logic,
-                            compact history accumulation, round/time limits, retry-once, cancellation.
+server/agent.ts        NEW  runAgent(provider, req, opts, emit, clientSignal): the loop, round logic,
+                            compact history accumulation, round/timeout/cancel handling, retry-once.
 server/agent-tools.ts  NEW  tool registry. Each tool: (args, state, provider, signal) => ToolResult,
                             operating on a server-side working copy. generate/edit delegate to
                             provider.run(designTask/editTask); the rest are pure local functions.
 server/agent-events.ts NEW  SSE writer: serialize events, set SSE headers, write frames. (Reusable by voice later.)
 server/app.ts          EDIT add the /api/agent route + agentRoute lifecycle (reuses the existing
                             activeRequests concurrency counter and sanitized errors).
+src/agent/types.ts     NEW  exported DisplayModel type (moved out of App.tsx so agent helpers can import it
+                            without pulling DOM code); imported by App.tsx, useAgentRun, apply-state.ts.
 src/agent/AgentPanel.tsx   NEW  the conversation panel (instruction input, progress log, final reply, cancel).
 src/agent/useAgentRun.ts   NEW  POST /api/agent with fetch + ReadableStream; parse SSE frames; apply state events.
 src/agent/sse.ts           NEW  pure SSE frame parser (no DOM; unit-tested in Node).
-src/agent/apply-state.ts   NEW  pure function that turns a state event + current DisplayModel into the
-                            arguments for commit/setSelected/setExplode/setTryingOn (no DOM; unit-tested in Node).
+src/agent/apply-state.ts   NEW  pure applyStateEvent(event, current, { requestId, now, newLineage }): turns a
+                            state event into commit/setSelected/setExplode/setTryingOn args (no DOM; unit-tested in Node).
 src/App.tsx                EDIT render AgentPanel; expose setters/commit so useAgentRun applies state events;
                             disable manual editing + generate/edit forms + undo/redo while an agent run is active.
 ```
 
-`shared/agent.ts` exports `agentJsonSchema()` (draft-7) for the `ModelTask` schema, matching `designJsonSchema()` / `editJsonSchema()`.
+`shared/agent.ts` exports `agentJsonSchema()` (draft-7, `$schema` stripped) for the `ModelTask` schema, matching `designJsonSchema()` / `editJsonSchema()`.
 
 ## 4. Agent loop — `server/agent.ts`
 
 ```
-runAgent(provider, req, { maxRounds=6, retryRound=true }, emit, signal):
+runAgent(provider, req, { maxRounds=6, totalTimeoutMs }, emit, clientSignal):
+  timeoutSignal = AbortSignal.timeout(totalTimeoutMs)
+  runSignal = AbortSignal.any([clientSignal, timeoutSignal])   // → every provider.run and tool
   state = working copy: { model: req.model == null ? null : validateModel(req.model),
                           selection: req.model == null ? [] : req.selectedPartIds∩parts,
                           explode: req.explode, tryOn: req.tryOn, cameraOn: req.cameraOn }
   rounds = []   // compact: [{ call: { tool, args }, result: { ok, summary, detail } }]
-  for round in 0..maxRounds-1:
-    if signal.aborted → end CANCELLED
-    emit('status', note?) // none on first round
-    task = agentTask(history=req.history, rounds, state, instruction=req.instruction)
-    try step = validateAgentStep(await provider.run(task, signal))   // signal is the combined run signal (see §6)
-    catch invalid once → retry the same round once; if invalid again → end error (sanitized zh-TW) (req 11)
-    if step is final:
-      emit('final', step.reply); emit('done'); return
-    emit('status', step.note)            // model's note for this round
-    for call in step.calls:
-      emit('tool', { tool, args })
-      result = runTool(call, state, provider, signal)   // never throws; ToolError on bad args / no model (req 15)
-      emit('result', stripModel(result))                // ToolResult with stateChange.model = null
-      if result.stateChange:
-        apply stateChange to `state`                    // model already validated by the tool
-        emit('state', result.stateChange)               // carries full model exactly once
-      rounds.push({ call: { tool: call.tool, args: call.args }, result: { ok: result.ok, summary: result.summary, detail: result.detail } })
-    // loop continues: next round sees the accumulated compact rounds + a fresh snapshot
-  // reached maxRounds without a final reply
-  emit('error', sanitized zh-TW "agent did not finish"); emit('done')   // earlier rounds' changes already emitted+applied (req 9, 18)
+  try:
+    for round in 0..maxRounds-1:
+      if runSignal.aborted → throw ABORTED
+      emit('status', note?) // none on first round
+      task = agentTask(history=req.history, rounds, state, instruction=req.instruction)
+      step = getStep(provider, task, runSignal)   // validateAgentStep(await provider.run(task, runSignal));
+                                                   // retry once on validation failure (re-check abort first),
+                                                   // else throw a sanitized error. Throws on abort/GenerationError.
+      if step is final:
+        emit('final', step.reply); emit('done'); return
+      emit('status', step.note)            // model's note for this round
+      for call in step.calls:
+        emit('tool', { tool, args })
+        result = runTool(call, state, provider, runSignal)   // ToolError for bad args / no model / local EditError;
+                                                              // THROWS abort/GenerationError → propagates, ends run
+        emit('result', stripModel(result))                   // ToolResult with stateChange.model = null
+        if result.stateChange:
+          apply stateChange to `state`                       // model already validated by the tool
+          emit('state', result.stateChange)                  // carries full model exactly once
+        rounds.push({ call: { tool: call.tool, args: call.args }, result: { ok: result.ok, summary: result.summary, detail: result.detail } })
+      // loop continues: next round sees the accumulated compact rounds + a fresh snapshot
+    // reached maxRounds without a final reply
+    emit('error', sanitized zh-TW "agent did not finish"); emit('done')   // earlier rounds' changes already emitted+applied (req 9, 18)
+  catch (ABORTED or GenerationError):
+    if clientSignal.aborted → return                                    // client cancel/disconnect: emit nothing
+    if timeoutSignal.aborted → emit('error', sanitized zh-TW timeout); emit('done')   // so the client does not hang
+    else → emit('error', sanitized GenerationError.message); emit('done')              // provider failure mid-run
 ```
 
 Key points:
 - **Round history vs. session history.** The model input each round = the client-sent `history` (last ≤10 prior turns) + the in-run compact `rounds` (call + `{ ok, summary, detail }`) + the current `instruction` + a compact current-state snapshot. The snapshot is a `get_project_state`-style summary (part ids/names/primitives/key dimensions, selection, explode, tryOn) of the working copy, sent once per round. The rounds array never stores a full `ModelSpec` or a `stateChange`, so history does not grow with model size. The model sees the current model only through that per-round snapshot, and the full model only when `edit_design` actually runs (inside `editTask`).
-- **One combined signal for time limit and cancel (req 10, 18).** The route builds `runSignal = AbortSignal.any([clientDisconnectSignal, AbortSignal.timeout(totalTimeoutMs)])` and passes it as `signal` into every `provider.run(task, signal)` call (see §6). The loop also checks `signal.aborted` between rounds. On timeout or cancel, the in-progress `provider.run` is actually aborted — CLI processes are stopped, not merely raced — and the current round is discarded; earlier rounds' `state` events were already sent and applied and stay (the client can undo them). The round-limit end follows the same path.
-- **Retry once (req 11).** Only for Zod/semantic validation failure of `AgentStep`, not for provider transport errors (those are `GenerationError`s, surfaced sanitized). A retry reuses the same combined `signal`; if it has already aborted, the run ends as cancelled instead of retrying.
+- **One combined signal for time limit and cancel (req 10, 18).** `runAgent` builds `runSignal = AbortSignal.any([clientSignal, AbortSignal.timeout(totalTimeoutMs)])` and passes it into every `provider.run` and `runTool`. A timeout or cancel therefore aborts the in-flight `provider.run` directly — CLI processes are stopped, not merely raced — and the current round is discarded. Earlier rounds' `state` events were already sent and applied and stay (the client can undo them).
+- **Errors and timeouts end the run; cancel is silent.** An abort or a `GenerationError` from `provider.run` (inside the agent step or inside `generate_design`/`edit_design`) is NOT turned into a `ToolResult` — it propagates and ends the run. The loop then distinguishes why: on the **total-run timeout** it emits a sanitized Traditional Chinese timeout `error` + `done` (so the client does not hang); on **client cancel/disconnect** it emits nothing (the connection is gone); on any other `GenerationError` it emits a sanitized `error` + `done`. Only local tool failures (bad args, no model, `EditError` from `applyEditPlan`) become `ToolResult`s.
+- **Retry once (req 11).** Only for Zod/semantic validation failure of `AgentStep`, not for provider transport errors (those are `GenerationError`s, surfaced sanitized). A retry first re-checks `runSignal.aborted`; if it has already aborted, the run ends via the cancel/timeout path instead of retrying.
 - **No fabrication (req 14).** The model only sees `ToolResult`s produced by `runTool`; the loop never lets the model assert facts without a result.
 
 `agentTask(...)` is a `ModelTask<AgentStep>`: `kind: 'agent'`, `instructions: AGENT_INSTRUCTIONS`, `schema: agentJsonSchema()`, `input: <composed string>`, `parse: validateAgentStep`.
@@ -196,7 +208,7 @@ System prompt, English rules, user-facing strings in Traditional Chinese. It lis
 
 ## 5. Tool registry — `server/agent-tools.ts`
 
-`runTool(call, state, provider, signal): ToolResult`. Each tool validates its own args (per-tool validator from `shared/agent.ts`); bad args → `ToolResult { ok:false, summary, detail: ToolErrorDetail }` (req 15), no state change.
+`runTool(call, state, provider, signal): ToolResult`. Each tool validates its own args (per-tool validator from `shared/agent.ts`); bad args → `ToolResult { ok:false, summary, detail: ToolErrorDetail }` (req 15), no state change. A provider abort or `GenerationError` from `provider.run` (in `generate_design`/`edit_design`) is **not** caught here — it propagates and ends the run (see §4).
 
 | Tool | Args | Calls model? | State change | Result detail |
 |---|---|---|---|---|
@@ -212,8 +224,8 @@ System prompt, English rules, user-facing strings in Traditional Chinese. It lis
 **Empty-scene rule.** `edit_design`, `select_parts`, `explode_view`, `wear_on_arm`, `estimate_weight_cost`, and `check_feasibility` each return a `ToolError` (`ok:false`, `detail: ToolErrorDetail { code: 'NO_MODEL', message: '目前沒有模型，請先 generate_design。' }`) with no `stateChange` when the working copy's `model` is null. `generate_design` works with or without a model (an existing model is ignored; it always produces a kind `generated` change with a new lineage). `get_project_state` works with no model (returns an empty snapshot).
 
 Notes:
-- `generate_design` / `edit_design` reuse `provider.run(designTask(prompt))` and `provider.run(editTask(model, instruction, selection))`. The working copy's current model/selection are passed in. A `generate_design` that returns `status !== 'ready'` becomes a `ToolResult` with `ok:false` and no `model` state change (approximation/unsupported surfaced to the model, not silently applied). `GenerateDesignDetail` carries only `{ source, providerModel, status }` — never the model.
-- `edit_design` runs `applyEditPlan` on the working copy; on `EditError` it returns `ToolError` with no state change (the model can try again or clarify). Conflict-with-manual-change handling is not needed here because manual edits are disabled during a run (req 26).
+- `generate_design` / `edit_design` reuse `provider.run(designTask(prompt))` and `provider.run(editTask(model, instruction, selection))` and pass the run `signal` through. The working copy's current model/selection are passed in. A `generate_design` that returns `status !== 'ready'` becomes a `ToolResult` with `ok:false` and no `model` state change (approximation/unsupported surfaced to the model, not silently applied). `GenerateDesignDetail` carries only `{ source, providerModel, status }` — never the model. An abort or `GenerationError` from `provider.run` is NOT caught here — it propagates and ends the run (see §4).
+- `edit_design` runs `applyEditPlan` on the working copy; a local `EditError` (the plan does not apply) returns a `ToolError` with no state change (the model can try again or clarify). An abort or `GenerationError` from `provider.run` propagates and ends the run. Conflict-with-manual-change handling is not needed here because manual edits are disabled during a run (req 26).
 - `wear_on_arm`: the request carries `cameraOn`. The tool never starts the camera (req 13). If `enabled && !cameraOn` → `ok:false`, summary "請先開啟攝影機再試戴", no `tryOn` change. If `enabled && cameraOn` → `stateChange.tryOn = true`. If `!enabled` → `stateChange.tryOn = false`.
 - `explode_view` only validates `amount ∈ [0,1]` and sets `stateChange.explode`; the browser applies it via `setExplode` and computes layout as today (req 13/35/36). No `src/` import.
 
@@ -236,14 +248,14 @@ POST /api/agent
   set SSE headers: Content-Type text/event-stream; Cache-Control no-store;
                    X-Content-Type-Options nosniff; Connection keep-alive
   agentRoute(res, requestId, async (clientSignal) => {
-    const runSignal = AbortSignal.any([clientSignal, AbortSignal.timeout(totalTimeoutMs)])
-    await runAgent(provider, req, { maxRounds }, emit, runSignal)
-  })
+    await runAgent(provider, req, { maxRounds, totalTimeoutMs }, emit, clientSignal)
+  })   // runAgent builds runSignal = AbortSignal.any([clientSignal, AbortSignal.timeout(totalTimeoutMs)]) itself,
+       // so it can distinguish client cancel from the total-run timeout (see §4).
 ```
 
-`emit(name, data)` writes `event: <name>\ndata: <json>\n\n`. On any terminal condition (final / error / done), flush and end the response. **Only failures that occur after streaming has started** (provider error mid-run, `AgentStep` invalid after retry, round/timeout limit reached) are reported as an `error` event followed by `done`. Request-validation errors (bad body, invalid model, invalid selection) and concurrency rejection (429) are plain JSON status responses sent before the SSE headers, consistent with the existing `/api/generate` 400/429 — they never appear as SSE events.
+`emit(name, data)` writes `event: <name>\ndata: <json>\n\n`. On any terminal condition (final / error / done), flush and end the response. **Only failures that occur after streaming has started** (provider error mid-run, `AgentStep` invalid after retry, round/timeout limit reached) are reported as an `error` event followed by `done` — except client cancel/disconnect, which emits nothing. Request-validation errors (bad body, invalid model, invalid selection) and concurrency rejection (429) are plain JSON status responses sent before the SSE headers, consistent with the existing `/api/generate` 400/429 — they never appear as SSE events.
 
-`agentRoute` lifecycle mirrors `modelRoute`: it increments `activeRequests` before streaming and decrements it in a `finally` block that runs only after `runAgent` has settled — i.e. after the last in-flight `provider.run` has been aborted and awaited, so the concurrency slot is held until the provider has actually stopped. The combined `runSignal` (client disconnect OR total-run timeout) is passed into every `provider.run` call, so a timeout aborts the CLI process directly rather than just racing the loop. **The single-call `MODEL_TIMEOUT_MS` (180 s) from `modelRoute` is not applied to the whole run**; the run is bounded only by its own larger `totalTimeoutMs`, and each per-round `provider.run` inherits the same combined signal. `maxRounds` and `totalTimeoutMs` come from `AppOptions` / env (defaults 6 and a configured total).
+`agentRoute` lifecycle mirrors `modelRoute`: it increments `activeRequests` before streaming and decrements it in a `finally` block that runs only after `runAgent` has settled — i.e. after the last in-flight `provider.run` has been aborted and awaited, so the concurrency slot is held until the provider has actually stopped. `runAgent` builds the combined `runSignal` (`clientSignal` OR `AbortSignal.timeout(totalTimeoutMs)`) and passes it into every `provider.run`, so a timeout or cancel aborts the CLI process directly rather than just racing the loop, and `runAgent` can tell the two apart to decide whether to emit a timeout `error`+`done` or nothing (cancel). **The single-call `MODEL_TIMEOUT_MS` (180 s) from `modelRoute` is not applied to the whole run**; the run is bounded only by its own larger `totalTimeoutMs`. `maxRounds` and `totalTimeoutMs` come from `AppOptions` / env (defaults 6 and a configured total).
 
 `/api/generate` and `/api/edit` are untouched (req 20); their tests run unchanged.
 
@@ -257,15 +269,15 @@ POST /api/agent
   - `status` → append note to the progress log.
   - `tool` → append "calling <tool>" line.
   - `result` → append the rendered result (from `ToolResult.summary` + `detail`, not the model's text — req 14).
-  - `state` → apply via the pure `applyStateEvent` helper (`src/agent/apply-state.ts`):
-    - `model` (a `ModelStateChange { kind, model, source, providerModel }`) → build a full `DisplayModel` and `commit(...)`:
-      - `kind === 'generated'`: `commit({ model, source, providerModel, requestId: <run requestId>, startedAt: performance.now(), lineage: crypto.randomUUID(), edited: false })` — new lineage, so `commit` resets selection/explode (req 4).
-      - `kind === 'edited'`: `commit({ ...currentDisplay, model, source, providerModel, requestId, startedAt: performance.now(), edited: true })` — keeps the current lineage (no selection/explode reset); guarded against a null current display (ignored if absent).
+  - `state` → apply via the pure `applyStateEvent(event, currentDisplay, { requestId, now, newLineage })` helper (`src/agent/apply-state.ts`), where `requestId` is the run's id, `now` is `performance.now()`, and `newLineage` is `crypto.randomUUID()` (keeping App's existing lineage convention). The `ModelStateChange` payload itself carries no `requestId`/`startedAt`/`lineage` — the client supplies them, so the helper is deterministic and unit-testable:
+    - `model.kind === 'generated'` → `commit({ model, source, providerModel, requestId, startedAt: now, lineage: newLineage, edited: false })` — new lineage, so `commit` resets selection/explode (req 4).
+    - `model.kind === 'edited'` → `commit({ ...currentDisplay, model, source, providerModel, requestId, startedAt: now, edited: true })` — keeps the current lineage (no selection/explode reset); returns no `commitArg` if `currentDisplay` is null.
     - `selection` → `setSelected`; `explode` → `setExplode`; `tryOn` → `setTryingOn`.
   - `final` → set the agent's final reply, end run.
   - `error` → show sanitized message, end run.
   - `done` → end run.
 - Exposes `{ run, cancel, active, log, reply }`. `cancel` aborts the fetch; the server's `res.close` fires `clientSignal` abort, which ends the loop (req 18).
+- `DisplayModel` is exported from `src/agent/types.ts` (moved out of `App.tsx`), imported by `App.tsx`, `useAgentRun`, and `apply-state.ts`.
 
 ### 7.2 `AgentPanel`
 
@@ -283,27 +295,25 @@ While `active`, `App.tsx` disables: the generate form, the edit form, manual par
 
 Unit tests (Vitest, fake `ModelProvider`, never a real back end — req 29). **No jsdom or happy-dom is added** — the frontend pieces that need a DOM are covered by the Playwright e2e test below; everything unit-tested in `src/agent` is a pure function.
 
-- `shared/agent.ts`: `validateAgentStep` accepts valid tool_calls/final; rejects type/call mismatches; per-tool arg presence rules; `agentJsonSchema` produces a strict draft-7 schema with all properties required; `ModelStateChangeSchema` round-trips; `AgentRequestSchema` accepts `model: null`.
-- `server/agent-tools.ts`: each tool with a scripted working copy — generate returns ready→model state change (kind `generated`, detail has no model); edit applies and changes model (kind `edited`); select changes selection; get_project_state returns snapshot (works with null model too); explode_view validates 0–1 (rejects out of range) and emits explode only; wear_on_arm with `cameraOn:false` returns `ok:false` no tryOn, with `cameraOn:true` emits tryOn; **every model-required tool returns a `NO_MODEL` ToolError when `state.model` is null**; bad args → ToolError no state change. Deferred tools get basic tests when implemented.
-- `server/agent.ts`: the loop with a fake provider returning scripted `AgentStep`s — multi-round (tool_calls then final), max-rounds end, total-time-limit end (the combined `AbortSignal.timeout` aborts the in-flight `provider.run`), cancel mid-round (client signal aborts `provider.run`), retry-once on invalid step then sanitized error, fabrication guard (result always from tool), history sent to the model contains no full `ModelSpec` (assert on `agentTask` input).
+- `shared/agent.ts`: `validateAgentStep` accepts valid tool_calls/final; rejects type/call mismatches; per-tool arg presence rules; `agentJsonSchema` is a single top-level object (no `anyOf`/`oneOf` at the root), every property `required`, `$schema` stripped (nullable fields' nested `anyOf` are expected, as in `editJsonSchema()`); `ModelStateChangeSchema` round-trips; `AgentRequestSchema` accepts `model: null`.
+- `server/agent-tools.ts`: each tool with a scripted working copy — generate returns ready→model state change (kind `generated`, detail has no model); edit applies and changes model (kind `edited`); select changes selection; get_project_state returns snapshot (works with null model too); explode_view validates 0–1 (rejects out of range) and emits explode only; wear_on_arm with `cameraOn:false` returns `ok:false` no tryOn, with `cameraOn:true` emits tryOn; **every model-required tool returns a `NO_MODEL` ToolError when `state.model` is null**; bad args → ToolError no state change; **an abort/GenerationError from `provider.run` propagates (not a ToolResult)**. Deferred tools get basic tests when implemented.
+- `server/agent.ts`: the loop with a fake provider returning scripted `AgentStep`s — multi-round (tool_calls then final), max-rounds end, retry-once on invalid step then sanitized error, fabrication guard (result always from tool), history sent to the model contains no full `ModelSpec` (assert on `agentTask` input). Three termination cases: **total-run timeout** (the `AbortSignal.timeout` aborts the in-flight `provider.run`; the loop emits a sanitized zh-TW timeout `error`+`done`), **client cancel** (the `clientSignal` aborts mid-round; the loop emits nothing), and **provider `GenerationError`** (a non-abort `GenerationError` from `provider.run` propagates; the loop emits a sanitized `error`+`done`). In all three, earlier `state` events were already emitted.
 - `server/app.ts` (`/api/agent`): supertest against `createApp` with an injected fake provider — success stream, 429 on concurrency (plain JSON, pre-stream), 400 on invalid request/invalid model/invalid selection (plain JSON, pre-stream), `model: null` accepted, origin rejection, sanitized error event mid-stream, body > 128 kB rejected. SSE frames parsed from the response stream.
 - `src/agent/sse.ts`: the SSE frame parser as a pure function in Node — splits a streamed string into `{ event, data }` frames, handles partial chunks, multi-line `data`, and the terminal `done` event.
-- `src/agent/apply-state.ts`: `applyStateEvent` as a pure function in Node — given a state event and a current `DisplayModel | null`, returns the `commit` argument (new lineage for `generated`, kept lineage for `edited`) and the `selection`/`explode`/`tryOn` values to set; asserts `generated` resets selection/explode and `edited` keeps them.
+- `src/agent/apply-state.ts`: `applyStateEvent(event, current, { requestId, now, newLineage })` as a pure function in Node — given a state event and a current `DisplayModel | null` plus deterministic `requestId`/`now`/`newLineage`, returns the `commit` argument (uses `newLineage` for `generated`, keeps `current.lineage` for `edited`) and the `selection`/`explode`/`tryOn` values to set; asserts `generated` resets selection/explode and `edited` keeps them; `edited` with `null` current → no `commitArg`. `DisplayModel` is imported (type-only) from `src/agent/types.ts`.
 
 E2E test (Playwright, req 29 — follows the existing route-interception pattern in `tests/e2e`):
 
-- `tests/e2e/agent-panel.spec.ts`: route `**/api/agent` to fulfill with a scripted SSE body (a `status` frame, a `tool` frame, a `result` frame, a `state` frame carrying a `generated` `ModelStateChange` built from `demoModel`, then a `final` frame and `done`). Assertions: the panel shows progress lines as frames arrive; the `state` event updates the 3D model (assert via the canvas `data-model-name`/`data-part-count` attributes as the existing tests do); undo works afterwards (reverts to the previous model); the generate/edit forms, manual adjustment, undo/redo, and explode slider are disabled while `active`; and cancel aborts the run and re-enables the controls. A second case streams a `tool` frame then holds the response to assert controls stay disabled mid-run and the cancel button returns them.
-
-A real back end is only touched by `verify:real`/`verify:edit`-style scripts and only on user request (req 29). The flat-nullable `AgentStep` schema is chosen precisely so the same JSON schema works for all three providers' strict structured output; if a provider rejects it, that surfaces during a verify run, not in unit tests.
+- `tests/e2e/agent-panel.spec.ts`: route `**/api/agent` to fulfill with a scripted SSE body (a `status` frame, a `tool` frame, a `result` frame, a `state` frame carrying a `generated` `ModelStateChange` built from a **distinct ModelSpec with a different name and part count from `demoModel`**, then a `final` frame and `done`). Assertions: the panel shows progress lines as frames arrive; the `state` event updates the 3D model to the distinct model (assert via the canvas `data-model-name`/`data-part-count` attributes as the existing tests do); undo works afterwards (reverts to the previous model); the generate/edit forms, manual adjustment, undo/redo, and explode slider are disabled while `active`; and cancel aborts the run and re-enables the controls. A second case streams a `tool` frame then holds the response to assert controls stay disabled mid-run and the cancel button returns them.
 
 ## 9. Key decisions
 
-- **Flat-nullable `AgentStep`, not a discriminated union, for the model-facing schema.** Mirrors `EditPlan`/`ModelSpec` (strict object + semantic `validate*`). Strict-mode safe across OpenAI Responses, Codex `outputSchema`, and Claude `--json-schema`: every property is `required`, optionals are `null`. Avoids `oneOf`/`anyOf` portability risk.
+- **Flat-nullable `AgentStep`, not a discriminated union, for the model-facing schema.** Mirrors `EditPlan`/`ModelSpec` (strict object + semantic `validate*`). Strict-mode safe across OpenAI Responses, Codex `outputSchema`, and Claude `--json-schema`: every property is `required`, optionals are `null`. Nullable fields' nested `anyOf` are expected and already accepted by all three back ends (as in `editJsonSchema()`); the top level stays a single object. Avoids top-level `oneOf`/`anyOf` portability risk.
 - **Tool result is the single source of truth.** The model sees `ToolResult` summaries; the UI renders `ToolResult` detail; tests assert on `ToolResult`. The model's `note` is narration only.
-- **The full `ModelSpec` is sent exactly once, in the `state` event.** A model change carries a `ModelStateChange` (`{ kind, model, source, providerModel }`) giving the client everything `commit` needs; the `result` event strips `stateChange.model`; the round history stores only `{ ok, summary, detail }`. The model sees the current model through the compact per-round state snapshot, and the full model only inside an `editTask` when `edit_design` runs.
+- **The full `ModelSpec` is sent exactly once, in the `state` event.** A model change carries a `ModelStateChange` (`{ kind, model, source, providerModel }`) giving the client everything `commit` needs (the client supplies `requestId`/`startedAt`/`lineage`); the `result` event strips `stateChange.model`; the round history stores only `{ ok, summary, detail }`. The model sees the current model through the compact per-round state snapshot, and the full model only inside an `editTask` when `edit_design` runs.
 - **Empty scene is a first-class state.** `AgentRequest.model` is nullable; the working copy starts `null`; model-required tools return a `NO_MODEL` `ToolError`, and `generate_design` works with or without a model.
-- **One combined `AbortSignal` for the whole run.** `AbortSignal.any([clientDisconnect, totalTimeout])` goes into every `provider.run`, so a timeout or cancel actually stops the CLI process. The `activeRequests` slot is held until the provider has stopped, like `modelRoute`. The single-call 180 s timeout is not applied to the whole run.
-- **Request validation is pre-stream; run errors are SSE events.** Bad body / invalid model / invalid selection / 429 are plain JSON before SSE headers; only post-stream failures use `error` + `done`.
+- **One combined `AbortSignal` for the whole run; cancel is silent.** `AbortSignal.any([clientSignal, totalTimeout])` goes into every `provider.run`, so a timeout or cancel actually stops the CLI process. The `activeRequests` slot is held until the provider has stopped, like `modelRoute`. The single-call 180 s timeout is not applied to the whole run. A total-run timeout emits a sanitized `error`+`done`; a client cancel emits nothing; any other `GenerationError` emits a sanitized `error`+`done`.
+- **Request validation is pre-stream; run errors are SSE events.** Bad body / invalid model / invalid selection / 429 are plain JSON before SSE headers; only post-stream failures use `error` + `done` (cancel emits nothing).
 - **Server never imports `src/`.** `explode_view` validates and records only; `wear_on_arm` never touches the camera; layout and tracking stay browser-side.
 - **Reuses, not rewrites.** `designTask`/`editTask`/`applyEditPlan`/`validateModel`/`commit`/`activeRequests` are reused; `/api/generate` and `/api/edit` are unchanged.
 
