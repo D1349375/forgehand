@@ -213,7 +213,7 @@ System prompt, English rules, user-facing strings in Traditional Chinese. It lis
 | Tool | Args | Calls model? | State change | Result detail |
 |---|---|---|---|---|
 | `generate_design` | `prompt` | yes (`designTask`) | `model` (kind `generated`, new lineage client-side) | source, providerModel, status |
-| `edit_design` | `instruction` | yes (`editTask` + `applyEditPlan`) | `model` (kind `edited`, keeps lineage) | changes (added/updated/removed), explanation |
+| `edit_design` | `instruction` | yes (`editTask` + `applyEditPlan`) | `model` (kind `edited`, keeps lineage) + `selection` (added+updated) | changes (added/updated/removed), explanation |
 | `select_parts` | `partIds` | no | `selection` | the new selection |
 | `get_project_state` | — | no | none | parts summary, selection, explode, tryOn |
 | `explode_view` | `amount` (0–1) | no | `explode` | amount; **server validates only**, browser computes layout (req 13/36) |
@@ -225,7 +225,7 @@ System prompt, English rules, user-facing strings in Traditional Chinese. It lis
 
 Notes:
 - `generate_design` / `edit_design` reuse `provider.run(designTask(prompt))` and `provider.run(editTask(model, instruction, selection))` and pass the run `signal` through. The working copy's current model/selection are passed in. A `generate_design` that returns `status !== 'ready'` becomes a `ToolResult` with `ok:false` and no `model` state change (approximation/unsupported surfaced to the model, not silently applied). `GenerateDesignDetail` carries only `{ source, providerModel, status }` — never the model. An abort or `GenerationError` from `provider.run` is NOT caught here — it propagates and ends the run (see §4).
-- `edit_design` runs `applyEditPlan` on the working copy; a local `EditError` (the plan does not apply) returns a `ToolError` with no state change (the model can try again or clarify). An abort or `GenerationError` from `provider.run` propagates and ends the run. Conflict-with-manual-change handling is not needed here because manual edits are disabled during a run (req 26).
+- `edit_design` runs `applyEditPlan` on the working copy; a local `EditError` (the plan does not apply) returns a `ToolError` with no state change (the model can try again or clarify). On an applied edit it also sets `stateChange.selection` to `[...changes.added, ...changes.updated]` (mirroring `App.tsx`'s `applyEdit`), so the working copy and client never keep a selected part the edit removed. An abort or `GenerationError` from `provider.run` propagates and ends the run. Conflict-with-manual-change handling is not needed here because manual edits are disabled during a run (req 26).
 - `wear_on_arm`: the request carries `cameraOn`. The tool never starts the camera (req 13). If `enabled && !cameraOn` → `ok:false`, summary "請先開啟攝影機再試戴", no `tryOn` change. If `enabled && cameraOn` → `stateChange.tryOn = true`. If `!enabled` → `stateChange.tryOn = false`.
 - `explode_view` only validates `amount ∈ [0,1]` and sets `stateChange.explode`; the browser applies it via `setExplode` and computes layout as today (req 13/35/36). No `src/` import.
 

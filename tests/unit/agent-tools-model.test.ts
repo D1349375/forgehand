@@ -92,6 +92,20 @@ describe('edit_design', () => {
     expect(result.stateChange?.model?.kind).toBe('edited');
     expect((result.stateChange?.model?.model as ModelSpec).parts.find(part => part.id === 'battery')?.color).toBe('#2563eb');
     expect(result.detail).toMatchObject({ changes: { added: [], updated: ['battery'], removed: [] }, explanation: '把側邊電池改成藍色。' });
+    expect(result.stateChange?.selection).toEqual(['battery']);
+  });
+
+  it('drops a removed part from the selection (sets selection to added+updated)', async () => {
+    const provider = fakeProvider(async () => editPlan({
+      explanation: '刪除側邊電池。',
+      operations: [{ op: 'remove', partId: 'battery', part: null }],
+    }));
+    const result = await runTool(call('edit_design', { instruction: '刪除電池' }), withModel({ selection: ['battery', 'housing'] }), provider, new AbortController().signal);
+    expect(result.ok).toBe(true);
+    expect(result.stateChange?.model?.kind).toBe('edited');
+    expect(result.stateChange?.selection).toEqual([]);
+    expect(result.stateChange?.selection).not.toContain('battery');
+    expect((result.stateChange?.model?.model as ModelSpec).parts.find(part => part.id === 'battery')).toBeUndefined();
   });
 
   it('returns ok:false with no state change for clarify/unsupported', async () => {
