@@ -30,7 +30,7 @@ export interface ModelProvider {
  * Every provider runs every task through the same isolated path.
  */
 export interface ModelTask<T> {
-  readonly kind: 'design' | 'edit';
+  readonly kind: 'design' | 'edit' | 'agent';
   readonly instructions: string;
   readonly schema: Record<string, unknown>;
   readonly input: string;
