@@ -37,10 +37,12 @@ describe('agent local tools', () => {
       expect(result.detail).toMatchObject({ code: 'INVALID_ARGS' });
       expect(result.stateChange).toBeNull();
     });
-    it('returns NO_MODEL when the scene is empty', async () => {
+    it('returns NO_MODEL when the scene is empty, with a tool-name-free message', async () => {
       const result = await runTool(call('select_parts', { partIds: ['housing'] }), noModel(), provider, signal);
       expect(result.ok).toBe(false);
       expect(result.detail).toMatchObject({ code: 'NO_MODEL' });
+      expect(result.summary).toBe('目前沒有模型，請先生成設計。');
+      expect(result.summary).not.toContain('generate_design');
       expect(result.stateChange).toBeNull();
     });
   });
@@ -91,15 +93,19 @@ describe('agent local tools', () => {
       expect(result.stateChange).toBeNull();
       expect(result.detail).toMatchObject({ cameraOn: false, message: '請先開啟攝影機再試戴。' });
     });
-    it('turns tryOn on when the camera is on and enabled', async () => {
+    it('turns tryOn on when the camera is on and enabled, with an honest stand-in message', async () => {
       const result = await runTool(call('wear_on_arm', { enabled: true }), withModel({ cameraOn: true }), provider, signal);
       expect(result.ok).toBe(true);
       expect(result.stateChange?.tryOn).toBe(true);
+      const honest = '已開啟護臂試戴（目前顯示預設護臂，尚未套用你的設計）。';
+      expect(result.summary).toBe(honest);
+      expect((result.detail as { message: string }).message).toBe(honest);
     });
     it('turns tryOn off when disabled', async () => {
       const result = await runTool(call('wear_on_arm', { enabled: false }), withModel({ cameraOn: true, tryOn: true }), provider, signal);
       expect(result.ok).toBe(true);
       expect(result.stateChange?.tryOn).toBe(false);
+      expect(result.summary).toBe('已關閉護臂試戴。');
     });
     it('returns NO_MODEL when the scene is empty', async () => {
       const result = await runTool(call('wear_on_arm', { enabled: true }), noModel({ cameraOn: true }), provider, signal);
@@ -123,13 +129,11 @@ describe('agent local tools', () => {
     });
   });
 
-  describe('unimplemented tools', () => {
+  describe('deferred tools', () => {
     it.each([
-      ['generate_design', call('generate_design', { prompt: '桌子' })],
-      ['edit_design', call('edit_design', { instruction: '加長' })],
       ['estimate_weight_cost', call('estimate_weight_cost', { densityKgPerM3: 1200 })],
       ['check_feasibility', call('check_feasibility', {})],
-    ])('returns NOT_IMPLEMENTED for %s (until Tasks 3/9)', async (_label, toolCall) => {
+    ])('returns NOT_IMPLEMENTED for %s (until Task 9)', async (_label, toolCall) => {
       const result = await runTool(toolCall, withModel(), provider, signal);
       expect(result.ok).toBe(false);
       expect(result.detail).toMatchObject({ code: 'NOT_IMPLEMENTED' });
