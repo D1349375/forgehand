@@ -66,7 +66,7 @@ Create the tool registry with the working-copy type and the locally-computable t
 
 ## Task 3 — `server/agent-tools.ts`: model-calling tools
 
-`[ ]`
+`[x]`
 
 Add `generate_design` and `edit_design` to the registry. They delegate to `provider.run(designTask(...))` / `provider.run(editTask(...))` with the passed `signal`, and translate results into `ToolResult` with a `ModelStateChange`.
 
