@@ -191,9 +191,13 @@ async function editDesign(call: ToolCall, state: AgentWorkingState, provider: Mo
       changes: { added: changes.added, updated: changes.updated, removed: changes.removed },
       explanation: plan.explanation,
     };
+    // Mirror App.tsx's applyEdit: select the changed parts so the working copy
+    // and client never keep a selected part that the edit removed.
+    const selection = [...changes.added, ...changes.updated];
     return ok(call.tool, `已修改：${describeChanges(state.model, model, changes)}`, detail, {
       model: { kind: 'edited', model, source: provider.name, providerModel: provider.model },
-      selection: null, explode: null, tryOn: null,
+      selection: selection.length ? selection : [],
+      explode: null, tryOn: null,
     });
   } catch (error) {
     if (error instanceof EditError) return fail(call.tool, 'INVALID_EDIT', error.message);
