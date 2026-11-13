@@ -94,7 +94,7 @@ Add `generate_design` and `edit_design` to the registry. They delegate to `provi
 
 ## Task 4 — `server/agent.ts`: the agent loop
 
-`[ ]`
+`[x]`
 
 Create the loop, the `agentTask` builder, and `AGENT_INSTRUCTIONS`.
 
