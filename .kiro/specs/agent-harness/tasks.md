@@ -204,24 +204,26 @@ Add the SSE writer and the `/api/agent` route with the `agentRoute` lifecycle.
 
 ## Task 6 — `src/agent/types.ts` + `src/agent/sse.ts` + `src/agent/apply-state.ts`: pure frontend helpers
 
-`[ ]`
+`[x]`
 
 Pure, DOM-free functions unit-tested in Node (no jsdom/happy-dom).
 
 **Build:**
-- `src/agent/types.ts`: export the `DisplayModel` type (`{ model: ModelSpec; source: string; providerModel: string; requestId: string; startedAt: number | null; lineage: string; edited: boolean }`) moved out of `App.tsx`, so agent helpers can import it without pulling DOM code. `App.tsx` is updated to import it from here in Task 7b.
-- `src/agent/sse.ts`: `parseSseStream(chunk: string, carry: string): { frames: SseFrame[]; carry: string }` — accumulates a streaming string, splits on `\n\n`, parses `event:`/`data:` lines (multi-line `data` joined), returns complete frames and any partial tail to carry. `SseFrame = { event: string; data: string }`.
-- `src/agent/apply-state.ts`: `applyStateEvent(event, current, { requestId, now, newLineage }): { commitArg?: DisplayModel; selection?: string[]; explode?: number; tryOn?: boolean }` — given a parsed `state` event payload, the current `DisplayModel | null`, and deterministic `requestId`/`now`/`newLineage`. The `ModelStateChange` payload carries none of those three; the caller supplies them so tests are deterministic and App keeps its `crypto.randomUUID()` lineage convention by passing `newLineage` in:
+- `src/agent/types.ts`: export the `DisplayModel` type (`{ model: ModelSpec; source: string; providerModel: string; requestId: string; startedAt: number | null; lineage: string; edited: boolean }`) moved out of `App.tsx`, so agent helpers can import it without pulling DOM code. `App.tsx` is not touched here; Task 7b switches its import.
+- `src/agent/sse.ts`: `parseSseStream(chunk: string, carry: string): { frames: SseFrame[]; carry: string }`. It accumulates a streaming string, splits on a blank line, parses `event:`/`data:` lines (multi-line `data` joined with `\n`), accepts `\r\n` and `\r` line endings (a trailing `\r` is held back in case the `\n` comes in the next chunk), skips comment lines and frames without `data`, and returns complete frames plus any partial tail to carry. `SseFrame = { event: string; data: string }`.
+- `src/agent/apply-state.ts`: `applyStateEvent(event, current, { requestId, now, newLineage }): { commitArg?: DisplayModel; selection?: string[]; explode?: number; tryOn?: boolean }`. The payload is validated with `StateChangeSchema` from `shared/agent.ts` (extracted from `ToolResultSchema` for this); an invalid payload returns `{}`. The `state` event carries all four fields, with `null` for "no change", so a `null` field is left out of the result. The `ModelStateChange` payload carries no `requestId`, `startedAt` or `lineage`; the caller supplies them so tests are deterministic and App keeps its `crypto.randomUUID()` lineage convention:
   - `model.kind === 'generated'` → `commitArg = { model, source, providerModel, requestId, startedAt: now, lineage: newLineage, edited: false }` (new lineage → `commit` resets selection/explode).
   - `model.kind === 'edited'` → `commitArg = { ...current, model, source, providerModel, requestId, startedAt: now, edited: true }` (keeps lineage); `current === null` → no `commitArg`.
-  - passes through `selection`/`explode`/`tryOn` when present.
+  - passes through `selection`/`explode`/`tryOn` when not `null`, including `[]`, `0` and `false`.
+- `shared/agent.ts`: export `StateChangeSchema`, and the payload schemas of the simple events (`StatusEventSchema`, `ToolEventSchema`, `FinalEventSchema`, `ErrorEventSchema`), so the client parses events with the same authority as the server.
 
 **Tests** (`tests/unit/sse.test.ts`, `tests/unit/apply-state.test.ts`):
-- `parseSseStream`: one full frame in one chunk → parsed; a frame split across two chunks → first call returns empty frames + carry, second call returns the frame; multi-line `data` → joined with `\n`; multiple frames in one chunk → all parsed; trailing partial → carried.
-- `applyStateEvent` generated: returns a `commitArg` with `lineage === newLineage`, `edited:false`, `startedAt === now`, `requestId` from the param; the new lineage triggers `commit`'s selection/explode reset.
-- `applyStateEvent` edited: returns a `commitArg` reusing `current.lineage`, `edited:true`, `requestId`/`startedAt` replaced by the params, other display fields preserved.
+- `parseSseStream`: one full frame; a frame split across two chunks (empty frames + carry, then the frame); multi-line `data`; several frames in one chunk with a trailing partial carried; `\r\n` and bare `\r`; a `\r\n` split between chunks; the same frames however the stream is cut, down to one character per chunk; comments and data-less frames skipped.
+- `applyStateEvent` generated: `commitArg` with `lineage === newLineage`, `edited:false`, `startedAt === now`, `requestId` from the param.
+- `applyStateEvent` edited: reuses `current.lineage`, `edited:true`, `requestId`/`startedAt` replaced, `current` not mutated.
 - `applyStateEvent` edited with `current === null` → no `commitArg`.
-- `applyStateEvent` with only `selection`/`explode`/`tryOn` → returns those, no `commitArg`.
+- `applyStateEvent` with only `selection`/`explode`/`tryOn` → returns those, no `commitArg`; all-null → `{}`.
+- Invalid payloads (null, a string, `{}`, an unknown field, out-of-range explode, a bad part id, an unknown model kind, a model that fails `ModelSpecSchema`) → `{}`.
 - `DisplayModel` is imported (type-only) from `src/agent/types.ts` (no DOM pulled into the Node test).
 
 **Dependencies:** Task 1 (for the `ModelStateChange` type). `DisplayModel` comes from the new `src/agent/types.ts` created here.
@@ -229,18 +231,23 @@ Pure, DOM-free functions unit-tested in Node (no jsdom/happy-dom).
 
 ---
 
-## Task 7a — `src/agent/useAgentRun.ts` + `src/agent/AgentPanel.tsx`
+## Task 7a — `src/agent/useAgentRun.ts` + `src/agent/AgentPanel.tsx` (and the pure modules behind them)
 
-`[ ]`
+`[x]`
 
-The DOM-coupled hook and panel. Verified by `npm run check` (types + build) here and by the e2e in Task 8.
+The hook and panel, with every decision that does not need a DOM moved into pure modules that are unit-tested in Node. The hook only does I/O.
 
 **Build:**
-- `src/agent/useAgentRun.ts`: `useAgentRun({ commit, setSelected, setExplode, setTryingOn, getDisplay, getTurns, pushTurn })` → `{ run, cancel, active, log, reply }`. `run(instruction)` POSTs `/api/agent` with `AgentRequest` (`model: display?.model ?? null`, selection filtered to current parts, explode, tryOn, `camera === 'on'`, last ≤10 turns, a fresh `requestId`). Reads the `ReadableStream`, feeds chunks to `parseSseStream`, dispatches: `status`/`tool`/`result` → append to `log` (result rendered from `summary`+`detail`); `state` → `applyStateEvent(event, display, { requestId, now: performance.now(), newLineage: crypto.randomUUID() })` then call `commit`/`setSelected`/`setExplode`/`setTryingOn`; `final` → set `reply`, push `{ instruction, reply }` to turns, end; `error` → set sanitized message, end; `done` → end. `cancel` aborts the fetch (`AbortController`). Imports `DisplayModel` from `src/agent/types.ts`.
-- `src/agent/AgentPanel.tsx`: instruction textarea, "執行" button (disabled while `active` or empty instruction), scrollable progress log, final reply area, "取消" button while `active`. All strings Traditional Chinese. Exposes `agentActive` to the parent for control disabling (Task 7b).
+- `src/agent/events.ts`: `parseAgentEvent(frame)` → a typed `AgentEvent` (`status`, `tool`, `result`, `state`, `final`, `error`, `done`) or `null` for an unknown event, unreadable JSON, or a payload that fails its shared schema. The `tool` event keeps only the tool name: `argsJson` is dropped before the UI can see it.
+- `src/agent/labels.ts`: `toolLabel(tool)` maps the six tools to Traditional Chinese labels (`generate_design` → 生成設計, `edit_design` → 修改設計, `select_parts` → 選取零件, `get_project_state` → 檢視目前狀態, `explode_view` → 爆炸圖, `wear_on_arm` → 護臂試戴; anything else → 其他步驟). `resultText(result)` returns the tool result's `summary`, except for a failed `UNKNOWN_TOOL` or `INVALID_ARGS` result, whose summary is written for the model and names tools and arguments; those get a plain explanation.
+- `src/agent/run-reducer.ts`: `agentRunReducer(state, action)` over `{ status: 'idle' | 'running' | 'done' | 'error' | 'cancelled', log, reply, error }` with actions `start`, `event`, `fail` (HTTP error, lost connection, stream ended without `done`) and `cancel`. Log entries hold friendly labels and user-facing text only. Once a run has ended, every action except `start` is ignored. A `state` event changes no reducer state.
+- `src/agent/request.ts`: `buildAgentRequest(instruction, snapshot, turns, requestId)` (`model: display?.model ?? null`, selection filtered to parts in the model, explode, tryOn, `cameraOn`, last ≤10 turns) and `errorMessageFromBody(body, status)` (the server's Traditional Chinese `error.message`, else a fixed message).
+- `src/agent/stream.ts`: `readAgentStream(body, signal, onFrame)` reads the response with a streaming `TextDecoder` and `parseSseStream`, and returns whether `done` was seen. It stops delivering frames once the signal aborts.
+- `src/agent/useAgentRun.ts`: `useAgentRun({ commit, setSelected, setExplode, setTryingOn, getSnapshot, getTurns, pushTurn })` → `{ run, cancel, active, status, log, reply, error }`. `getSnapshot()` returns `{ display, selectedPartIds, explode, tryOn, cameraOn }`; this replaces the `getDisplay` named earlier because the request needs the whole workbench state, not just the display. `run(instruction)` POSTs `/api/agent` with a fresh `requestId` and an `AbortController`. If the response is not `text/event-stream`, it reads the JSON error body (400/429) and shows its message. Otherwise it feeds the stream to the reducer; `state` events go through `applyStateEvent` and then `commit`, `setSelected`, `setExplode`, `setTryingOn` (commit first). The hook tracks the display it has committed itself, so two `state` events in one chunk build on each other. `final` also calls `pushTurn({ instruction, reply })`. `cancel()` aborts the fetch. A stream that ends without `done` is an error. One run at a time.
+- `src/agent/AgentPanel.tsx`: `<AgentPanel agent={useAgentRun(...)} />` with an instruction textarea, a 執行 button (disabled while running or empty), a status line, the progress log, the final reply, and a 取消 button while running. All strings are Traditional Chinese; tools appear only by their labels. The parent calls `useAgentRun` and passes the result in, so it can read `agent.active` to disable manual controls (Task 7b).
+- `src/styles.css`: only the `.agent-*` rules the panel needs, in the existing style.
 
-**Tests:** none unit (DOM-coupled). Verification = `npm run check` (types + build) + the e2e in Task 8.
-
+**Tests** (Node, no DOM): `tests/unit/run-reducer.test.ts` (every event type; an error after a partial run, then `done`; `fail`; cancel; late actions ignored after the run ended; no raw tool name or argument text in the log; the model-facing failure messages replaced), `tests/unit/agent-client-events.test.ts` (`parseAgentEvent` for every event and invalid payloads, `argsJson` dropped, `buildAgentRequest` accepted by `AgentRequestSchema`, `errorMessageFromBody`), `tests/unit/agent-stream.test.ts` (a multi-byte character split across chunks, a stream cut before `done`, abort stops delivery). The hook and panel themselves are covered by `npm run check` (types + build) and the e2e in Task 8.
 **Dependencies:** Tasks 1, 5, 6.
 **Done when:** `npm run check` passes (types + build); full green requires Task 7b + Task 8.
 
@@ -253,7 +260,7 @@ The DOM-coupled hook and panel. Verified by `npm run check` (types + build) here
 Wire the panel into the app and disable manual interaction during a run.
 
 **Build:**
-- `src/App.tsx`: replace the local `DisplayModel` type with an import from `src/agent/types.ts`; render `<AgentPanel>` in the control column; expose `commit`, `setSelected`, `setExplode`, `setTryingOn`, current `display`, and a bounded turns list (≤10) to `useAgentRun`. Add `agentActive` (from `useAgentRun`) gating the existing `disabled` props for the generate form, edit form, manual adjustment fields, transform handles, undo/redo buttons, explode slider, and selection picking (req 27). The camera toggle stays enabled. Existing prompt/edit forms are retained (req 26). Keep the existing `crypto.randomUUID()` lineage convention by passing it into `applyStateEvent` via `useAgentRun`'s `newLineage`.
+- `src/App.tsx`: replace the local `DisplayModel` type with an import from `src/agent/types.ts`; render `<AgentPanel>` in the control column; call `useAgentRun` with `commit`, `setSelected`, `setExplode`, `setTryingOn`, a `getSnapshot()` returning the current `display`, selection, explode, tryOn and `camera === 'on'`, and a bounded turns list (≤10) via `getTurns`/`pushTurn`, and pass the result to `<AgentPanel agent={...} />`. Add `agentActive` (from `useAgentRun`) gating the existing `disabled` props for the generate form, edit form, manual adjustment fields, transform handles, undo/redo buttons, explode slider, and selection picking (req 27). The camera toggle stays enabled. Existing prompt/edit forms are retained (req 26). Keep the existing `crypto.randomUUID()` lineage convention by passing it into `applyStateEvent` via `useAgentRun`'s `newLineage`.
 
 **Tests:** none unit. Verification = `npm run check` (types + build) + the e2e in Task 8 (which asserts controls are disabled during a run and re-enable after cancel).
 

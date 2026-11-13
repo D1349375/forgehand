@@ -1067,3 +1067,74 @@ summary {
   font-variant-numeric:tabular-nums;
   color:var(--cyan)
 }
+.agent-panel h2 {
+  font-size:21px;
+  letter-spacing:.5px;
+  margin-bottom:7px
+}
+.agent-panel textarea {
+  min-height:80px
+}
+.agent-sent {
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  margin:12px 0 0;
+  padding-left:10px;
+  border-left:2px solid #3d6b7a;
+  font-size:12px;
+  line-height:1.7;
+  color:#c7dde6;
+  overflow-wrap:anywhere
+}
+.agent-sent span {
+  font-size:9px;
+  letter-spacing:1px;
+  color:#577b8c
+}
+.agent-log {
+  list-style:none;
+  margin:12px 0 0;
+  padding:0;
+  max-height:260px;
+  overflow-y:auto;
+  border-top:1px solid var(--border)
+}
+.agent-log-item {
+  display:flex;
+  flex-wrap:wrap;
+  gap:2px 8px;
+  align-items:baseline;
+  padding:8px 0;
+  border-bottom:1px solid var(--border);
+  font-size:12px;
+  line-height:1.7;
+  color:#a0c5d3;
+  overflow-wrap:anywhere
+}
+.agent-log-item strong {
+  font-size:11px;
+  font-weight:500;
+  color:var(--cyan)
+}
+.agent-log-item.status {
+  color:#9ab6c4;
+  font-style:italic
+}
+.agent-log-item.tool {
+  color:#577b8c
+}
+.agent-log-item.result {
+  color:#deebf1
+}
+.agent-log-item.failed {
+  color:#ebc8a3
+}
+.agent-result-state {
+  font-size:9px;
+  letter-spacing:1px;
+  color:#bfe8cf
+}
+.agent-log-item.failed .agent-result-state {
+  color:#f0b8a3
+}

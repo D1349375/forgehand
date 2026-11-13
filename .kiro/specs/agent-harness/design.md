@@ -142,6 +142,8 @@ src/agent/useAgentRun.ts   NEW  POST /api/agent with fetch + ReadableStream; par
 src/agent/sse.ts           NEW  pure SSE frame parser (no DOM; unit-tested in Node).
 src/agent/apply-state.ts   NEW  pure applyStateEvent(event, current, { requestId, now, newLineage }): turns a
                             state event into commit/setSelected/setExplode/setTryingOn args (no DOM; unit-tested in Node).
+src/agent/events.ts, labels.ts, run-reducer.ts, request.ts, stream.ts   NEW  the pure pieces behind the hook (event parsing,
+                            Chinese tool labels, the run reducer, request building, stream reading); unit-tested in Node.
 src/App.tsx                EDIT render AgentPanel; expose setters/commit so useAgentRun applies state events;
                             disable manual editing + generate/edit forms + undo/redo while an agent run is active.
 ```
@@ -326,7 +328,7 @@ POST /api/agent
   - `final` → set the agent's final reply, end run.
   - `error` → show sanitized message, end run.
   - `done` → end run.
-- Exposes `{ run, cancel, active, log, reply }`. `cancel` aborts the fetch; the server's `res.close` fires `clientSignal` abort, which ends the loop (req 19).
+- Exposes `{ run, cancel, active, status, log, reply, error }`. The run logic is the pure `agentRunReducer` (`src/agent/run-reducer.ts`); the hook only does I/O and gets the workbench state through a `getSnapshot()` callback. `cancel` aborts the fetch; the server's `res.close` fires `clientSignal` abort, which ends the loop (req 19).
 - `DisplayModel` is exported from `src/agent/types.ts` (moved out of `App.tsx`), imported by `App.tsx`, `useAgentRun`, and `apply-state.ts`.
 
 ### 7.2 `AgentPanel`

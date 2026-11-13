@@ -50,18 +50,22 @@ export type ModelStateChange = z.infer<typeof ModelStateChangeSchema>;
 
 // ----- ToolResult -----
 
+/** What a tool changed. Sent whole in the `state` event; the `result` event nulls `model`. */
+export const StateChangeSchema = z.strictObject({
+  model: ModelStateChangeSchema.nullable(),
+  selection: z.array(partId).max(64).nullable(),
+  explode: z.number().min(0).max(1).nullable(),
+  tryOn: z.boolean().nullable(),
+});
+export type StateChange = z.infer<typeof StateChangeSchema>;
+
 export const ToolResultSchema = z.strictObject({
   tool: z.string().trim().min(1).max(64),
   ok: z.boolean(),
   summary: z.string().trim().min(1).max(1000),
   // Per-tool detail, validated by the matching detail schema below. NEVER a full ModelSpec.
   detail: z.unknown().nullable(),
-  stateChange: z.strictObject({
-    model: ModelStateChangeSchema.nullable(),
-    selection: z.array(partId).max(64).nullable(),
-    explode: z.number().min(0).max(1).nullable(),
-    tryOn: z.boolean().nullable(),
-  }).nullable(),
+  stateChange: StateChangeSchema.nullable(),
 });
 
 export type ToolResult = z.infer<typeof ToolResultSchema>;
@@ -243,6 +247,13 @@ export function agentJsonSchema(): Record<string, unknown> {
 // ----- SSE event helpers -----
 
 export const AGENT_EVENTS = ['status', 'tool', 'result', 'state', 'final', 'error', 'done'] as const;
+
+// Payloads of the simple events, so the client parses them with the same authority.
+// `result` uses ToolResultSchema and `state` uses StateChangeSchema.
+export const StatusEventSchema = z.strictObject({ note: z.string().nullable() });
+export const ToolEventSchema = z.strictObject({ tool: z.string().min(1).max(64), argsJson: z.string() });
+export const FinalEventSchema = z.strictObject({ reply: z.string().min(1) });
+export const ErrorEventSchema = z.strictObject({ message: z.string().min(1) });
 export type AgentEventName = (typeof AGENT_EVENTS)[number];
 
 export function serializeSseEvent(name: AgentEventName, data: unknown): string {
