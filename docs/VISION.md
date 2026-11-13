@@ -246,5 +246,6 @@ Demo path for the video, using only P0/P1: "I have unfinished products" → open
 - **Latency of candidates:** five generations through a CLI may take minutes. Option: one call that returns several small variants, at the cost of a larger schema.
 - **Image input per provider (C12):** untested in the isolated CLI modes.
 - **Head anchor units (C10):** the face transformation matrix needs a spike before the spec.
+- **Try-on quality today (C10):** in the author's own test (2026-11-13) the forearm tracking still loses the arm and the cuff does not feel worn. The `body-fit` spec must cover tracking stability and realism, not only "attach any object": hand and arm occlusion (a person-segmentation mask so the far side of the object hides behind the arm), a contact shadow, matching light, scale from metric world landmarks, and smoothing measured on recordings like `docs/PRIOR_WORK.md` did.
 - **Printable export:** union of primitives needs a CSG dependency; decide in the `export` spec.
 - **Credits and time:** Kiro credits are sufficient at the observed ~12 credits per task with Claude Sonnet 4.5; time is the real limit. Phase D is fixed; cut P1 items from phases B and C first.
