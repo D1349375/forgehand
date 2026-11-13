@@ -6,7 +6,7 @@ import { defineTool } from './registry';
 export const wearOnArm = defineTool({
   name: 'wear_on_arm',
   category: 'body',
-  description: 'toggles arm-tracking try-on. If enabled and the camera is off, asks the user to turn it on (does not start the camera itself). Returns NO_MODEL if no model exists.',
+  description: "toggles arm-tracking try-on. The try-on currently shows a stand-in cuff, not the user's design, so never say the design is being worn. If enabled and the camera is off, asks the user to turn it on (does not start the camera itself). Returns NO_MODEL if no model exists.",
   args: z.strictObject({ enabled: z.boolean() }),
   side: 'server',
   scope: 'project',

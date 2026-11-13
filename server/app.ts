@@ -3,6 +3,9 @@ import path from 'node:path';
 import { z } from 'zod';
 import { applyEditPlan, EditError, EditRequestSchema, validateEditPlan, type EditPlan, type EditResult } from '../shared/edit';
 import { validateDesign, validateModel, type GenerationResult, type ModelSpec } from '../shared/model';
+import { AgentRequestError, validateAgentRequest, type AgentRequest } from '../shared/agent';
+import { createEmitter, setSseHeaders, type SseEmitter } from './agent-events';
+import { AGENT_TIMEOUT_MESSAGE, runAgent } from './agent';
 import { createOpenAIProvider, editTask, GenerationError, type ModelProvider } from './provider';
 
 const RequestSchema = z.strictObject({
@@ -17,12 +20,18 @@ export interface AppOptions {
   timeoutMs?: number;
   terminationGraceMs?: number;
   staticDirectory?: string;
+  /** Most model rounds one agent run may use (default 6). */
+  agentMaxRounds?: number;
+  /** Time limit for a whole agent run in ms (default 600000). `timeoutMs` bounds one model call only. */
+  agentTotalTimeoutMs?: number;
 }
 
 export function createApp(options: AppOptions = {}) {
   const provider = options.provider ?? createOpenAIProvider(options);
   const timeoutMs = options.timeoutMs ?? 180_000;
   const terminationGraceMs = options.terminationGraceMs ?? 22000;
+  const agentMaxRounds = options.agentMaxRounds ?? 6;
+  const agentTotalTimeoutMs = options.agentTotalTimeoutMs ?? 600_000;
   const app = express();
   app.disable('x-powered-by');
   app.use((req, res, next) => {
@@ -153,6 +162,71 @@ export function createApp(options: AppOptions = {}) {
         elapsedMs: Math.round(performance.now() - start), requestId };
       return result;
     });
+  });
+
+  /**
+   * Lifecycle for an agent run, mirroring `modelRoute`: it holds an active slot,
+   * turns a client disconnect into `controller.abort()`, and releases the slot
+   * only after `runAgent` has settled (the provider has stopped). The one
+   * exception is a provider that ignores cancellation: `terminationGraceMs`
+   * after the total-run timeout, it ends the stream with a sanitized timeout
+   * error and releases the slot. `runAgent` emits every terminal event itself;
+   * the route only adds this bound and a backstop for an unexpected throw.
+   * Request checks (400, 429) are plain JSON and happen before this is called.
+   */
+  async function agentRoute(res: Response, work: (signal: AbortSignal, emit: SseEmitter['emit']) => Promise<void>) {
+    setSseHeaders(res);
+    const stream = createEmitter(res);
+    const controller = new AbortController();
+    const disconnected = () => controller.abort();
+    res.on('close', disconnected);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    activeRequests++;
+    try {
+      const unresponsive = new Promise<'unresponsive'>(resolve => {
+        timer = setTimeout(() => { graceTimer = setTimeout(() => resolve('unresponsive'), terminationGraceMs); }, agentTotalTimeoutMs);
+      });
+      const outcome = await Promise.race([work(controller.signal, stream.emit).then(() => 'settled' as const), unresponsive]);
+      if (outcome === 'unresponsive') {
+        controller.abort();
+        stream.emit('error', { message: AGENT_TIMEOUT_MESSAGE });
+        stream.emit('done', {});
+      }
+    } catch {
+      // runAgent handles its own failures; this is only a backstop for an unexpected throw.
+      stream.emit('error', { message: '模型服務暫時無法完成，請稍後重試。' });
+      stream.emit('done', {});
+    } finally {
+      activeRequests--;
+      clearTimeout(timer);
+      clearTimeout(graceTimer);
+      res.off('close', disconnected);
+      stream.close();
+    }
+  }
+
+  app.post('/api/agent', async (req, res) => {
+    let agentRequest: AgentRequest;
+    try { agentRequest = validateAgentRequest(req.body); }
+    catch (error) {
+      if (error instanceof AgentRequestError) {
+        const requestId = (req.body as { requestId: string }).requestId;
+        const message = error.code === 'INVALID_MODEL'
+          ? '目前模型資料無效，無法處理這次請求。'
+          : '選取的零件不在目前模型中，請重新選取。';
+        res.status(400).json({ error: { code: error.code, message }, requestId });
+        return;
+      }
+      res.status(400).json({ error: { code: 'INVALID_REQUEST', message: '請輸入 1–4000 字的指示，並附上目前模型、顯示狀態與有效的請求識別碼。' } });
+      return;
+    }
+    if (activeRequests >= 3) {
+      res.status(429).json({ error: { code: 'BUSY', message: '目前已有多個生成請求，請稍後重試。' }, requestId: agentRequest.requestId });
+      return;
+    }
+    await agentRoute(res, (signal, emit) =>
+      runAgent(provider, agentRequest, { maxRounds: agentMaxRounds, totalTimeoutMs: agentTotalTimeoutMs }, emit, signal));
   });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: '找不到此服務。' } }));

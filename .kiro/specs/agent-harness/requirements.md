@@ -64,36 +64,36 @@ The server is **stateless**. All project state — the model, undo/redo history,
 
 ### Streaming and cancellation
 
-16. The agent reports its progress to the frontend in real time, per step: the model's status note, each tool call as it starts and finishes, and the final reply.
-17. The transport is Server-Sent Events (SSE). The streaming mechanism is built so that the later realtime-voice feature can reuse it.
-18. The user can cancel a run at any time. Changes already applied in earlier rounds stay, because they were validated and are undoable; the round in progress is discarded. Ending on a timeout, the round limit, or an error follows the same rule.
+17. The agent reports its progress to the frontend in real time, per step: the model's status note, each tool call as it starts and finishes, and the final reply.
+18. The transport is Server-Sent Events (SSE). The streaming mechanism is built so that the later realtime-voice feature can reuse it.
+19. The user can cancel a run at any time. Changes already applied in earlier rounds stay, because they were validated and are undoable; the round in progress is discarded. Ending on a timeout, the round limit, or an error follows the same rule.
 
 ### API
 
-19. A new `/api/agent` endpoint accepts a user instruction, the current model, selection, and display state, and streams the agent run.
-20. `/api/generate` and `/api/edit` continue to work unchanged, and their existing tests pass without modification.
-21. The request body stays under the existing 128 kB JSON body limit in `app.ts`.
-22. A run counts toward the existing concurrency limit in `app.ts`.
-23. The client sends a bounded history of previous turns in the same session — the user's instructions and the agent's final replies, not full tool details, capped (e.g. the last 10) — so a follow-up like "make the legs longer" can refer to an earlier run.
+20. A new `/api/agent` endpoint accepts a user instruction, the current model, selection, and display state, and streams the agent run.
+21. `/api/generate` and `/api/edit` continue to work unchanged, and their existing tests pass without modification.
+22. The request body stays under the existing 128 kB JSON body limit in `app.ts`.
+23. A run counts toward the existing concurrency limit in `app.ts`.
+24. The client sends a bounded history of previous turns in the same session — the user's instructions and the agent's final replies, not full tool details, capped (e.g. the last 10) — so a follow-up like "make the legs longer" can refer to an earlier run.
 
 ### Frontend
 
-24. A new agent conversation panel lets the user enter an instruction, watch streamed progress, and read the agent's final reply.
-25. The existing generate and edit forms are retained.
-26. While an agent run is active, manual editing, the generate/edit forms, and undo/redo are disabled. The user can only watch or cancel. This avoids conflicts with manual edits made during the run.
+25. A new agent conversation panel lets the user enter an instruction, watch streamed progress, and read the agent's final reply.
+26. The existing generate and edit forms are retained.
+27. While an agent run is active, manual editing, the generate/edit forms, and undo/redo are disabled. The user can only watch or cancel. This avoids conflicts with manual edits made during the run.
 
 ## Non-functional requirements
 
-27. The `AgentStep` schema and all tool argument/result schemas live in `shared/`, so both server and client validate with the same Zod authority, consistent with the existing `model.ts` / `edit.ts` contract.
-28. The agent loop works against any `ModelProvider` (codex, claude, openai) without provider-specific branching, so switching back ends later requires no change to the loop.
-29. Every task in `tasks.md` has unit tests. Tests never call a real model back end; they use a fake `ModelProvider` that returns scripted `AgentStep`s. Only `npm run verify:real` / `npm run verify:edit` may call a real back end, and only when the user asks.
-30. `npm run check` (type check + build + unit tests) passes before a task is considered done, and the real result is reported.
-31. Spec, design, and task files are written in English. UI strings the user sees stay Traditional Chinese; no language mixing within one screen.
+28. The `AgentStep` schema and all tool argument/result schemas live in `shared/`, so both server and client validate with the same Zod authority, consistent with the existing `model.ts` / `edit.ts` contract.
+29. The agent loop works against any `ModelProvider` (codex, claude, openai) without provider-specific branching, so switching back ends later requires no change to the loop.
+30. Every task in `tasks.md` has unit tests. Tests never call a real model back end; they use a fake `ModelProvider` that returns scripted `AgentStep`s. Only `npm run verify:real` / `npm run verify:edit` may call a real back end, and only when the user asks.
+31. `npm run check` (type check + build + unit tests) passes before a task is considered done, and the real result is reported.
+32. Spec, design, and task files are written in English. UI strings the user sees stay Traditional Chinese; no language mixing within one screen.
 
 ## Constraints & conventions
 
-32. The agent loop is built on the existing `ModelProvider.run(task)` and `ModelTask<T>` shape; the `AgentStep` is a new `ModelTask` parse target alongside the existing design/edit tasks.
-33. All existing security posture is preserved: the server stays loopback-only, rejects non-loopback origins, sets `no-store` / `nosniff`, never logs provider bodies/keys/prompts, and sanitizes error messages returned to the client.
-34. Locally-computable tools (`explode_view`, `estimate_weight_cost`, `check_feasibility`, `get_project_state`, `select_parts`) must not call the model, to keep latency and cost down.
-35. The explode amount and wear/try-on toggle are display state only, like the existing `explode` and `tryingOn` state in `App.tsx`; they never become part of the `ModelSpec` or undo history.
-36. The server must not import `src/`. Browser-only concerns (Three.js, MediaPipe, explode layout, camera) stay in the browser; the server only validates arguments and records display-state values.
+33. The agent loop is built on the existing `ModelProvider.run(task)` and `ModelTask<T>` shape; the `AgentStep` is a new `ModelTask` parse target alongside the existing design/edit tasks.
+34. All existing security posture is preserved: the server stays loopback-only, rejects non-loopback origins, sets `no-store` / `nosniff`, never logs provider bodies/keys/prompts, and sanitizes error messages returned to the client.
+35. Locally-computable tools (`explode_view`, `estimate_weight_cost`, `check_feasibility`, `get_project_state`, `select_parts`) must not call the model, to keep latency and cost down.
+36. The explode amount and wear/try-on toggle are display state only, like the existing `explode` and `tryingOn` state in `App.tsx`; they never become part of the `ModelSpec` or undo history.
+37. The server must not import `src/`. Browser-only concerns (Three.js, MediaPipe, explode layout, camera) stay in the browser; the server only validates arguments and records display-state values.
