@@ -4,11 +4,14 @@ import { applyEditPlan, describeChanges, editConflicts, EditError, EditResultSch
 import { validateGenerationResult, validateModel, type GenerationResult, type ModelSpec, type Part } from '../shared/model';
 import { SceneViewport, type SceneHandle, type TransformMode, type Vector } from './scene/SceneViewport';
 import { useArmTracking, type ArmTrackingStatus } from './try-on/useArmTracking';
+import type { AgentTurn } from '../shared/agent';
+import { AgentPanel } from './agent/AgentPanel';
+import { HISTORY_TURN_LIMIT } from './agent/request';
+import type { DisplayModel } from './agent/types';
+import { useAgentRun } from './agent/useAgentRun';
 
 type ServiceStatus = { configured: boolean; provider: string; model: string; reason?: string };
 const providerLabel = (provider?: string) => provider === 'codex' ? 'Codex CLI' : provider === 'claude' ? 'Claude Code CLI' : 'OpenAI API';
-/** `lineage` identifies one object across its edits; a new object gets a new lineage. */
-type DisplayModel = { model: ModelSpec; source: string; providerModel: string; requestId: string; startedAt: number | null; lineage: string; edited: boolean };
 type Pending = { result: GenerationResult; startedAt: number };
 /** `lineage` is the object the AI answer was made for; undo/redo may leave it while the dialog is open. */
 type Conflict = { result: EditResult; parts: Part[]; startedAt: number; lineage: string };
@@ -26,8 +29,8 @@ const armStatusText: Record<ArmTrackingStatus, string> = {
 
 declare global { interface Window { __forgehandScene?: SceneHandle | null } }
 
-function NumberField({ label, value, scale = 1, min, max, digits = 1, onCommit }: {
-  label: string; value: number; scale?: number; min: number; max: number; digits?: number; onCommit: (value: number) => void;
+function NumberField({ label, value, scale = 1, min, max, digits = 1, disabled = false, onCommit }: {
+  label: string; value: number; scale?: number; min: number; max: number; digits?: number; disabled?: boolean; onCommit: (value: number) => void;
 }) {
   const shown = Number((value * scale).toFixed(digits)).toString();
   const [draft, setDraft] = useState(shown);
@@ -40,7 +43,7 @@ function NumberField({ label, value, scale = 1, min, max, digits = 1, onCommit }
     if (number.toFixed(digits) !== Number(shown).toFixed(digits)) onCommit(number / scale);
   };
   return <label className={`number-field ${invalid ? 'invalid' : ''}`}><span>{label}</span>
-    <input inputMode="decimal" value={draft} aria-label={label} aria-invalid={invalid}
+    <input inputMode="decimal" value={draft} aria-label={label} aria-invalid={invalid} disabled={disabled}
       onChange={event => setDraft(event.target.value)} onBlur={commit}
       onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => { if (event.key === 'Enter') { event.preventDefault(); commit(); } else if (event.key === 'Escape') { setDraft(shown); setInvalid(false); } }} />
   </label>;
@@ -87,6 +90,19 @@ export default function App() {
   const lastRendered = useRef<DisplayModel | null>(null);
   currentDisplay.current = display;
   const lastFailed = useRef<'generate' | 'edit'>('generate');
+  /** The latest completed agent turns, newest last, sent as history so follow-ups have context. */
+  const agentTurns = useRef<AgentTurn[]>([]);
+  const agent = useAgentRun({
+    commit: commitFromAgent,
+    setSelected,
+    setExplode: setExplodeAmount,
+    setTryingOn,
+    getSnapshot: () => ({ display: currentDisplay.current, selectedPartIds: selected, explode, tryOn: tryingOn, cameraOn: camera === 'on' }),
+    getTurns: () => agentTurns.current,
+    pushTurn: turn => { agentTurns.current = [...agentTurns.current, turn].slice(-HISTORY_TURN_LIMIT); },
+  });
+  /** While an agent run is active the user can only watch or cancel: manual changes would race its edits. */
+  const agentActive = agent.active;
 
   async function refreshService() {
     try {
@@ -131,6 +147,7 @@ export default function App() {
     setMessage(label);
   }
   function undo() {
+    if (agentActive) return;
     const current = currentDisplay.current;
     const previous = history.past.at(-1);
     if (!current || !previous) return;
@@ -138,6 +155,7 @@ export default function App() {
     restore(previous, '已復原上一步。');
   }
   function redo() {
+    if (agentActive) return;
     const current = currentDisplay.current;
     const next = history.future[0];
     if (!current || !next) return;
@@ -180,6 +198,7 @@ export default function App() {
     setTryingOn(false);
   }
   function toggleTryOn() {
+    if (agentActive) return;
     if (tryingOn) {
       if (camera === 'starting') stopCamera();
       else setTryingOn(false);
@@ -233,6 +252,7 @@ export default function App() {
   }
 
   async function generate() {
+    if (agentActive) return;
     if (!prompt.trim()) { setError('請先描述想建立的物件。'); return; }
     await callModel('generate', '/api/generate', { prompt: prompt.trim() }, (body, requestId, startedAt) => {
       let result: GenerationResult;
@@ -271,6 +291,7 @@ export default function App() {
   }
 
   async function edit() {
+    if (agentActive) return;
     const base = currentDisplay.current;
     if (!base) { setError('請先生成或載入一個模型。'); return; }
     if (!instruction.trim()) { setError('請輸入想怎麼修改目前模型。'); return; }
@@ -295,10 +316,20 @@ export default function App() {
   }
 
   function loadDemo() {
+    if (agentActive) return;
     invalidateRequest(); setError(''); setRenderError(''); setTiming(null); setEditSummary(null); setClarify('');
     commit({ model: demoModel, source: 'demo', providerModel: '本機示範資料', requestId: 'demo', startedAt: null, lineage: crypto.randomUUID(), edited: false });
     setMode('edit');
     setMessage('已載入預先建立的示範模型，這不是 AI 生成結果。');
+  }
+
+  /** A model committed by the agent: drop dialogs and notices that belonged to the old model, like applyResult/applyEdit. */
+  function commitFromAgent(next: DisplayModel) {
+    setPending(null); setConflict(null); setEditSummary(null); setClarify('');
+    setTiming(null); setRenderError('');
+    commit(next);
+    if (!next.edited) setMode('edit');
+    setMessage(next.edited ? '代理已修改模型，可按「復原」回到上一步。' : '代理已建立新模型，可按「復原」回到上一步。');
   }
 
   /** Local, immediate change; validated exactly like AI output before display. */
@@ -315,11 +346,13 @@ export default function App() {
     }
   }
   function updatePart(id: string, patch: Partial<Part>, label = '已調整零件，可按「復原」回到上一步。') {
+    if (agentActive) return;
     const current = currentDisplay.current;
     if (!current) return;
     adjust({ ...current.model, parts: current.model.parts.map(part => part.id === id ? { ...part, ...patch } : part) }, label);
   }
   function removeSelected() {
+    if (agentActive) return;
     const current = currentDisplay.current;
     if (!current || !selected.length) return;
     const removing = new Set(selected);
@@ -330,6 +363,7 @@ export default function App() {
     setSelected([]); setTransformMode(null);
   }
   function pick(id: string | null, additive: boolean) {
+    if (agentActive) return;
     setAdjustError('');
     if (!id) { if (!additive) setSelected([]); return; }
     setSelected(ids => additive ? (ids.includes(id) ? ids.filter(entry => entry !== id) : [...ids, id]) : (ids.length === 1 && ids[0] === id ? ids : [id]));
@@ -339,12 +373,14 @@ export default function App() {
     if (amount > 0) setTransformMode(null);
   }
   function onTransform(id: string, position: Vector, rotation: Vector) {
+    if (agentActive) return;
     updatePart(id, { position, rotation }, transformMode === 'rotate' ? '已旋轉零件，可按「復原」回到上一步。' : '已移動零件，可按「復原」回到上一步。');
   }
 
   // Keyboard shortcuts never fire while typing in a field.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (agentActive) return; // undo, redo, Escape and Delete all change the model or selection
       const target = event.target as HTMLElement | null;
       if (target && (target.closest('input, textarea, select, [contenteditable="true"]'))) return;
       const key = event.key.toLowerCase();
@@ -367,7 +403,7 @@ export default function App() {
     const config = key === 'rotation' ? { scale: 1, min: -360, max: 360, digits: 1, unit: '°' }
       : key === 'dimensions' ? { scale: MM, min: 1, max: 100_000, digits: 1, unit: 'mm' } : { scale: MM, min: -100_000, max: 100_000, digits: 1, unit: 'mm' };
     return <fieldset className="vector-field"><legend>{label}<small>{config.unit}</small></legend>
-      {(['x', 'y', 'z'] as const).map(axis => <NumberField key={axis} label={`${label} ${axis.toUpperCase()}`} value={value[axis]} scale={config.scale} min={config.min} max={config.max} digits={config.digits}
+      {(['x', 'y', 'z'] as const).map(axis => <NumberField key={axis} label={`${label} ${axis.toUpperCase()}`} value={value[axis]} scale={config.scale} min={config.min} max={config.max} digits={config.digits} disabled={agentActive}
         onCommit={number => single && updatePart(single.id, { [key]: { ...value, [axis]: number } } as Partial<Part>)} />)}
     </fieldset>;
   };
@@ -380,7 +416,7 @@ export default function App() {
         <div className={`viewport ${contrast ? 'high-contrast' : ''}`} data-testid="viewport">
           <video ref={videoRef} muted playsInline autoPlay className={`camera-video ${camera === 'on' ? 'visible' : ''} ${mirrored ? 'mirrored' : ''}`} data-mirrored={mirrored} aria-label="即時攝影機背景" />
           <div className="viewport-shade" />
-          <SceneViewport ref={sceneRef} model={display?.model ?? null} fitKey={display?.lineage ?? null} selectedIds={selected} transformMode={transformMode} explode={explode}
+          <SceneViewport ref={sceneRef} model={display?.model ?? null} fitKey={display?.lineage ?? null} selectedIds={selected} transformMode={agentActive ? null : transformMode} explode={explode}
             tryOn={tryOnActive ? armTracking.sample : undefined}
             onPick={pick} onTransform={onTransform}
             onError={message => { setRenderError(message); setMessage('3D 顯示未完成，已保留上一個成功模型。'); if (lastRendered.current !== currentDisplay.current) setDisplay(lastRendered.current); }} onReady={() => {
@@ -392,7 +428,7 @@ export default function App() {
             if (first) setMessage(item.source === 'demo' ? '示範模型已就緒。可拖曳旋轉、滾輪縮放，點擊零件即可選取。' : '3D 草案已建立。請旋轉檢查主要結構與分件，點擊零件即可選取。');
           }} />
           <div className="stage-label"><span className="tiny-cross">＋</span>{tryingOn ? '護臂試戴' : '虛擬展示位置'}<span>{tryingOn ? '' : 'CONCEPT / 01'}</span></div>
-          {!display && !tryingOn && <div className="empty-scene"><div className="reticle"><span /><i /></div><h2>讓第一個想法成形</h2><p>描述物件的外形、顏色與組成，<br />在這裡旋轉檢視立體概念。</p><button className="button ghost" onClick={loadDemo}>載入示範模型</button></div>}
+          {!display && !tryingOn && <div className="empty-scene"><div className="reticle"><span /><i /></div><h2>讓第一個想法成形</h2><p>描述物件的外形、顏色與組成，<br />在這裡旋轉檢視立體概念。</p><button className="button ghost" onClick={loadDemo} disabled={agentActive}>載入示範模型</button></div>}
           {display && <div className="model-caption"><span className="eyebrow">{sourceLabel}</span><h2 data-testid="model-name">{display.model.name}</h2><span>{display.model.parts.length} 個實際零件 · 概念草案{single ? ` · 已選取 ${single.name}` : selectedParts.length > 1 ? ` · 已選取 ${selectedParts.length} 個零件` : ''}</span></div>}
           <div className="orientation" aria-hidden="true"><span>Y</span><i />X <b>Z</b></div>
           <div className="stage-footer"><span>拖曳旋轉 · 滾輪縮放 · 點擊選取（Shift 加選）</span><span>未固定於真實桌面</span></div>
@@ -400,63 +436,64 @@ export default function App() {
         <div className="stage-toolbar">
           <div className="button-group">
             <button className="button" onClick={() => camera === 'off' ? void startCamera() : stopCamera()}>{camera === 'off' ? '開啟攝影機' : camera === 'starting' ? '取消開啟' : '關閉攝影機'}</button>
-            <button className={`button ${tryingOn ? 'active' : ''}`} type="button" aria-pressed={tryingOn} disabled={camera === 'starting' && !tryingOn} onClick={toggleTryOn}>
+            <button className={`button ${tryingOn ? 'active' : ''}`} type="button" aria-pressed={tryingOn} disabled={(camera === 'starting' && !tryingOn) || agentActive} onClick={toggleTryOn}>
               {tryingOn ? '結束護臂試戴' : '護臂試戴'}
             </button>
             <label className="contrast-toggle"><input type="checkbox" checked={contrast} onChange={e => setContrast(e.target.checked)} />提高背景對比</label>
           </div>
-          <div className="button-group"><button className="button" onClick={undo} disabled={!history.past.length} title="Ctrl+Z">復原</button><button className="button" onClick={redo} disabled={!history.future.length} title="Ctrl+Shift+Z">重做</button><button className="icon-button" onClick={() => sceneRef.current?.zoomOut()} aria-label="縮小" disabled={!display}>−</button><button className="icon-button" onClick={() => sceneRef.current?.zoomIn()} aria-label="放大" disabled={!display}>＋</button><button className="button" onClick={() => sceneRef.current?.reset()} disabled={!display}>重設視角</button></div>
+          <div className="button-group"><button className="button" onClick={undo} disabled={!history.past.length || agentActive} title="Ctrl+Z">復原</button><button className="button" onClick={redo} disabled={!history.future.length || agentActive} title="Ctrl+Shift+Z">重做</button><button className="icon-button" onClick={() => sceneRef.current?.zoomOut()} aria-label="縮小" disabled={!display}>−</button><button className="icon-button" onClick={() => sceneRef.current?.zoomIn()} aria-label="放大" disabled={!display}>＋</button><button className="button" onClick={() => sceneRef.current?.reset()} disabled={!display}>重設視角</button></div>
         </div>
         {tryingOn && <p className={`notice ${armTracking.status.endsWith('-error') ? 'warning' : ''}`} role="status" data-testid="try-on-status" data-state={armTracking.status}>{armStatusText[armTracking.status]}
           {armTracking.stats && <span className="small-muted" data-testid="try-on-stats"> · {armTracking.stats.delegate} · 每秒 {armTracking.stats.fps.toFixed(0)} 幀 · 辨識 {armTracking.stats.inferenceMs.toFixed(0)} ms · 偵測到手 {armTracking.stats.handFps.toFixed(0)}／對齊 {armTracking.stats.armFps.toFixed(0)} 次每秒{armTracking.stats.source && ` · 前臂依${armTracking.stats.source === 'elbow' ? '手肘' : '手部方向'}`}</span>}</p>}
-        {display && <div className="explode-toolbar"><button type="button" className={`button ${explode > 0 ? 'active' : ''}`} aria-pressed={explode > 0} onClick={() => setExplodeAmount(explode > 0 ? 0 : 1)}>{explode > 0 ? '收回爆炸圖' : '爆炸圖'}</button>
-          <label className="explode-slider"><span>拆開程度</span><input type="range" min={0} max={100} step={1} value={Math.round(explode * 100)} aria-label="拆開程度" onChange={event => setExplodeAmount(Number(event.target.value) / 100)} /><output>{Math.round(explode * 100)}%</output></label>
+        {display && <div className="explode-toolbar"><button type="button" className={`button ${explode > 0 ? 'active' : ''}`} aria-pressed={explode > 0} disabled={agentActive} onClick={() => setExplodeAmount(explode > 0 ? 0 : 1)}>{explode > 0 ? '收回爆炸圖' : '爆炸圖'}</button>
+          <label className="explode-slider"><span>拆開程度</span><input type="range" min={0} max={100} step={1} value={Math.round(explode * 100)} aria-label="拆開程度" disabled={agentActive} onChange={event => setExplodeAmount(Number(event.target.value) / 100)} /><output>{Math.round(explode * 100)}%</output></label>
           <span className="small-muted">依零件階層在本機計算，不改模型資料、不呼叫 AI；拆開時停用拖曳把手。</span></div>}
         {cameraError && <p className="notice warning" role="alert">{cameraError}</p>}
         {renderError && <p className="notice warning" role="alert">{renderError}</p>}
         <div className="stage-note"><span className="note-index">01 /</span><p>青藍輪廓呈現零件邊界，琥珀色輪廓表示已選取。攝影機只在本機顯示；生成與修改服務接收你的文字與目前模型資料。</p></div>
       </section>
       <aside className="control-column">
+        <AgentPanel agent={agent} disabled={Boolean(busy)} />
         <section className="panel prompt-panel">
           {display && <div className="mode-switch" role="tablist" aria-label="文字用途"><button role="tab" aria-selected={editing} className={editing ? 'active' : ''} onClick={() => setMode('edit')}>修改目前模型</button><button role="tab" aria-selected={!editing} className={!editing ? 'active' : ''} onClick={() => setMode('create')}>生成新物件</button></div>}
           {editing ? <>
             <span className="eyebrow">EDIT THIS CONCEPT</span><h2>想怎麼修改？</h2><p className="muted">只會變更需要改的零件；說「這個」代表已選取的零件。</p>
-            <form onSubmit={e => { e.preventDefault(); void edit(); }}><label htmlFor="instruction">修改指示</label><textarea id="instruction" value={instruction} maxLength={4000} onChange={e => setInstruction(e.target.value)} rows={4} placeholder="例如：四條桌腳加長到 50 公分，桌面跟著升高" />
+            <form onSubmit={e => { e.preventDefault(); void edit(); }}><label htmlFor="instruction">修改指示</label><textarea id="instruction" value={instruction} maxLength={4000} disabled={agentActive} onChange={e => setInstruction(e.target.value)} rows={4} placeholder="例如：四條桌腳加長到 50 公分，桌面跟著升高" />
               <div className="input-meta"><span>{selectedParts.length ? `參考已選取：${selectedParts.map(part => part.name).join('、')}` : '未選取零件：套用到整個模型'}</span><span>{instruction.length}/4000</span></div>
-              <button className="button primary" type="submit" disabled={!instruction.trim()}>套用修改 <span aria-hidden="true">↗</span></button></form>
+              <button className="button primary" type="submit" disabled={!instruction.trim() || agentActive}>套用修改 <span aria-hidden="true">↗</span></button></form>
           </> : <>
             <span className="eyebrow">CREATE A CONCEPT</span><h2>你想建立什麼？</h2><p className="muted">用自己的話描述，不需要固定指令。</p>
-            <form onSubmit={e => { e.preventDefault(); void generate(); }}><label htmlFor="prompt">物件描述</label><textarea id="prompt" value={prompt} maxLength={4000} onChange={e => setPrompt(e.target.value)} rows={5} placeholder="例如：一個帶兩個鏡頭、右側裝橘色電池的手持裝置" /><div className="input-meta"><span>形狀 · 色彩 · 件數 · 配置</span><span>{prompt.length}/4000</span></div><button className="button primary" type="submit" disabled={!prompt.trim()}>生成 3D 草案 <span aria-hidden="true">↗</span></button></form>
+            <form onSubmit={e => { e.preventDefault(); void generate(); }}><label htmlFor="prompt">物件描述</label><textarea id="prompt" value={prompt} maxLength={4000} disabled={agentActive} onChange={e => setPrompt(e.target.value)} rows={5} placeholder="例如：一個帶兩個鏡頭、右側裝橘色電池的手持裝置" /><div className="input-meta"><span>形狀 · 色彩 · 件數 · 配置</span><span>{prompt.length}/4000</span></div><button className="button primary" type="submit" disabled={!prompt.trim() || agentActive}>生成 3D 草案 <span aria-hidden="true">↗</span></button></form>
           </>}
           <div className="generation-status" aria-live="polite" role="status"><span className={`status-dot ${busy ? 'pulsing' : ''}`} /><span>{busyText}</span></div>
           {busy && <button className="text-button" onClick={() => { invalidateRequest(); setMessage('已取消等待，目前模型仍可操作。'); }}>{busy === 'edit' ? '取消這次修改' : '取消這次生成'}</button>}
-          {error && <div className="notice warning" role="alert"><p>{error}</p><button className="text-button" onClick={() => void (lastFailed.current === 'edit' ? edit() : generate())}>{lastFailed.current === 'edit' ? '重試修改' : '重試生成'}</button></div>}
+          {error && <div className="notice warning" role="alert"><p>{error}</p><button className="text-button" disabled={agentActive} onClick={() => void (lastFailed.current === 'edit' ? edit() : generate())}>{lastFailed.current === 'edit' ? '重試修改' : '重試生成'}</button></div>}
           {clarify && <div className="notice clarify" data-testid="clarify"><strong>需要確認</strong><p>{clarify}</p><span className="small-muted">補充後再按「套用修改」，目前模型未變更。</span></div>}
           {editSummary && <div className="notice success" data-testid="edit-summary"><strong>已修改：{editSummary.changes}</strong><p>{editSummary.explanation}</p></div>}
-          {conflict && <div className="approximation" data-testid="edit-conflict"><h3>修改衝突</h3><p>你在等待期間手動調整了：{conflict.parts.map(part => part.name).join('、')}。AI 的修改是根據調整前的模型產生的。</p><button className="button primary" onClick={() => applyEdit(conflict.result.plan, conflict.result, conflict.startedAt, conflict.lineage)}>套用 AI 修改</button><button className="text-button" onClick={() => { setConflict(null); setMessage('已保留你的手動調整，未套用這次 AI 修改。'); }}>保留手動調整</button></div>}
-          {pending && <div className="approximation"><h3>近似方案待確認</h3><p>{pending.result.design.explanation}</p><ul>{pending.result.design.model?.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul><button className="button primary" onClick={() => { applyResult(pending.result, pending.startedAt); setPending(null); }}>接受近似並建立</button><button className="text-button" onClick={() => { setPending(null); setMessage('已取消近似方案，上一個成功模型仍可操作。'); }}>取消近似</button></div>}
-          <div className="service-status"><span className={`status-dot ${service?.configured ? 'connected' : 'unavailable'}`} /><div><strong>{service ? providerLabel(service.provider) : '本機服務未連線'}</strong><span>{service?.configured ? service.model : service?.reason || '尚未設定，請依 README 準備登入或金鑰。'}</span></div><button className="text-button" onClick={() => void refreshService()}>重新檢查</button></div><button className="text-button demo-link" onClick={loadDemo}>載入示範模型 <span>非 AI 生成</span></button>
+          {conflict && <div className="approximation" data-testid="edit-conflict"><h3>修改衝突</h3><p>你在等待期間手動調整了：{conflict.parts.map(part => part.name).join('、')}。AI 的修改是根據調整前的模型產生的。</p><button className="button primary" disabled={agentActive} onClick={() => applyEdit(conflict.result.plan, conflict.result, conflict.startedAt, conflict.lineage)}>套用 AI 修改</button><button className="text-button" disabled={agentActive} onClick={() => { setConflict(null); setMessage('已保留你的手動調整，未套用這次 AI 修改。'); }}>保留手動調整</button></div>}
+          {pending && <div className="approximation"><h3>近似方案待確認</h3><p>{pending.result.design.explanation}</p><ul>{pending.result.design.model?.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul><button className="button primary" disabled={agentActive} onClick={() => { applyResult(pending.result, pending.startedAt); setPending(null); }}>接受近似並建立</button><button className="text-button" disabled={agentActive} onClick={() => { setPending(null); setMessage('已取消近似方案，上一個成功模型仍可操作。'); }}>取消近似</button></div>}
+          <div className="service-status"><span className={`status-dot ${service?.configured ? 'connected' : 'unavailable'}`} /><div><strong>{service ? providerLabel(service.provider) : '本機服務未連線'}</strong><span>{service?.configured ? service.model : service?.reason || '尚未設定，請依 README 準備登入或金鑰。'}</span></div><button className="text-button" onClick={() => void refreshService()}>重新檢查</button></div><button className="text-button demo-link" onClick={loadDemo} disabled={agentActive}>載入示範模型 <span>非 AI 生成</span></button>
         </section>
         {display && <section className="panel parts-panel" aria-label="零件選取與調整">
           <div className="panel-heading"><span className="eyebrow">SELECT & ADJUST</span><span className="tag">{display.model.parts.length} 件</span></div>
           <h2>零件</h2>
-          <ul className="part-picker" aria-label="零件清單">{display.model.parts.map(part => <li key={part.id}><button type="button" aria-pressed={selected.includes(part.id)} className={selected.includes(part.id) ? 'selected' : ''} onClick={event => pick(part.id, event.shiftKey)}>
+          <ul className="part-picker" aria-label="零件清單">{display.model.parts.map(part => <li key={part.id}><button type="button" aria-pressed={selected.includes(part.id)} disabled={agentActive} className={selected.includes(part.id) ? 'selected' : ''} onClick={event => pick(part.id, event.shiftKey)}>
             <span className="color-chip" style={{ background: part.color }} /><span>{part.name}<small>{part.id}{part.parentId ? ` · 屬於 ${display.model.parts.find(p => p.id === part.parentId)?.name ?? part.parentId}` : ''}</small></span></button></li>)}</ul>
           {!selectedParts.length && <p className="small-muted">點選畫面中的零件或上方清單即可選取；Shift 可多選，Esc 取消選取。</p>}
           {adjustError && <p className="notice warning" role="alert">{adjustError}</p>}
           {single && <div className="part-editor" data-testid="part-editor">
-            <div className="editor-row"><label className="text-field"><span>名稱</span><input key={`name-${single.id}-${single.name}`} defaultValue={single.name} aria-label="零件名稱" maxLength={500}
+            <div className="editor-row"><label className="text-field"><span>名稱</span><input key={`name-${single.id}-${single.name}`} defaultValue={single.name} aria-label="零件名稱" maxLength={500} disabled={agentActive}
               onBlur={event => { const value = event.target.value.trim(); if (value && value !== single.name) updatePart(single.id, { name: value }); else event.target.value = single.name; }}
               onKeyDown={event => { if (event.key === 'Enter') (event.target as HTMLInputElement).blur(); }} /></label>
-              <label className="color-field"><span>顏色</span><input type="color" aria-label="零件顏色" value={single.color.toLowerCase()} onChange={event => updatePart(single.id, { color: event.target.value })} /></label></div>
+              <label className="color-field"><span>顏色</span><input type="color" aria-label="零件顏色" disabled={agentActive} value={single.color.toLowerCase()} onChange={event => updatePart(single.id, { color: event.target.value })} /></label></div>
             <p className="small-muted">{single.primitive} · {single.role === 'interior' ? '內部概念件' : '外部件'} · 位置與角度相對於{single.parentId ? '父零件' : '模型原點'}</p>
             {vector('尺寸', single.dimensions, 'dimensions')}
             {vector('位置', single.position, 'position')}
             {vector('角度', single.rotation, 'rotation')}
-            <div className="button-group editor-actions"><button type="button" disabled={explode > 0} className={`button ${transformMode === 'translate' ? 'active' : ''}`} aria-pressed={transformMode === 'translate'} onClick={() => setTransformMode(mode => mode === 'translate' ? null : 'translate')}>拖曳移動</button><button type="button" disabled={explode > 0} className={`button ${transformMode === 'rotate' ? 'active' : ''}`} aria-pressed={transformMode === 'rotate'} onClick={() => setTransformMode(mode => mode === 'rotate' ? null : 'rotate')}>拖曳旋轉</button></div>
+            <div className="button-group editor-actions"><button type="button" disabled={explode > 0 || agentActive} className={`button ${transformMode === 'translate' ? 'active' : ''}`} aria-pressed={transformMode === 'translate'} onClick={() => setTransformMode(mode => mode === 'translate' ? null : 'translate')}>拖曳移動</button><button type="button" disabled={explode > 0 || agentActive} className={`button ${transformMode === 'rotate' ? 'active' : ''}`} aria-pressed={transformMode === 'rotate'} onClick={() => setTransformMode(mode => mode === 'rotate' ? null : 'rotate')}>拖曳旋轉</button></div>
             {explode > 0 && <p className="small-muted">爆炸圖開啟中，拖曳把手已停用；收回後即可拖曳。數值欄仍可修改。</p>}
           </div>}
-          {selectedParts.length > 0 && <div className="button-group editor-actions"><button type="button" className="button danger" onClick={removeSelected}>刪除{selectedParts.length > 1 ? ` ${selectedParts.length} 個` : ''}零件</button><button type="button" className="text-button" onClick={() => { setSelected([]); setTransformMode(null); }}>取消選取</button></div>}
+          {selectedParts.length > 0 && <div className="button-group editor-actions"><button type="button" className="button danger" disabled={agentActive} onClick={removeSelected}>刪除{selectedParts.length > 1 ? ` ${selectedParts.length} 個` : ''}零件</button><button type="button" className="text-button" disabled={agentActive} onClick={() => { setSelected([]); setTransformMode(null); }}>取消選取</button></div>}
         </section>}
         <section className="panel details-panel"><div className="panel-heading"><span className="eyebrow">MODEL DETAILS</span><span className="tag">概念階段</span></div><h2>模型與假設</h2>{display ? <><p className="model-summary">{display.model.summary}</p><dl className="model-meta"><div><dt>來源</dt><dd>{sourceLabel}</dd></div><div><dt>生成模型</dt><dd>{display.providerModel}</dd></div><div><dt>資料版本 / 單位</dt><dd>{display.model.schemaVersion} / m（公尺）</dd></div>{timing !== null && <div><dt>送出至繪製提交</dt><dd>{(timing / 1000).toFixed(2)} 秒</dd></div>}</dl>{timing !== null && <p className="small-muted">本機觀測時間，含生成與繪製提交；尚非辨識品質或 GPU 完成量測。</p>}<h3>暫定假設</h3><ul className="assumptions">{display.model.assumptions.length ? display.model.assumptions.map((a, i) => <li key={i}>{a}</li>) : <li>未另列假設；概念尺寸仍需核對。</li>}</ul><details><summary>已建立零件（{display.model.parts.length}）</summary><ul className="parts-list">{display.model.parts.map(part => <li key={part.id}><span className="color-chip" style={{ background: part.color }} /><span>{part.name}<small>{part.id} · {part.role === 'interior' ? '內部概念件' : '外部件'}<br />{[part.dimensions.x, part.dimensions.y, part.dimensions.z].map(v => Number((v * 1000).toFixed(2))).join(' × ')} mm</small></span></li>)}</ul></details></> : <p className="empty-details">生成後會在這裡列出來源、實際零件與尺寸假設。<br />細節不足時，模型會清楚標示暫定配置。</p>}</section>
       </aside>

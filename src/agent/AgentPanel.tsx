@@ -15,14 +15,15 @@ const statusText: Record<AgentRunStatus, string> = {
  * final reply, and cancel. The parent owns the run (`useAgentRun`) so it can also
  * read `agent.active` to disable manual controls while a run is going.
  */
-export function AgentPanel({ agent }: { agent: AgentRun }) {
+export function AgentPanel({ agent, disabled = false }: { agent: AgentRun; disabled?: boolean }) {
   const [draft, setDraft] = useState('');
   const [sent, setSent] = useState('');
   const running = agent.status === 'running';
+  const blocked = disabled && !running;
 
   const submit = () => {
     const text = draft.trim();
-    if (!text || running) return;
+    if (!text || running || disabled) return;
     setSent(text);
     setDraft('');
     void agent.run(text);
@@ -38,13 +39,14 @@ export function AgentPanel({ agent }: { agent: AgentRun }) {
         placeholder="例如：生成一個手持掃描器，再把握把改成橘色並展開爆炸圖" />
       <div className="input-meta"><span>代理會依序生成、修改、選取或展開零件</span><span>{draft.length}/4000</span></div>
       <div className="button-group">
-        <button className="button primary" type="submit" disabled={running || !draft.trim()}>執行 <span aria-hidden="true">↗</span></button>
+        <button className="button primary" type="submit" disabled={running || disabled || !draft.trim()}>執行 <span aria-hidden="true">↗</span></button>
         {running && <button className="button ghost" type="button" onClick={agent.cancel}>取消</button>}
       </div>
     </form>
     <div className="generation-status" aria-live="polite" role="status">
       <span className={`status-dot ${running ? 'pulsing' : ''}`} /><span>{statusText[agent.status]}</span>
     </div>
+    {blocked && <p className="small-muted" data-testid="agent-blocked">生成或修改進行中，完成或取消後才能交給代理。</p>}
     {sent && agent.status !== 'idle' && <p className="agent-sent"><span>你的指示</span>{sent}</p>}
     {agent.log.length > 0 && <ol className="agent-log" aria-label="執行進度" data-testid="agent-log">
       {agent.log.map(entry => <li key={entry.id} className={`agent-log-item ${entry.kind} ${entry.ok === false ? 'failed' : ''}`}>

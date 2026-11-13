@@ -47,6 +47,8 @@ test('點擊畫面選取零件，與清單同步；Shift 加選，點空白取�
   await page.getByRole('button', { name: /展示支架/ }).click({ modifiers: ['Shift'] });
   await expect(canvas(page)).toHaveAttribute('data-selected-ids', 'battery,support');
   await expect(page.getByTestId('part-editor')).toHaveCount(0);
+  // Clicking the part list may have scrolled the page; measure the canvas where it is now.
+  await canvas(page).scrollIntoViewIfNeeded();
   const box = (await canvas(page).boundingBox())!;
   await page.mouse.click(box.x + box.width * 0.93, box.y + box.height * 0.5);
   await expect(canvas(page)).toHaveAttribute('data-selected-ids', '');
@@ -234,13 +236,17 @@ test('使用者轉過視角後改變視窗大小，不會被重新取景', async
   await page.setViewportSize({ width: 1280, height: 900 });
   await loadDemo(page);
   const position = async () => (await canvas(page).getAttribute('data-camera-position'))!.split(',').map(Number);
-  const near = (a: number[], b: number[]) => a.every((value, index) => Math.abs(value - b[index]!) < 0.002);
+  const near = (a: number[], b: number[], tolerance = 0.002) => a.every((value, index) => Math.abs(value - b[index]!) < tolerance);
+  // The orbit controls keep coasting for a while after a drag, and slowly enough on a software
+  // renderer that two close samples do not mean the camera has stopped: wait for three in a row.
   const settled = async () => {
     let previous = await position();
-    for (let i = 0; i < 40; i++) {
+    let steady = 0;
+    for (let i = 0; i < 80; i++) {
       await page.waitForTimeout(150);
       const next = await position();
-      if (near(next, previous)) return next;
+      steady = near(next, previous, 0.0003) ? steady + 1 : 0;
+      if (steady >= 3) return next;
       previous = next;
     }
     return previous;
