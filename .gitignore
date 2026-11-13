@@ -15,3 +15,6 @@ playwright-report/
 Thumbs.db
 .npm-cache/
 artifacts/local/
+
+# Local Traditional Chinese copies of docs (not published)
+docs/zh/
