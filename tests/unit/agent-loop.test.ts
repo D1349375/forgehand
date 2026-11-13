@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { runAgent, stripModel, AGENT_INSTRUCTIONS } from '../../server/agent';
 import { GenerationError, type ModelProvider, type ModelTask } from '../../server/provider';
 import { validateAgentStep, type AgentRequest, type AgentEventName, type AgentStep } from '../../shared/agent';
@@ -30,13 +30,35 @@ describe('server/agent.ts runAgent loop', () => {
   let emit: (name: AgentEventName, data: unknown) => void;
   let abortController: AbortController;
   let fakeProvider: ModelProvider;
+  // What the "model" returns, one entry per call. Script a raw step here; the fake
+  // provider below validates it the way the real adapters do.
+  let script: Mock<(task: ModelTask<unknown>, signal: AbortSignal) => Promise<unknown>>;
+
+  /** A model call that never answers and rejects when aborted, like a stopped CLI process. */
+  const hangUntilAborted = (_task: ModelTask<unknown>, signal: AbortSignal) =>
+    new Promise<unknown>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+    });
 
   beforeEach(() => {
     events = [];
     emit = (name, data) => events.push({ name, data });
     abortController = new AbortController();
+    script = vi.fn();
+    // Mirrors server/codex.ts: the adapter calls task.parse inside run and turns a
+    // parse failure into GenerationError('INVALID_MODEL', ...).
     fakeProvider = {
-      run: vi.fn(),
+      name: 'openai',
+      configured: true,
+      model: 'test-model',
+      run: vi.fn(async (task: ModelTask<unknown>, signal: AbortSignal) => {
+        const raw = await script(task, signal);
+        try {
+          return task.parse(raw);
+        } catch {
+          throw new GenerationError('INVALID_MODEL', '模型資料未通過驗證。');
+        }
+      }),
     } as unknown as ModelProvider;
   });
 
@@ -47,7 +69,7 @@ describe('server/agent.ts runAgent loop', () => {
   it('runs a single-round final reply (no tools)', async () => {
     // Mock returns raw object as model would; getStep will validate it
     const rawStep = { type: 'final', reply: '已完成。', note: null, calls: null };
-    vi.mocked(fakeProvider.run!).mockResolvedValueOnce(rawStep);
+    script.mockResolvedValueOnce(rawStep);
 
     const req = makeTestRequest({ instruction: '請告訴我目前狀態' });
 
@@ -65,12 +87,12 @@ describe('server/agent.ts runAgent loop', () => {
       type: 'tool_calls',
       note: '檢查狀態',
       reply: null,
-      calls: [{ tool: 'get_project_state', args: { prompt: null, instruction: null, partIds: null, amount: null, enabled: null, densityKgPerM3: null, material: null }, reason: null }],
+      calls: [{ tool: 'get_project_state', argsJson: '{}', reason: null }],
     };
     // Round 2: final (raw format)
     const rawStep2 = { type: 'final', reply: '目前沒有模型。', note: null, calls: null };
 
-    vi.mocked(fakeProvider.run!)
+    script
       .mockResolvedValueOnce(rawStep1)
       .mockResolvedValueOnce(rawStep2);
 
@@ -94,9 +116,9 @@ describe('server/agent.ts runAgent loop', () => {
       type: 'tool_calls',
       note: '還在處理',
       reply: null,
-      calls: [{ tool: 'get_project_state', args: { prompt: null, instruction: null, partIds: null, amount: null, enabled: null, densityKgPerM3: null, material: null }, reason: null }],
+      calls: [{ tool: 'get_project_state', argsJson: '{}', reason: null }],
     };
-    vi.mocked(fakeProvider.run!).mockResolvedValue(rawStepLoop);
+    script.mockResolvedValue(rawStepLoop);
 
     const req = makeTestRequest({ instruction: '無限迴圈測試' });
 
@@ -111,10 +133,8 @@ describe('server/agent.ts runAgent loop', () => {
   });
 
   it('stops on total-run timeout and emits sanitized error+done', async () => {
-    // Never resolve, let timeout fire
-    vi.mocked(fakeProvider.run!).mockImplementation(
-      () => new Promise((resolve) => setTimeout(resolve, 10000)),
-    );
+    // The model call never answers; the total-run timeout aborts it.
+    script.mockImplementation(hangUntilAborted);
 
     const req = makeTestRequest({ instruction: 'timeout test' });
 
@@ -127,23 +147,24 @@ describe('server/agent.ts runAgent loop', () => {
   });
 
   it('stops on client cancel (silent, no events)', async () => {
-    vi.mocked(fakeProvider.run!).mockImplementation(
-      () => new Promise((resolve) => setTimeout(resolve, 10000)),
-    );
+    script.mockImplementation(hangUntilAborted);
 
     const req = makeTestRequest({ instruction: 'cancel test' });
 
-    // Abort immediately
+    const running = runAgent(fakeProvider, req, { maxRounds: 5, totalTimeoutMs: 60000 }, emit, abortController.signal);
+    // Cancel while the model call is in flight.
+    await vi.waitFor(() => expect(script).toHaveBeenCalledTimes(1));
     abortController.abort();
+    await running;
 
-    await runAgent(fakeProvider, req, { maxRounds: 5, totalTimeoutMs: 60000 }, emit, abortController.signal);
-
+    // The in-flight call got the combined run signal, which the cancel aborted.
+    expect(script.mock.calls[0]![1].aborted).toBe(true);
     // No events emitted when client cancels
     expect(events).toHaveLength(0);
   });
 
   it('sanitizes GenerationError and emits error+done', async () => {
-    vi.mocked(fakeProvider.run!).mockRejectedValueOnce(
+    script.mockRejectedValueOnce(
       new GenerationError('SERVICE_ERROR', '模型服務暫時無法完成，請稍後重試。'),
     );
 
@@ -160,7 +181,7 @@ describe('server/agent.ts runAgent loop', () => {
   it('retries once on Zod validation failure (INVALID_MODEL code), then throws sanitized error', async () => {
     // Real providers throw GenerationError('INVALID_MODEL', ...) when validateAgentStep fails.
     // First call: throws INVALID_MODEL
-    vi.mocked(fakeProvider.run!)
+    script
       .mockRejectedValueOnce(new GenerationError('INVALID_MODEL', '模型回應格式無效，請稍後重試。'))
       // Second call (retry): also INVALID_MODEL
       .mockRejectedValueOnce(new GenerationError('INVALID_MODEL', '模型回應格式無效，請稍後重試。'));
@@ -178,7 +199,7 @@ describe('server/agent.ts runAgent loop', () => {
 
   it('retries once on Zod validation failure, then throws sanitized error', async () => {
     // First call: invalid JSON
-    vi.mocked(fakeProvider.run!)
+    script
       .mockResolvedValueOnce({ invalid: 'schema' } as never)
       // Second call (retry): also invalid
       .mockResolvedValueOnce({ invalid: 'again' } as never);
@@ -196,7 +217,7 @@ describe('server/agent.ts runAgent loop', () => {
 
   it('succeeds on retry after first validation failure', async () => {
     // First call: invalid
-    vi.mocked(fakeProvider.run!)
+    script
       .mockResolvedValueOnce({ invalid: 'schema' } as never)
       // Second call (retry): valid raw format
       .mockResolvedValueOnce({ type: 'final', reply: '重試成功', note: null, calls: null });
@@ -210,6 +231,74 @@ describe('server/agent.ts runAgent loop', () => {
     expect(events.find(e => e.name === 'done')).toBeDefined();
   });
 
+  it('retries an invalid first step of round 1, then runs the valid tool call and completes', async () => {
+    script
+      // Round 1, first attempt: invalid (tool_calls with no calls). The fake provider
+      // turns the parse failure into GenerationError('INVALID_MODEL') like the real adapters.
+      .mockResolvedValueOnce({ type: 'tool_calls', note: null, reply: null, calls: [] })
+      // Round 1, retry: valid.
+      .mockResolvedValueOnce({
+        type: 'tool_calls', note: '檢查狀態', reply: null,
+        calls: [{ tool: 'get_project_state', argsJson: '{}', reason: null }],
+      })
+      // Round 2: final.
+      .mockResolvedValueOnce({ type: 'final', reply: '目前沒有模型。', note: null, calls: null });
+
+    await runAgent(fakeProvider, makeTestRequest(), { maxRounds: 5, totalTimeoutMs: 60000 }, emit, abortController.signal);
+
+    expect(fakeProvider.run).toHaveBeenCalledTimes(3);
+    expect(events.map(e => e.name)).toEqual(['status', 'tool', 'result', 'final', 'done']);
+    expect(events.find(e => e.name === 'error')).toBeUndefined();
+    // The retry re-sends the same round-1 task; round 2 is a new task that carries the tool record.
+    const tasks = vi.mocked(fakeProvider.run!).mock.calls.map(call => call[0] as ModelTask<AgentStep>);
+    expect(tasks[1]).toBe(tasks[0]);
+    expect(tasks[2]!.input).toContain('get_project_state({})');
+  });
+
+  it('fake provider rejects an unparseable step with INVALID_MODEL, as the real adapters do', async () => {
+    script.mockResolvedValueOnce({ invalid: 'schema' });
+    await expect(fakeProvider.run!({ kind: 'agent', instructions: '', schema: {}, input: '', parse: validateAgentStep }, abortController.signal))
+      .rejects.toMatchObject({ name: 'GenerationError', code: 'INVALID_MODEL' });
+  });
+
+  it('emits the tool event as { tool, argsJson } and records argsJson in the next round input', async () => {
+    const argsJson = '{"partIds":[]}';
+    script
+      .mockResolvedValueOnce({ type: 'tool_calls', note: 'x', reply: null, calls: [{ tool: 'select_parts', argsJson, reason: null }] })
+      .mockResolvedValueOnce({ type: 'final', reply: 'ok', note: null, calls: null });
+
+    await runAgent(fakeProvider, makeTestRequest(), { maxRounds: 5, totalTimeoutMs: 60000 }, emit, abortController.signal);
+
+    expect(events.find(e => e.name === 'tool')!.data).toEqual({ tool: 'select_parts', argsJson });
+    const round2 = vi.mocked(fakeProvider.run!).mock.calls[1]![0] as ModelTask<AgentStep>;
+    expect(round2.input).toContain(`select_parts(${argsJson})`);
+    expect(round2.input).not.toContain('undefined');
+  });
+
+  it('turns an unknown tool and bad arguments into failed results and keeps the run going', async () => {
+    script
+      .mockResolvedValueOnce({
+        type: 'tool_calls', note: 'x', reply: null,
+        calls: [
+          { tool: 'no_such_tool', argsJson: '{}', reason: null },
+          { tool: 'explode_view', argsJson: '{"amount":', reason: null },
+        ],
+      })
+      .mockResolvedValueOnce({ type: 'final', reply: '改用其他方式。', note: null, calls: null });
+
+    await runAgent(fakeProvider, makeTestRequest(), { maxRounds: 5, totalTimeoutMs: 60000 }, emit, abortController.signal);
+
+    const results = events.filter(e => e.name === 'result').map(e => e.data as { tool: string; ok: boolean; detail: { code: string } });
+    expect(results.map(r => [r.tool, r.ok, r.detail.code])).toEqual([
+      ['no_such_tool', false, 'UNKNOWN_TOOL'],
+      ['explode_view', false, 'INVALID_ARGS'],
+    ]);
+    expect(events.map(e => e.name).slice(-2)).toEqual(['final', 'done']);
+    // The model sees both failures next round, so it can correct itself.
+    const round2 = vi.mocked(fakeProvider.run!).mock.calls[1]![0] as ModelTask<AgentStep>;
+    expect(round2.input).toContain('failed');
+  });
+
   it('fabrication guard: all tool results are real (from runTool)', async () => {
     // The loop calls runTool for every tool in step.calls; this test verifies
     // that the result event reflects the actual runTool return, not a fabricated
@@ -219,9 +308,9 @@ describe('server/agent.ts runAgent loop', () => {
       type: 'tool_calls',
       note: 'Test',
       reply: null,
-      calls: [{ tool: 'get_project_state', args: { prompt: null, instruction: null, partIds: null, amount: null, enabled: null, densityKgPerM3: null, material: null }, reason: null }],
+      calls: [{ tool: 'get_project_state', argsJson: '{}', reason: null }],
     };
-    vi.mocked(fakeProvider.run!).mockResolvedValueOnce(rawStep).mockResolvedValueOnce({ type: 'final', reply: 'Done', note: null, calls: null });
+    script.mockResolvedValueOnce(rawStep).mockResolvedValueOnce({ type: 'final', reply: 'Done', note: null, calls: null });
 
     const req = makeTestRequest({ instruction: 'fabrication test' });
 
@@ -305,7 +394,7 @@ describe('server/agent.ts runAgent loop', () => {
     // This test is indirect: we verify that the task passed to provider.run
     // contains the expected structure by inspecting the mock call args.
     const rawStep = { type: 'final', reply: 'Done', note: null, calls: null };
-    vi.mocked(fakeProvider.run!).mockResolvedValueOnce(rawStep);
+    script.mockResolvedValueOnce(rawStep);
 
     const model: ModelSpec = {
       schemaVersion: '1.0',
@@ -356,7 +445,7 @@ describe('server/agent.ts runAgent loop', () => {
 
   it('agentTask with no model shows "目前沒有模型" in snapshot', async () => {
     const rawStep = { type: 'final', reply: 'Done', note: null, calls: null };
-    vi.mocked(fakeProvider.run!).mockResolvedValueOnce(rawStep);
+    script.mockResolvedValueOnce(rawStep);
 
     const req = makeTestRequest({ instruction: 'test' });
 
@@ -375,11 +464,11 @@ describe('server/agent.ts runAgent loop', () => {
       note: 'Two tools',
       reply: null,
       calls: [
-        { tool: 'get_project_state', args: { prompt: null, instruction: null, partIds: null, amount: null, enabled: null, densityKgPerM3: null, material: null }, reason: null },
-        { tool: 'get_project_state', args: { prompt: null, instruction: null, partIds: null, amount: null, enabled: null, densityKgPerM3: null, material: null }, reason: null },
+        { tool: 'get_project_state', argsJson: '{}', reason: null },
+        { tool: 'get_project_state', argsJson: '{}', reason: null },
       ],
     };
-    vi.mocked(fakeProvider.run!)
+    script
       .mockResolvedValueOnce(rawStep)
       .mockResolvedValueOnce({ type: 'final', reply: 'Done', note: null, calls: null });
 

@@ -45,7 +45,7 @@ Create the tool registry with the working-copy type and the locally-computable t
 
 **Build:**
 - `AgentWorkingState` type: `{ model: ModelSpec | null; selection: string[]; explode: number; tryOn: boolean; cameraOn: boolean }`.
-- `runTool(call, state, provider, signal): ToolResult` — dispatch by `call.tool`; each tool validates its own args via the per-tool validator from `shared/agent.ts`; bad args → `ToolResult { ok:false, detail: ToolErrorDetail { code: 'INVALID_ARGS', message } }` with no `stateChange` (req 15).
+- `runTool(call, state, provider, signal): ToolResult` — dispatch by `call.tool`; each tool validates its own args via the per-tool validator from `shared/agent.ts`; bad args → `ToolResult { ok:false, detail: ToolErrorDetail { code: 'INVALID_ARGS', message } }` with no `stateChange` (req 16).
 - `select_parts`: validates `partIds` ⊆ current parts; when `state.model` is null → `ToolError { code: 'NO_MODEL' }`; else sets `state.selection` and returns `stateChange.selection`.
 - `get_project_state`: works with or without a model; returns `GetProjectStateDetail` (parts summary, selection, explode, tryOn); no `stateChange`.
 - `explode_view`: validates `amount ∈ [0,1]`; when `state.model` is null → `NO_MODEL`; else sets `state.explode` and returns `stateChange.explode`.
@@ -102,7 +102,7 @@ Create the loop, the `agentTask` builder, and `AGENT_INSTRUCTIONS`.
 - `runAgent(provider, req, { maxRounds=6, totalTimeoutMs }, emit, clientSignal)` per design §4. Inside, build `timeoutSignal = AbortSignal.timeout(totalTimeoutMs)` and `runSignal = AbortSignal.any([clientSignal, timeoutSignal])`, passed to every `provider.run`/`runTool`. Working copy starts `model: req.model == null ? null : validateModel(req.model)`; selection starts `[]` when model is null else `req.selectedPartIds ∩ parts`.
 - Each round: check `runSignal.aborted` → throw an abort sentinel; build `agentTask(history, rounds, state, instruction)`; `await provider.run(task, runSignal)`; `validateAgentStep`; retry once on validation failure (re-check `runSignal.aborted` first, end via the cancel/timeout path if already aborted); on second failure emit sanitized `error` + `done`.
 - On `final`: `emit('final', reply)`, `emit('done')`, return.
-- On `tool_calls`: `emit('status', note)`; for each call `emit('tool', {tool,args})`, `runTool(...)` (throws on provider abort/`GenerationError`), `emit('result', stripModel(result))` (a copy with `stateChange.model = null`); if `result.stateChange` set, apply it to the working copy and `emit('state', result.stateChange)`; push compact `{ call: {tool, args}, result: {ok, summary, detail} }` to `rounds`.
+- On `tool_calls`: `emit('status', note)`; for each call `emit('tool', {tool, argsJson})`, `runTool(...)` (throws on provider abort/`GenerationError`), `emit('result', stripModel(result))` (a copy with `stateChange.model = null`); if `result.stateChange` set, apply it to the working copy and `emit('state', result.stateChange)`; push compact `{ call: {tool, argsJson}, result: {ok, summary, detail} }` to `rounds`.
 - On max rounds reached without final: `emit('error', sanitized zh-TW "agent did not finish")`, `emit('done')`.
 - **Error/timeout/cancel handling:** an abort or `GenerationError` from `provider.run` or `runTool` propagates (not a `ToolResult`) and is caught by the loop, which distinguishes why: **client cancel** (`clientSignal.aborted`) → stop, emit nothing; **total-run timeout** (`timeoutSignal.aborted`) → emit a sanitized Traditional Chinese timeout `error` + `done`; **other `GenerationError`** → emit a sanitized `error` + `done`. Earlier rounds' `state` events were already emitted and stay.
 - `agentTask(...)`: `ModelTask<AgentStep>` with `kind:'agent'`, `instructions: AGENT_INSTRUCTIONS`, `schema: agentJsonSchema()`, `input` = client `history` + compact `rounds` (no full ModelSpecs) + instruction + compact current-state snapshot (the `get_project_state`-style summary of the working copy), `parse: validateAgentStep`.
@@ -127,33 +127,37 @@ Create the loop, the `agentTask` builder, and `AGENT_INSTRUCTIONS`.
 
 ## Task 4b — Tool registry and schema migration
 
-`[ ]`
+`[x]`
 
-Migrate from the flat-args `AgentStep` to the tool-registry architecture. `ToolCallSchema` becomes `{ tool: string, argsJson: string }`; each tool defines its own Zod args schema and parses `argsJson`. The tool list in `AGENT_INSTRUCTIONS` is generated from the registry. This task changes the schema, updates the six working tools, and updates all tests.
+Migrate from the flat-args `AgentStep` to the tool-registry architecture. `ToolCallSchema` becomes `{ tool, argsJson, reason }`; each tool defines its own Zod args schema and parses `argsJson`. The tool list in `AGENT_INSTRUCTIONS` is generated from the registry. This task changes the schema, moves the six working tools into the registry, fixes the loop for the new call shape, and updates all tests. Client tools, home-scope tools, background jobs, and the deferred materials/estimate/feasibility tools are out of scope.
 
 **Build:**
 - `shared/agent.ts`:
-  - Replace `ToolCallSchema.tool` enum and `ToolCallSchema.args` flat object with `{ tool: z.string().trim().min(1).max(64), argsJson: z.string().max(8000), reason: nullable }`.
-  - Remove per-tool arg validators (`validateToolCallArgs`) — tool-specific validation moves to each tool's registered schema.
-  - `validateAgentStep` still checks `type`/`calls`/`reply` consistency, but does not validate tool names or args — that is done in `server/agent-tools.ts` dispatch.
-  - Update `agentJsonSchema()` output (no change needed if the schema itself is updated).
-- `server/agent-tools.ts`:
-  - Add `defineTool<TArgs, TDetail>({ name, category, description, args: ZodSchema<TArgs>, side, scope, effects, run })` and a `toolRegistry` map.
-  - Migrate the six working tools (`generate_design`, `edit_design`, `select_parts`, `get_project_state`, `explode_view`, `wear_on_arm`) from inline dispatch to `defineTool` calls with their own arg schemas (e.g. `z.strictObject({ prompt: z.string().trim().min(1).max(4000) })` for `generate_design`).
-  - Each tool's `run` function receives `(args: TArgs, ctx: { state, provider }, signal)` and returns `ToolResult<TDetail>`.
-  - `runTool(call, state, provider, signal)` becomes: look up `call.tool` in the registry → not found: `ToolError { code: 'UNKNOWN_TOOL' }`; found: parse `JSON.parse(call.argsJson)` with `tool.args.parse(...)` → on parse failure: `ToolError { code: 'INVALID_ARGS', ... }`; on success: `tool.run(args, { state, provider }, signal)`.
-  - `argsShapeText(schema: ZodSchema)`: produces a brief arg signature for display (e.g. `"prompt"`, `"instruction"`, `"partIds"`, etc.) by inspecting the schema's shape. Used in `AGENT_INSTRUCTIONS` generation.
-  - `AGENT_INSTRUCTIONS = generateInstructions()`: builds the tool list from the registry at module load. Filters to `scope === 'project'` and `side === 'server'` (client tools and home-scope tools are out of scope for this task). Format: `- tool_name(args_shape): description`.
-  - The geometry/units reuse block stays the same.
-- `server/agent.ts`:
-  - No changes needed to the loop itself — `runTool` signature and `AGENT_INSTRUCTIONS` stay module exports, so the loop continues to call `runTool(call, state, provider, signal)` and use `AGENT_INSTRUCTIONS`.
-  - `agentTask` continues to use `AGENT_INSTRUCTIONS` (now generated) and `agentJsonSchema()` (now reflects the `{ tool, argsJson }` schema).
+  - `ToolCallSchema` becomes `{ tool: z.string().trim().min(1).max(64), argsJson: z.string().max(8000), reason: nullable }`. The tool-name enum and the flat `args` object are gone, as are `ToolName`, `ToolCallArgs`, and `validateToolCallArgs`.
+  - `ToolResultSchema.tool` becomes a plain string, because an `UNKNOWN_TOOL` result echoes the requested name.
+  - `validateAgentStep` still checks `type`/`calls`/`reply` consistency but not tool names or args; `runTool` does that at dispatch.
+  - `agentJsonSchema()` needs no code change; `tool` and `argsJson` are plain strings, every property is required, there is no `anyOf`/`oneOf` at the root, and `$schema` is stripped.
+  - Export `PartIdSchema` so `select_parts` can reuse the part-id format.
+- `server/tools/registry.ts`:
+  - `defineTool(def)` registers and returns the definition; registering a duplicate name throws.
+  - Types: `ToolDefinition<TArgs>` (`name`, `category`, `description`, `args`, `side: 'server' | 'client'`, `scope: 'project' | 'home'`, `effects: 'read-only' | 'writes-scene' | 'writes-project' | 'writes-memory' | 'uses-camera' | 'sends-image' | 'long-running'`, `run`) and `ToolContext` (`{ state, provider }`).
+  - `getTool(name)`, `listTools({ scope, side })` (registration order, omitted filters match everything), and `argsShapeText(schema)` (for example `partIds: string[]`, an empty string for `{}`).
+  - `createToolRegistry()` returns a fresh registry with the same three functions; the module-level functions use one default instance. Tests that register extra tools use a fresh registry so they do not change the shared one.
+- `server/tools/helpers.ts`: `ok`, `fail`, `noModel`, `requireRun`, and `NO_MODEL_MESSAGE` (`'目前沒有模型，請先生成設計。'`, unchanged).
+- `server/tools/<name>.ts`: one file per working tool (`generate_design`, `edit_design`, `select_parts`, `get_project_state`, `explode_view`, `wear_on_arm`), each exporting its `defineTool(...)` result with a `z.strictObject` args schema (`get_project_state` takes `{}`). Behavior is unchanged from Tasks 2 and 3.
+- `server/tools/index.ts`: imports the six tools; the import order is the order the model sees.
+- `server/agent-tools.ts` stays the single entry point: `AgentWorkingState`, the re-exported result helpers, and `runTool(call, state, provider, signal)`:
+  - unknown tool → `ToolError` `UNKNOWN_TOOL` (the message lists the registered tools);
+  - `JSON.parse` failure, a non-object, or a Zod failure on `argsJson` → `ToolError` `INVALID_ARGS` with a short Traditional Chinese message (what was wrong plus the expected signature, never a raw Zod dump);
+  - otherwise call the tool's `run`. `runTool` never mutates the working state, and an abort or `GenerationError` from `provider.run` still propagates.
+- `server/agent.ts`: the loop needs two small changes because `call.args` no longer exists. The `tool` event is `{ tool, argsJson }`, and the compact round history stores `argsJson` (`{ call: { tool, argsJson }, result: { ok, summary, detail } }`). `AGENT_INSTRUCTIONS` stays in this file; only its tool-list section is generated from `listTools({ scope: 'project', side: 'server' })`, one new sentence explains `{ tool, argsJson }`, and every existing rule line and `GEOMETRY_RULES` stay.
 
-**Tests** (`tests/unit/agent-tools.test.ts`, `tests/unit/agent-tools-model.test.ts`, `tests/unit/agent.test.ts`, `tests/unit/agent-loop.test.ts`):
-- Update `agent.test.ts`: remove per-tool arg presence tests (those move to the tool tests); update `validateAgentStep` tests to use `{ tool: 'generate_design', argsJson: '{"prompt":"test"}', reason: null }` format; assert `agentJsonSchema()` has `tool` as a string (not an enum) and `argsJson` as a string (no nested object).
-- Update `agent-tools.test.ts` and `agent-tools-model.test.ts`: each tool call now uses `{ tool: 'tool_name', argsJson: JSON.stringify({ arg: value }) }`; add `INVALID_ARGS` tests for each tool (bad JSON, missing required arg, wrong arg type); add an `UNKNOWN_TOOL` test (call with a tool name not in the registry).
-- Update `agent-loop.test.ts`: fake provider returns `{ type: 'tool_calls', calls: [{ tool: 'get_project_state', argsJson: '{}', reason: null }], ... }`; the fake provider calls `task.parse` like real adapters (already done in Task 4 fixes); add a test where the provider returns an `INVALID_MODEL` error on first call, retry succeeds on second call (already added in Task 4 fixes, verify it still works).
-- `AGENT_INSTRUCTIONS` contains the six tool names and their descriptions (assert the generated string contains `generate_design`, `edit_design`, `select_parts`, `get_project_state`, `explode_view`, `wear_on_arm`).
+**Tests** (`tests/unit/agent.test.ts`, `agent-tools.test.ts`, `agent-tools-model.test.ts`, `agent-loop.test.ts`, `tool-registry.test.ts`):
+- `agent.test.ts`: remove the per-tool arg presence tests (they move to the tool tests); use `{ tool, argsJson, reason }` calls; assert that `validateAgentStep` does not check tool names or args, rejects an empty or over-long `tool`, an over-long `argsJson`, and the old flat `args`; assert `agentJsonSchema()` has `tool` and `argsJson` as plain strings (no enum, no nested object) and contains no tool names.
+- `agent-tools.test.ts` and `agent-tools-model.test.ts`: each call is `{ tool, argsJson: JSON.stringify(args) }`. `INVALID_ARGS` for every tool with bad JSON, a missing required arg, and a wrong type (plus a non-object and a stray key for `get_project_state`), checked to leave state untouched and never reach the provider. `UNKNOWN_TOOL` for names that are not registered, including the deferred `estimate_weight_cost` and `check_feasibility`. The messages are Traditional Chinese with the expected signature and contain no Zod text.
+- `tool-registry.test.ts`: `listTools` filters by scope and side and keeps registration order; a duplicate name throws and leaves the registry unchanged; the default registry holds exactly the six tools; the tool list in `AGENT_INSTRUCTIONS` is exactly those six lines; `argsShapeText` per tool.
+- `agent-loop.test.ts`: the fake provider's `run` calls `task.parse(raw)` on the scripted value and turns a parse failure into `GenerationError('INVALID_MODEL', …)`, as `server/codex.ts` does. New tests: round 1's first step is invalid, the retry is valid, and the run completes (status, tool, result, final, done; no error); the `tool` event is `{ tool, argsJson }` and the next round's input records `argsJson`; an unknown tool and a bad `argsJson` become failed results and the run continues. The timeout and cancel tests use a model call that rejects when aborted.
+- `AGENT_INSTRUCTIONS` still contains the six tool names and every geometry rule.
 
 **Dependencies:** Tasks 1–4.
 **Done when:** `npm run check` passes and all updated tests are green.
