@@ -255,17 +255,30 @@ The hook and panel, with every decision that does not need a DOM moved into pure
 
 ## Task 7b — `src/App.tsx`: wiring and disabling controls during a run
 
-`[ ]`
+`[x]`
 
 Wire the panel into the app and disable manual interaction during a run.
 
 **Build:**
-- `src/App.tsx`: replace the local `DisplayModel` type with an import from `src/agent/types.ts`; render `<AgentPanel>` in the control column; call `useAgentRun` with `commit`, `setSelected`, `setExplode`, `setTryingOn`, a `getSnapshot()` returning the current `display`, selection, explode, tryOn and `camera === 'on'`, and a bounded turns list (≤10) via `getTurns`/`pushTurn`, and pass the result to `<AgentPanel agent={...} />`. Add `agentActive` (from `useAgentRun`) gating the existing `disabled` props for the generate form, edit form, manual adjustment fields, transform handles, undo/redo buttons, explode slider, and selection picking (req 27). The camera toggle stays enabled. Existing prompt/edit forms are retained (req 26). Keep the existing `crypto.randomUUID()` lineage convention by passing it into `applyStateEvent` via `useAgentRun`'s `newLineage`.
+- `src/App.tsx` imports `DisplayModel` from `src/agent/types.ts` (the local copy is gone) and renders `<AgentPanel agent={agent} disabled={Boolean(busy)} />` at the top of the control column, above the generate/edit panel.
+- `useAgentRun` is called with `commit` (a wrapper, below), `setSelected`, `setExplode` (the existing `setExplodeAmount`, so a non-zero amount also drops the transform handle), `setTryingOn`, `getSnapshot()` (`display` from `currentDisplay.current`, `selected`, `explode`, `tryingOn`, `camera === 'on'`), and a turns list kept in a ref: `getTurns` and `pushTurn` keep the latest 10.
+- `commitFromAgent(next)` mirrors what `applyResult`/`applyEdit` do around `commit`: it clears a stale approximation, conflict dialog, edit summary, clarify notice, timing and render error, calls `commit`, switches to the edit tab for a newly generated model, and sets a short status message.
+- One flag, `agentActive` (= `agent.active`), gates everything manual:
+  - Generate form and edit form: both textareas, both submit buttons, and the error notice's retry button.
+  - Part fields: name, colour, all nine number fields, the translate/rotate buttons, 刪除, 取消選取, and the part list buttons.
+  - The scene: `pick` and `onTransform` return early, and the scene gets `transformMode={null}` during a run so no drag handle is shown (the mode comes back afterwards).
+  - Undo, redo, and the keyboard handler (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y, Escape, Delete) all do nothing.
+  - The explode toggle and slider, the try-on toggle, and both 載入示範模型 buttons.
+  - 套用 AI 修改, 保留手動調整, 接受近似並建立 and 取消近似 in the conflict and approximation dialogs.
+  - The functions behind these controls (`generate`, `edit`, `loadDemo`, `undo`, `redo`, `toggleTryOn`, `updatePart`, `removeSelected`) also return early, so no path bypasses the disabled attribute.
+- The camera on/off button stays enabled, so the user can turn the camera on when `wear_on_arm` asks. View-only controls (zoom, reset view, contrast) stay enabled.
+- The reverse: `AgentPanel` takes `disabled`, and App passes `busy`, so 執行 is disabled while a generate or edit request is in flight, with a short explanation.
+- `NumberField` gains a `disabled` prop.
+- `tests/e2e/edit-select.spec.ts`: the click-to-select test now calls `scrollIntoViewIfNeeded()` on the canvas before it measures it. The new agent panel makes the control column taller, so clicking the part list scrolls the page and the old measurement pointed off the canvas.
 
-**Tests:** none unit. Verification = `npm run check` (types + build) + the e2e in Task 8 (which asserts controls are disabled during a run and re-enable after cancel).
-
+**Tests:** none new. Verification = `npm run check` (types + build + unit tests), the existing Playwright suite (28 tests, all green), and Task 8's e2e, which asserts controls are disabled during a run and re-enabled after cancel.
 **Dependencies:** Tasks 6, 7a.
-**Done when:** `npm run check` passes (types + build) and Task 8's e2e is green.
+**Done when:** `npm run check` passes and the existing e2e suite is green. Task 8 adds the agent e2e.
 
 ---
 
