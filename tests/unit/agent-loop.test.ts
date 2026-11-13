@@ -157,6 +157,25 @@ describe('server/agent.ts runAgent loop', () => {
     expect(events[events.length - 1]).toEqual({ name: 'done', data: {} });
   });
 
+  it('retries once on Zod validation failure (INVALID_MODEL code), then throws sanitized error', async () => {
+    // Real providers throw GenerationError('INVALID_MODEL', ...) when validateAgentStep fails.
+    // First call: throws INVALID_MODEL
+    vi.mocked(fakeProvider.run!)
+      .mockRejectedValueOnce(new GenerationError('INVALID_MODEL', '模型回應格式無效，請稍後重試。'))
+      // Second call (retry): also INVALID_MODEL
+      .mockRejectedValueOnce(new GenerationError('INVALID_MODEL', '模型回應格式無效，請稍後重試。'));
+
+    const req = makeTestRequest({ instruction: 'INVALID_MODEL retry test' });
+
+    await runAgent(fakeProvider, req, { maxRounds: 5, totalTimeoutMs: 60000 }, emit, abortController.signal);
+
+    expect(fakeProvider.run).toHaveBeenCalledTimes(2);
+    const errorEvent = events.find(e => e.name === 'error');
+    expect(errorEvent).toBeDefined();
+    expect((errorEvent!.data as { message: string }).message).toContain('格式無效');
+    expect(events[events.length - 1]).toEqual({ name: 'done', data: {} });
+  });
+
   it('retries once on Zod validation failure, then throws sanitized error', async () => {
     // First call: invalid JSON
     vi.mocked(fakeProvider.run!)

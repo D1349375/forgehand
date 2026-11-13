@@ -1,11 +1,11 @@
 import {
   agentJsonSchema, serializeSseEvent, validateAgentStep,
   type AgentEventName, type AgentRequest, type AgentStep, type AgentTurn, type ToolResult,
-} from '../shared/agent.js';
-import { validateModel } from '../shared/model.js';
-import { GenerationError, type ModelProvider, type ModelTask } from './provider.js';
-import { MODEL_INSTRUCTIONS } from './provider.js';
-import { runTool, type AgentWorkingState } from './agent-tools.js';
+} from '../shared/agent';
+import { validateModel } from '../shared/model';
+import { GenerationError, type ModelProvider, type ModelTask } from './provider';
+import { MODEL_INSTRUCTIONS } from './provider';
+import { runTool, type AgentWorkingState } from './agent-tools';
 
 /**
  * The server-side agent loop. Runs multiple rounds against the working copy,
@@ -39,12 +39,6 @@ export async function runAgent(
   try {
     for (let round = 0; round < maxRounds; round++) {
       if (runSignal.aborted) throw new Error('ABORTED');
-
-      // The model's note from a prior round (if any); not emitted on first round.
-      if (round > 0 && rounds[round - 1]) {
-        // The loop's own note logic is unused (the model's note is already in the
-        // status event from the prior iteration); this comment is a placeholder.
-      }
 
       const task = agentTask(req.history, rounds, state, req.instruction);
       const step = await getStep(provider, task, runSignal);
@@ -112,7 +106,8 @@ export async function runAgent(
 /**
  * Fetches one `AgentStep` from the provider. Retries once on Zod/semantic
  * validation failure (unless the signal is already aborted); throws a sanitized
- * error if invalid twice. A GenerationError or abort propagates.
+ * error if invalid twice. A GenerationError or abort propagates, except for
+ * INVALID_MODEL from agent tasks (which is treated as a validation failure).
  */
 async function getStep(provider: ModelProvider, task: ModelTask<AgentStep>, signal: AbortSignal): Promise<AgentStep> {
   const run = provider.run;
@@ -121,15 +116,19 @@ async function getStep(provider: ModelProvider, task: ModelTask<AgentStep>, sign
     const raw = await run(task, signal);
     return validateAgentStep(raw);
   } catch (error) {
-    // Only retry Zod/semantic validation failures, not transport errors.
-    if (error instanceof GenerationError || signal.aborted) throw error;
+    // Real providers call task.parse inside run and throw GenerationError('INVALID_MODEL', ...)
+    // when validateAgentStep fails. Treat INVALID_MODEL for agent tasks as a validation failure
+    // and retry once. Other GenerationError codes and abort propagate.
+    const isValidationFailure = error instanceof GenerationError && error.code === 'INVALID_MODEL';
+    if ((error instanceof GenerationError && !isValidationFailure) || signal.aborted) throw error;
     // One retry: re-check abort first so an aborted signal ends via cancel.
     if (signal.aborted) throw new Error('ABORTED');
     try {
       const raw = await run(task, signal);
       return validateAgentStep(raw);
     } catch (retryError) {
-      if (retryError instanceof GenerationError || signal.aborted) throw retryError;
+      const isRetryValidationFailure = retryError instanceof GenerationError && retryError.code === 'INVALID_MODEL';
+      if ((retryError instanceof GenerationError && !isRetryValidationFailure) || signal.aborted) throw retryError;
       // Invalid twice → sanitized error (never leak the Zod/semantic detail).
       throw new GenerationError('INVALID_RESPONSE', '模型回應格式無效，請稍後重試。');
     }
@@ -193,8 +192,6 @@ Available tools:
 - get_project_state(): returns a summary of the current model (parts, selection, explode, tryOn). Works with or without a model.
 - explode_view(amount): sets the explode amount (0–1). Display state only; the browser computes layout. Returns NO_MODEL if no model exists.
 - wear_on_arm(enabled): toggles arm-tracking try-on. If enabled and the camera is off, asks the user to turn it on (does not start the camera itself). Returns NO_MODEL if no model exists.
-- estimate_weight_cost(densityKgPerM3?, material?): estimates weight and cost. Returns NO_MODEL if no model exists. (Available but not yet fully tested.)
-- check_feasibility(): local geometry checks. Returns NO_MODEL if no model exists. (Available but not yet fully tested.)
 
 Rules:
 - Use real tool results. Never fabricate facts or claim a tool succeeded without executing it.
