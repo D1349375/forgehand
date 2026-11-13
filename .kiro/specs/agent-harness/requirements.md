@@ -22,6 +22,10 @@ The server is **stateless**. All project state — the model, undo/redo history,
 - Realtime voice front end. The streaming mechanism built here will be reused by it later, but voice itself is out of scope.
 - English UI. The current UI stays Traditional Chinese; English UI is a separate spec.
 - Re-enabling any back end's native tool calling, MCP, network, or shell access.
+- Client tools (side: 'client'). These require a round-trip to the browser and are deferred to a later spec (VISION.md §4.4).
+- Background jobs (long-running tools). These are deferred to a later spec (VISION.md §4.5).
+- Home-scope tools (scope: 'home'). Multi-project support is deferred to a later spec (VISION.md §4.7).
+- Materials, weight, cost estimation, and feasibility checks. These are moved to a separate materials-analysis spec.
 
 ## Functional requirements
 
@@ -46,18 +50,17 @@ The server is **stateless**. All project state — the model, undo/redo history,
 
 ### Tools
 
-12. A tool is a Forgehand-implemented function that takes arguments and the current project state, and returns a structured result. Tools that can be computed locally (explode, estimate, check, get state, select) never call the model.
-13. The first tool set is:
+12. A tool is a Forgehand-implemented function that takes arguments and the current project state, and returns a structured result. Tools that can be computed locally (explode, get state, select) never call the model.
+13. **Tool registry**: tools are defined once with `defineTool({ name, category, description, args (Zod schema), side: 'server' | 'client', scope: 'project' | 'home', effects, run })`. The registry drives everything: the `AgentStep` schema (calls become `{ tool, argsJson }`), the tool list in `AGENT_INSTRUCTIONS` (generated from the registry), and dispatch. Each tool validates its own `argsJson` with its Zod schema; bad args return `INVALID_ARGS`.
+14. The first tool set (all scope `'project'`, side `'server'`):
     - **`generate_design`** — produces a new concept model from a text description. Reuses the existing `designTask`.
     - **`edit_design`** — applies a text edit instruction to the current model. Reuses the existing `editTask` and `applyEditPlan`.
     - **`select_parts`** — sets the current part selection.
     - **`get_project_state`** — returns the current parts, selection, and display state (e.g. explode amount).
     - **`explode_view`** — sets the explode amount (0–1). On the server this only validates the amount and records it; the browser computes the exploded layout exactly as it does today. The server must not import `src/` (including `scene/explode.ts`); explode layout stays a browser-side concern. Changes display state only, never the `ModelSpec`.
     - **`wear_on_arm`** — toggles the existing arm-tracking try-on. It must never start the camera by itself: if the camera is off, the tool returns a result asking the user to turn it on, and try-on starts only after the user does. Video never leaves the browser.
-    - **`estimate_weight_cost`** — estimates weight and cost from part volumes × material density, with an adjustable default material. *(Deferred: implement last, drop if time runs short.)*
-    - **`check_feasibility`** — local basic geometry checks, e.g. floating parts, unreasonable interpenetration, dimensions out of range. *(Deferred: implement last, drop if time runs short.)*
-14. Every tool result the agent reports to the user must come from the tool's actual execution. The agent may summarize a result, but must not state facts the tool did not produce. Tool results shown in the UI are rendered from the tool's structured result object, not from the model's text — so a test can verify a displayed result by asserting on the structured tool output, not by parsing prose.
-15. Tool arguments and results are validated by Zod schemas in `shared/`. A tool that receives invalid arguments returns a structured error rather than throwing the loop.
+15. Every tool result the agent reports to the user must come from the tool's actual execution. The agent may summarize a result, but must not state facts the tool did not produce. Tool results shown in the UI are rendered from the tool's structured result object, not from the model's text — so a test can verify a displayed result by asserting on the structured tool output, not by parsing prose.
+16. Tool arguments and results are validated by Zod schemas in `shared/`. A tool that receives invalid arguments returns a structured error rather than throwing the loop.
 
 ### Streaming and cancellation
 
