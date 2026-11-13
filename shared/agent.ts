@@ -10,22 +10,18 @@ import { ModelSpecSchema, validateModel, type ModelSpec } from './model';
 
 const text = z.string().trim().min(1).max(500);
 const partId = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/);
+/** Part id format, shared with the tools that take part ids as arguments. */
+export const PartIdSchema = partId;
 const primitive = z.enum(['box', 'sphere', 'cylinder', 'cone', 'torus', 'tube']);
 
 // ----- AgentStep (model-facing) -----
 
+// The step schema does not grow with the tool count: a call is a tool name plus a
+// JSON-encoded argument object. The tool registry (server/tools) owns the name
+// check and each tool's argument schema; a bad call comes back as a ToolError.
 export const ToolCallSchema = z.strictObject({
-  tool: z.enum(['generate_design', 'edit_design', 'select_parts', 'get_project_state',
-    'explode_view', 'wear_on_arm', 'estimate_weight_cost', 'check_feasibility']),
-  args: z.strictObject({
-    prompt: z.string().trim().min(1).max(4000).nullable(),
-    instruction: z.string().trim().min(1).max(4000).nullable(),
-    partIds: z.array(partId).max(64).nullable(),
-    amount: z.number().min(0).max(1).nullable(),
-    enabled: z.boolean().nullable(),
-    densityKgPerM3: z.number().min(0).max(100000).nullable(),
-    material: z.string().trim().min(1).max(100).nullable(),
-  }),
+  tool: z.string().trim().min(1).max(64),
+  argsJson: z.string().max(8000),
   reason: z.string().trim().min(1).max(300).nullable(),
 });
 
@@ -36,8 +32,6 @@ export const AgentStepSchema = z.strictObject({
   calls: z.array(ToolCallSchema).min(1).max(8).nullable(),
 });
 
-export type ToolName = z.infer<typeof ToolCallSchema>['tool'];
-export type ToolCallArgs = z.infer<typeof ToolCallSchema>['args'];
 export type ToolCall = z.infer<typeof ToolCallSchema>;
 
 // ----- ModelStateChange (carries everything commit() needs; sent in `state` only) -----
@@ -54,8 +48,7 @@ export type ModelStateChange = z.infer<typeof ModelStateChangeSchema>;
 // ----- ToolResult -----
 
 export const ToolResultSchema = z.strictObject({
-  tool: z.enum(['generate_design', 'edit_design', 'select_parts', 'get_project_state',
-    'explode_view', 'wear_on_arm', 'estimate_weight_cost', 'check_feasibility']),
+  tool: z.string().trim().min(1).max(64),
   ok: z.boolean(),
   summary: z.string().trim().min(1).max(1000),
   // Per-tool detail, validated by the matching detail schema below. NEVER a full ModelSpec.
@@ -222,45 +215,12 @@ export interface AgentFinal {
 }
 export type AgentStep = AgentToolCalls | AgentFinal;
 
-/** Arg fields each tool "owns" (others must be null) and which of those are required. */
-const TOOL_ALLOWED: Record<ToolName, (keyof ToolCallArgs)[]> = {
-  generate_design: ['prompt'],
-  edit_design: ['instruction'],
-  select_parts: ['partIds'],
-  get_project_state: [],
-  explode_view: ['amount'],
-  wear_on_arm: ['enabled'],
-  estimate_weight_cost: ['densityKgPerM3', 'material'],
-  check_feasibility: [],
-};
-const TOOL_REQUIRED: Record<ToolName, (keyof ToolCallArgs)[]> = {
-  generate_design: ['prompt'],
-  edit_design: ['instruction'],
-  select_parts: ['partIds'],
-  get_project_state: [],
-  explode_view: ['amount'],
-  wear_on_arm: ['enabled'],
-  estimate_weight_cost: [],
-  check_feasibility: [],
-};
-const ARG_KEYS: (keyof ToolCallArgs)[] = ['prompt', 'instruction', 'partIds', 'amount', 'enabled', 'densityKgPerM3', 'material'];
-
-export function validateToolCallArgs(call: ToolCall): void {
-  const allowed = new Set(TOOL_ALLOWED[call.tool]);
-  const required = new Set(TOOL_REQUIRED[call.tool]);
-  for (const key of ARG_KEYS) {
-    const value = call.args[key];
-    if (value !== null && !allowed.has(key)) throw new Error(`工具「${call.tool}」不接受參數 ${key}。`);
-    if (value === null && required.has(key)) throw new Error(`工具「${call.tool}」需要參數 ${key}。`);
-  }
-}
-
 export function validateAgentStep(input: unknown): AgentStep {
   const raw = AgentStepSchema.parse(input);
   if (raw.type === 'tool_calls') {
     if (raw.calls === null || raw.calls.length === 0) throw new Error('tool_calls 必須包含至少一個工具呼叫。');
     if (raw.reply !== null) throw new Error('tool_calls 不可附帶最終回覆。');
-    for (const call of raw.calls) validateToolCallArgs(call);
+    // Tool names and argument shapes are checked per tool by runTool (server/agent-tools.ts).
     return { type: 'tool_calls', note: raw.note, calls: raw.calls, reply: null };
   }
   if (raw.reply === null) throw new Error('final 必須提供最終回覆。');

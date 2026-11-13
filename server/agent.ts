@@ -6,6 +6,13 @@ import { validateModel } from '../shared/model';
 import { GenerationError, type ModelProvider, type ModelTask } from './provider';
 import { MODEL_INSTRUCTIONS } from './provider';
 import { runTool, type AgentWorkingState } from './agent-tools';
+import { argsShapeText, listTools } from './tools';
+
+/** One executed tool call in compact form: no stateChange, no full ModelSpec. */
+interface Round {
+  call: { tool: string; argsJson: string };
+  result: { ok: boolean; summary: string; detail: unknown };
+}
 
 /**
  * The server-side agent loop. Runs multiple rounds against the working copy,
@@ -34,7 +41,7 @@ export async function runAgent(
   };
 
   // Compact round history (no full ModelSpec, no stateChange) sent to the model.
-  const rounds: Array<{ call: { tool: string; args: unknown }; result: { ok: boolean; summary: string; detail: unknown } }> = [];
+  const rounds: Round[] = [];
 
   try {
     for (let round = 0; round < maxRounds; round++) {
@@ -52,7 +59,7 @@ export async function runAgent(
       emit('status', { note: step.note });
 
       for (const call of step.calls) {
-        emit('tool', { tool: call.tool, args: call.args });
+        emit('tool', { tool: call.tool, argsJson: call.argsJson });
         // runTool returns a ToolResult for local failures (bad args, NO_MODEL,
         // EditError); an abort/GenerationError propagates to the outer try-catch.
         const result = await runTool(call, state, provider, runSignal);
@@ -76,7 +83,7 @@ export async function runAgent(
           emit('state', result.stateChange);
         }
         // Compact form for the next round's agentTask.
-        rounds.push({ call: { tool: call.tool, args: call.args }, result: { ok: result.ok, summary: result.summary, detail: result.detail } });
+        rounds.push({ call: { tool: call.tool, argsJson: call.argsJson }, result: { ok: result.ok, summary: result.summary, detail: result.detail } });
       }
     }
     // Reached maxRounds without a final reply.
@@ -143,14 +150,14 @@ async function getStep(provider: ModelProvider, task: ModelTask<AgentStep>, sign
  * explode, tryOn). The model sees the current model only through the snapshot,
  * and the full model only when edit_design runs (inside editTask).
  */
-function agentTask(history: AgentTurn[], rounds: Array<{ call: { tool: string; args: unknown }; result: { ok: boolean; summary: string; detail: unknown } }>, state: AgentWorkingState, instruction: string): ModelTask<AgentStep> {
+function agentTask(history: AgentTurn[], rounds: Round[], state: AgentWorkingState, instruction: string): ModelTask<AgentStep> {
   const snapshot = state.model === null
     ? '目前沒有模型。'
     : `目前模型：「${state.model.name}」，共 ${state.model.parts.length} 個零件：${state.model.parts.map(part => `${part.name}(${part.id}, ${part.primitive}, ${part.color})`).join('、')}。已選取：${state.selection.length ? state.selection.join('、') : '無'}。爆炸圖程度：${Math.round(state.explode * 100)}%。試戴：${state.tryOn ? '已開啟' : '關閉'}。`;
 
   const historyText = history.length ? history.map(turn => `使用者：${turn.instruction}\n回覆：${turn.reply}`).join('\n\n') : '';
   const roundsText = rounds.length ? rounds.map((r, i) => {
-    const call = `工具呼叫 ${i + 1}：${r.call.tool}(${JSON.stringify(r.call.args)})`;
+    const call = `工具呼叫 ${i + 1}：${r.call.tool}(${r.call.argsJson})`;
     const result = `結果：${r.result.ok ? 'ok' : 'failed'} — ${r.result.summary}`;
     return `${call}\n${result}`;
   }).join('\n\n') : '';
@@ -177,6 +184,12 @@ export function stripModel(result: ToolResult): ToolResult {
   return { ...result, stateChange: { ...result.stateChange, model: null } };
 }
 
+// Generated from the registry, in registration order. Only project-scope server tools are listed;
+// client and home-scope tools are not supported by the loop yet.
+const TOOL_LIST = listTools({ scope: 'project', side: 'server' })
+  .map(tool => `- ${tool.name}(${argsShapeText(tool.args)}): ${tool.description}`)
+  .join('\n');
+
 // Reused geometry/units lines from MODEL_INSTRUCTIONS (same as EDIT_INSTRUCTIONS).
 const GEOMETRY_RULES = MODEL_INSTRUCTIONS.split('\n')
   .filter(line => /^(Only the following controlled solid primitives|Model schema version is|Each part has a stable|Use realistic scale)/.test(line))
@@ -185,13 +198,10 @@ const GEOMETRY_RULES = MODEL_INSTRUCTIONS.split('\n')
 export const AGENT_INSTRUCTIONS = `You are an agent that helps users create and modify 3D concept models.
 You can call tools to accomplish the task. Each round you return one AgentStep: either a set of tool calls to execute this round, or a final reply to the user.
 
+Each tool call is { tool, argsJson }. argsJson is the tool arguments encoded as a JSON object string, for example '{"amount":0.5}', or '{}' for a tool without arguments.
+
 Available tools:
-- generate_design(prompt): produces a new concept model from a text description. Works on an empty scene or replaces an existing model. Returns ready/approximation/unsupported.
-- edit_design(instruction): applies a text edit instruction to the current model. Returns applied/clarify/unsupported. If the current model is null, returns NO_MODEL.
-- select_parts(partIds): sets the current part selection. Returns NO_MODEL if no model exists.
-- get_project_state(): returns a summary of the current model (parts, selection, explode, tryOn). Works with or without a model.
-- explode_view(amount): sets the explode amount (0–1). Display state only; the browser computes layout. Returns NO_MODEL if no model exists.
-- wear_on_arm(enabled): toggles arm-tracking try-on. If enabled and the camera is off, asks the user to turn it on (does not start the camera itself). Returns NO_MODEL if no model exists.
+${TOOL_LIST}
 
 Rules:
 - Use real tool results. Never fabricate facts or claim a tool succeeded without executing it.

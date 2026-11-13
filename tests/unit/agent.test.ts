@@ -3,14 +3,11 @@ import { demoModel } from '../../shared/demo';
 import {
   AgentRequestSchema, AgentStepSchema, ModelStateChangeSchema,
   agentJsonSchema, serializeSseEvent, validateAgentRequest, validateAgentStep,
-  AgentRequestError, type ToolCallArgs, type ToolName,
+  AgentRequestError,
 } from '../../shared/agent';
 
-const args = (partial: Partial<ToolCallArgs>): ToolCallArgs => ({
-  prompt: null, instruction: null, partIds: null, amount: null, enabled: null, densityKgPerM3: null, material: null, ...partial,
-});
-const call = (tool: ToolName, a: Partial<ToolCallArgs>) => ({ tool, args: args(a), reason: null });
-const calls = (tool: ToolName, a: Partial<ToolCallArgs>) => [call(tool, a)];
+const call = (tool: string, args: Record<string, unknown> = {}) => ({ tool, argsJson: JSON.stringify(args), reason: null });
+const calls = (tool: string, args: Record<string, unknown> = {}) => [call(tool, args)];
 const step = (c: ReturnType<typeof calls>, note: string | null = null) =>
   ({ type: 'tool_calls' as const, note, calls: c, reply: null });
 const final = (reply: string) => ({ type: 'final' as const, note: null, reply, calls: null });
@@ -22,7 +19,7 @@ describe('agent contract', () => {
       const toolCalls = validateAgentStep(step(calls('generate_design', { prompt: '一張紅桌子' }), '產生中'));
       if (toolCalls.type !== 'tool_calls') throw new Error('expected tool_calls');
       expect(toolCalls.calls).toHaveLength(1);
-      expect(toolCalls.calls[0]!.args.prompt).toBe('一張紅桌子');
+      expect(toolCalls.calls[0]).toEqual({ tool: 'generate_design', argsJson: '{"prompt":"一張紅桌子"}', reason: null });
       expect(toolCalls.reply).toBeNull();
 
       const done = validateAgentStep(final('完成'));
@@ -49,40 +46,20 @@ describe('agent contract', () => {
     });
   });
 
-  describe('per-tool arg presence', () => {
-    it('edit_design requires instruction and nothing else', () => {
-      expect(() => validateAgentStep(step(calls('edit_design', { instruction: '加長桌腳' })))).not.toThrow();
-      expect(() => validateAgentStep(step(calls('edit_design', { instruction: null })))).toThrow();
-      expect(() => validateAgentStep(step(calls('edit_design', { instruction: '加長桌腳', prompt: '不該出現' })))).toThrow();
+  describe('tool calls in a step', () => {
+    it('does not check tool names or argument contents (the tool registry does, at dispatch)', () => {
+      const parsed = validateAgentStep(step([call('not_a_tool'), { tool: 'explode_view', argsJson: 'not json', reason: null }]));
+      if (parsed.type !== 'tool_calls') throw new Error('expected tool_calls');
+      expect(parsed.calls.map(entry => entry.tool)).toEqual(['not_a_tool', 'explode_view']);
     });
-    it('select_parts requires partIds', () => {
-      expect(() => validateAgentStep(step(calls('select_parts', { partIds: ['housing'] })))).not.toThrow();
-      expect(() => validateAgentStep(step(calls('select_parts', { partIds: null })))).toThrow();
-      expect(() => validateAgentStep(step(calls('select_parts', { partIds: ['housing'], amount: 0.5 })))).toThrow();
-    });
-    it('explode_view requires amount', () => {
-      expect(() => validateAgentStep(step(calls('explode_view', { amount: 0.5 })))).not.toThrow();
-      expect(() => validateAgentStep(step(calls('explode_view', { amount: null })))).toThrow();
-      expect(() => validateAgentStep(step(calls('explode_view', { amount: 1, enabled: true })))).toThrow();
-    });
-    it('wear_on_arm requires enabled', () => {
-      expect(() => validateAgentStep(step(calls('wear_on_arm', { enabled: true })))).not.toThrow();
-      expect(() => validateAgentStep(step(calls('wear_on_arm', { enabled: null })))).toThrow();
-      expect(() => validateAgentStep(step(calls('wear_on_arm', { enabled: false, prompt: 'x' })))).toThrow();
-    });
-    it('get_project_state requires all args null', () => {
-      expect(() => validateAgentStep(step(calls('get_project_state', {})))).not.toThrow();
-      expect(() => validateAgentStep(step(calls('get_project_state', { prompt: 'x' })))).toThrow();
-    });
-    it('generate_design requires prompt', () => {
-      expect(() => validateAgentStep(step(calls('generate_design', { prompt: '桌子' })))).not.toThrow();
-      expect(() => validateAgentStep(step(calls('generate_design', { prompt: null })))).toThrow();
-      expect(() => validateAgentStep(step(calls('generate_design', { prompt: '桌子', amount: 0.5 })))).toThrow();
-    });
-    it('estimate_weight_cost allows its optional args and rejects foreign ones', () => {
-      expect(() => validateAgentStep(step(calls('estimate_weight_cost', {})))).not.toThrow();
-      expect(() => validateAgentStep(step(calls('estimate_weight_cost', { densityKgPerM3: 1200, material: '塑膠' })))).not.toThrow();
-      expect(() => validateAgentStep(step(calls('estimate_weight_cost', { prompt: 'x' })))).toThrow();
+    it.each([
+      ['an empty tool name', { tool: '  ', argsJson: '{}', reason: null }],
+      ['a tool name over 64 characters', { tool: 'x'.repeat(65), argsJson: '{}', reason: null }],
+      ['argsJson over 8000 characters', { tool: 'generate_design', argsJson: 'x'.repeat(8001), reason: null }],
+      ['a missing argsJson', { tool: 'get_project_state', reason: null }],
+      ['the removed flat args object', { tool: 'get_project_state', argsJson: '{}', args: {}, reason: null }],
+    ])('rejects %s', (_name, badCall) => {
+      expect(() => validateAgentStep({ type: 'tool_calls', note: null, calls: [badCall], reply: null })).toThrow();
     });
   });
 
@@ -103,16 +80,27 @@ describe('agent contract', () => {
       expect(properties.note).toHaveProperty('anyOf');
       // A nullable array field -> anyOf [array, null]
       expect(properties.calls).toHaveProperty('anyOf');
-      // args lives inside calls[].items (ToolCall); its nullable members also use anyOf
-      const callsAnyOf = (properties.calls as { anyOf: Array<{ type?: string; items?: { properties?: { args?: { properties?: Record<string, unknown> } } } }> }).anyOf!;
-      const arrayBranch = callsAnyOf.find(branch => branch.type === 'array')!;
-      const argsProps = arrayBranch.items!.properties!.args!.properties!;
-      expect(argsProps.prompt).toHaveProperty('anyOf');
+    });
+    it('describes a call as plain strings: tool is not an enum and argsJson is not a nested object', () => {
+      type Node = { type?: string; enum?: unknown; properties?: unknown; items?: { properties: Record<string, Node>; required: string[] } };
+      const properties = (schema as { properties: Record<string, { anyOf: Node[] }> }).properties;
+      const callItem = properties.calls!.anyOf.find(branch => branch.type === 'array')!.items!;
+      expect(callItem.required).toEqual(expect.arrayContaining(['tool', 'argsJson', 'reason']));
+      expect(callItem.properties.tool).toMatchObject({ type: 'string' });
+      expect(callItem.properties.tool).not.toHaveProperty('enum');
+      expect(callItem.properties.argsJson).toMatchObject({ type: 'string' });
+      expect(callItem.properties.argsJson).not.toHaveProperty('properties');
+    });
+    it('does not grow with the tool set: no per-tool names appear in the schema', () => {
+      const text = JSON.stringify(schema);
+      for (const name of ['generate_design', 'edit_design', 'select_parts', 'explode_view', 'wear_on_arm']) {
+        expect(text).not.toContain(name);
+      }
     });
   });
 
   describe('AgentStepSchema direct parse', () => {
-    it('accepts the flat-nullable shape with all arg fields present', () => {
+    it('accepts a step whose calls carry { tool, argsJson, reason }', () => {
       expect(() => AgentStepSchema.parse(step(calls('get_project_state', {}), '查看狀態'))).not.toThrow();
     });
   });

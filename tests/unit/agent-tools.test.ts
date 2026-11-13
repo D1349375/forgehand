@@ -1,13 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { demoModel } from '../../shared/demo';
 import { runTool, type AgentWorkingState } from '../../server/agent-tools';
-import type { ToolCallArgs, ToolName } from '../../shared/agent';
 import type { ModelProvider } from '../../server/provider';
 
-const args = (partial: Partial<ToolCallArgs>): ToolCallArgs => ({
-  prompt: null, instruction: null, partIds: null, amount: null, enabled: null, densityKgPerM3: null, material: null, ...partial,
-});
-const call = (tool: ToolName, a: Partial<ToolCallArgs>) => ({ tool, args: args(a), reason: null });
+const call = (tool: string, args: Record<string, unknown> = {}) => ({ tool, argsJson: JSON.stringify(args), reason: null });
+const rawCall = (tool: string, argsJson: string) => ({ tool, argsJson, reason: null });
 
 const withModel = (over: Partial<AgentWorkingState> = {}): AgentWorkingState => ({
   model: structuredClone(demoModel), selection: [], explode: 0, tryOn: false, cameraOn: false, ...over,
@@ -115,28 +112,78 @@ describe('agent local tools', () => {
     });
   });
 
-  describe('bad args', () => {
+  describe('argsJson validation', () => {
+    // A provider that fails the test if a tool reaches it: bad args must be rejected before `run`.
+    const untouchedProvider = {
+      name: 'openai', configured: true, model: 'm',
+      run: async () => { throw new Error('provider must not be called for invalid args'); },
+    } as unknown as ModelProvider;
+
+    // One row per tool and failure mode: not JSON, a required arg missing, a wrong type.
+    // get_project_state takes no arguments, so its failure modes are a non-object and a stray key.
     it.each([
-      ['select_parts without partIds', call('select_parts', { partIds: null })],
-      ['explode_view without amount', call('explode_view', { amount: null })],
-      ['wear_on_arm without enabled', call('wear_on_arm', { enabled: null })],
-      ['get_project_state with a foreign arg', call('get_project_state', { prompt: 'x' })],
-    ])('returns INVALID_ARGS for %s', async (_label, badCall) => {
-      const result = await runTool(badCall, withModel(), provider, signal);
+      ['generate_design: bad JSON', rawCall('generate_design', '{prompt:')],
+      ['generate_design: missing prompt', call('generate_design', {})],
+      ['generate_design: wrong type', call('generate_design', { prompt: 42 })],
+      ['edit_design: bad JSON', rawCall('edit_design', 'not json')],
+      ['edit_design: missing instruction', call('edit_design', {})],
+      ['edit_design: wrong type', call('edit_design', { instruction: ['a'] })],
+      ['select_parts: bad JSON', rawCall('select_parts', '')],
+      ['select_parts: missing partIds', call('select_parts', {})],
+      ['select_parts: wrong type', call('select_parts', { partIds: 'housing' })],
+      ['get_project_state: bad JSON', rawCall('get_project_state', '{')],
+      ['get_project_state: not an object', rawCall('get_project_state', '[]')],
+      ['get_project_state: stray key', call('get_project_state', { prompt: 'x' })],
+      ['explode_view: bad JSON', rawCall('explode_view', '{"amount":')],
+      ['explode_view: missing amount', call('explode_view', {})],
+      ['explode_view: wrong type', call('explode_view', { amount: '0.5' })],
+      ['explode_view: out of range', call('explode_view', { amount: 2 })],
+      ['wear_on_arm: not an object', rawCall('wear_on_arm', 'true')],
+      ['wear_on_arm: missing enabled', call('wear_on_arm', {})],
+      ['wear_on_arm: wrong type', call('wear_on_arm', { enabled: 'yes' })],
+    ])('%s returns INVALID_ARGS without touching state or the provider', async (_label, badCall) => {
+      const state = withModel();
+      const before = structuredClone(state);
+      const result = await runTool(badCall, state, untouchedProvider, signal);
+      expect(result.tool).toBe(badCall.tool);
       expect(result.ok).toBe(false);
       expect(result.detail).toMatchObject({ code: 'INVALID_ARGS' });
       expect(result.stateChange).toBeNull();
+      expect(state).toEqual(before);
+    });
+
+    it('rejects a stray key on a tool that takes arguments', async () => {
+      const result = await runTool(call('explode_view', { amount: 0.5, extra: true }), withModel(), provider, signal);
+      expect(result.detail).toMatchObject({ code: 'INVALID_ARGS' });
+    });
+
+    it('explains the failure in Traditional Chinese with the expected shape, never a Zod dump', async () => {
+      const missing = await runTool(call('explode_view', {}), withModel(), provider, signal);
+      expect(missing.summary).toContain('缺少參數 amount');
+      expect(missing.summary).toContain('explode_view(amount: number)');
+
+      const wrongType = await runTool(call('explode_view', { amount: 'lots' }), withModel(), provider, signal);
+      expect(wrongType.summary).toContain('參數 amount 的值不正確');
+      expect(wrongType.summary).not.toContain('lots');
+      expect(wrongType.summary).not.toMatch(/expected|invalid_type|received/i);
+
+      const badJson = await runTool(rawCall('select_parts', '{oops'), withModel(), provider, signal);
+      expect(badJson.summary).toContain('不是有效的 JSON');
+      expect(badJson.summary).toContain('select_parts(partIds: string[])');
     });
   });
 
-  describe('deferred tools', () => {
-    it.each([
-      ['estimate_weight_cost', call('estimate_weight_cost', { densityKgPerM3: 1200 })],
-      ['check_feasibility', call('check_feasibility', {})],
-    ])('returns NOT_IMPLEMENTED for %s (until Task 9)', async (_label, toolCall) => {
-      const result = await runTool(toolCall, withModel(), provider, signal);
+  describe('unknown tools', () => {
+    it.each(['estimate_weight_cost', 'check_feasibility', 'no_such_tool'])('returns UNKNOWN_TOOL for %s', async (name) => {
+      const state = withModel();
+      const result = await runTool(call(name, {}), state, provider, signal);
+      expect(result.tool).toBe(name);
       expect(result.ok).toBe(false);
-      expect(result.detail).toMatchObject({ code: 'NOT_IMPLEMENTED' });
+      expect(result.detail).toMatchObject({ code: 'UNKNOWN_TOOL' });
+      expect(result.stateChange).toBeNull();
+      // The message lists the real tools so the model can correct itself.
+      expect(result.summary).toContain('generate_design');
+      expect(result.summary).toContain('wear_on_arm');
     });
   });
 });

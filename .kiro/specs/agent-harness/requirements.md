@@ -60,7 +60,7 @@ The server is **stateless**. All project state — the model, undo/redo history,
     - **`explode_view`** — sets the explode amount (0–1). On the server this only validates the amount and records it; the browser computes the exploded layout exactly as it does today. The server must not import `src/` (including `scene/explode.ts`); explode layout stays a browser-side concern. Changes display state only, never the `ModelSpec`.
     - **`wear_on_arm`** — toggles the existing arm-tracking try-on. It must never start the camera by itself: if the camera is off, the tool returns a result asking the user to turn it on, and try-on starts only after the user does. Video never leaves the browser.
 15. Every tool result the agent reports to the user must come from the tool's actual execution. The agent may summarize a result, but must not state facts the tool did not produce. Tool results shown in the UI are rendered from the tool's structured result object, not from the model's text — so a test can verify a displayed result by asserting on the structured tool output, not by parsing prose.
-16. Tool arguments and results are validated by Zod schemas in `shared/`. A tool that receives invalid arguments returns a structured error rather than throwing the loop.
+16. Tool arguments are validated by each tool's registered Zod schema, and tool results by the result schemas in `shared/`. A tool that receives invalid arguments returns a structured error rather than throwing the loop.
 
 ### Streaming and cancellation
 

@@ -4,12 +4,8 @@ import type { EditPlan } from '../../shared/edit';
 import type { ModelSpec, Part } from '../../shared/model';
 import { GenerationError, type ModelProvider, type ModelTask } from '../../server/provider';
 import { runTool, type AgentWorkingState } from '../../server/agent-tools';
-import type { ToolCallArgs, ToolName } from '../../shared/agent';
 
-const args = (partial: Partial<ToolCallArgs>): ToolCallArgs => ({
-  prompt: null, instruction: null, partIds: null, amount: null, enabled: null, densityKgPerM3: null, material: null, ...partial,
-});
-const call = (tool: ToolName, a: Partial<ToolCallArgs>) => ({ tool, args: args(a), reason: null });
+const call = (tool: string, args: Record<string, unknown> = {}) => ({ tool, argsJson: JSON.stringify(args), reason: null });
 const demoPart = (id: string) => structuredClone(demoModel.parts.find(part => part.id === id)!);
 
 const editPlan = (over: Partial<EditPlan>): EditPlan => ({
