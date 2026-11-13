@@ -12,8 +12,12 @@ if (!Number.isInteger(apiPort) || apiPort < 1024 || apiPort > 65535 || (!product
   throw new Error('API_PORT 必須是 1024–65535 的整數，且開發模式需與 PORT 不同');
 }
 const timeoutMs = Number(process.env.MODEL_TIMEOUT_MS || 180_000);
+const agentMaxRounds = Number(process.env.AGENT_MAX_ROUNDS || 6);
+if (!Number.isInteger(agentMaxRounds) || agentMaxRounds < 1 || agentMaxRounds > 20) throw new Error('AGENT_MAX_ROUNDS 必須是 1–20 的整數');
+const agentTotalTimeoutMs = Number(process.env.AGENT_TOTAL_TIMEOUT_MS || 600_000);
+if (!Number.isInteger(agentTotalTimeoutMs) || agentTotalTimeoutMs < 1000) throw new Error('AGENT_TOTAL_TIMEOUT_MS 必須是不小於 1000 的整數（毫秒）');
 const provider = await createModelHost();
-const app = createApp({ provider, timeoutMs,
+const app = createApp({ provider, timeoutMs, agentMaxRounds, agentTotalTimeoutMs,
   staticDirectory: production ? 'dist' : undefined });
 // Keep the model host independent of Vite's runtime and native workers.
 // Production serves dist directly; development proxies /api from Vite.

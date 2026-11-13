@@ -110,6 +110,12 @@ describe('generated tool list in AGENT_INSTRUCTIONS', () => {
     expect(lines.map(line => /^- (\w+)\(/.exec(line)![1])).toEqual(SIX_TOOLS);
   });
 
+  it('tells the model that wear_on_arm shows a stand-in cuff, not the user design', () => {
+    const line = lines.find(entry => entry.startsWith('- wear_on_arm('))!;
+    expect(line).toContain('stand-in cuff');
+    expect(line).toContain("not the user's design");
+  });
+
   it('does not mention tools that are not registered', () => {
     expect(AGENT_INSTRUCTIONS).not.toContain('estimate_weight_cost');
     expect(AGENT_INSTRUCTIONS).not.toContain('check_feasibility');

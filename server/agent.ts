@@ -8,6 +8,9 @@ import { MODEL_INSTRUCTIONS } from './provider';
 import { runTool, type AgentWorkingState } from './agent-tools';
 import { argsShapeText, listTools } from './tools';
 
+/** Sanitized message for a run that hit its total time limit (also used by the route's final bound). */
+export const AGENT_TIMEOUT_MESSAGE = '這次請求已逾時，請稍後重試或簡化任務。';
+
 /** One executed tool call in compact form: no stateChange, no full ModelSpec. */
 interface Round {
   call: { tool: string; argsJson: string };
@@ -94,7 +97,7 @@ export async function runAgent(
     if (clientSignal.aborted) return;
     // Total-run timeout → sanitized Traditional Chinese message.
     if (timeoutSignal.aborted) {
-      emit('error', { message: '這次請求已逾時，請稍後重試或簡化任務。' });
+      emit('error', { message: AGENT_TIMEOUT_MESSAGE });
       emit('done', {});
       return;
     }

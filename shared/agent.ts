@@ -3,9 +3,12 @@ import { ModelSpecSchema, validateModel, type ModelSpec } from './model';
 
 /**
  * Agent contract — the Zod authority shared by server and client, mirroring
- * `model.ts` / `edit.ts`. A flat-nullable strict schema is sent to the model
- * (every property `required`, optionals `null`), then `validateAgentStep` does
- * the semantic checks a JSON-Schema union could not express portably.
+ * `model.ts` / `edit.ts`. The schema sent to the model is fixed: a strict
+ * object (every property `required`, optionals `null`) whose tool calls are
+ * `{ tool, argsJson }`, so it does not grow with the tool count. Each tool
+ * parses `argsJson` with its own schema in `server/tools/`. `validateAgentStep`
+ * then does the type/calls/reply consistency checks a JSON-Schema union could
+ * not express portably; it does not check tool names or arguments.
  */
 
 const text = z.string().trim().min(1).max(500);

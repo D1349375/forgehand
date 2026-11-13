@@ -1,6 +1,6 @@
 # Agent Harness — Tasks
 
-Implementation order follows the design: shared schemas → tools → loop → `/api/agent` route → frontend hook and panel → e2e test → deferred tools last. Each task has its own tests and must keep `npm run check` (type check + build + unit tests) green before it is marked done (req 30). Tests never call a real model back end; they inject a fake `ModelProvider` (req 29).
+Implementation order follows the design: shared schemas → tools → loop → `/api/agent` route → frontend hook and panel → e2e test → deferred tools last. Each task has its own tests and must keep `npm run check` (type check + build + unit tests) green before it is marked done (req 31). Tests never call a real model back end; they inject a fake `ModelProvider` (req 30).
 
 Status legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
@@ -166,30 +166,36 @@ Migrate from the flat-args `AgentStep` to the tool-registry architecture. `ToolC
 
 ## Task 5 — `server/agent-events.ts` + `server/app.ts`: the `/api/agent` route
 
-`[ ]`
+`[x]`
 
 Add the SSE writer and the `/api/agent` route with the `agentRoute` lifecycle.
 
 **Build:**
-- `server/agent-events.ts`: `setSseHeaders(res)` (Content-Type `text/event-stream`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Connection: keep-alive`) and `createEmitter(res)` returning an `emit(name, data)` that writes `serializeSseEvent(name, data)` and flushes; plus a `close` to end the response.
+- `server/agent-events.ts`:
+  - `setSseHeaders(res)`: status 200, Content-Type `text/event-stream; charset=utf-8`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Connection: keep-alive`, then `flushHeaders()`.
+  - `createEmitter(res)` returns `{ emit(name, data), close(), closed }`. `emit` writes `serializeSseEvent(name, data)` and, after `done`, ends the response. It never writes once the response has ended, the response or socket is destroyed, the emitter is closed, or a write has thrown.
 - `server/app.ts`:
-  - `agentRoute(res, requestId, work)` — `res.close` → `controller.abort()` (the `clientSignal`), increments `activeRequests`, runs `work(clientSignal)`, decrements `activeRequests` in `finally` (after `work` settles = provider stopped). Concurrency (`activeRequests >= 3`) is rejected by the handler before streaming. `runAgent` emits all terminal SSE events itself; the route only wraps the call so an unexpected throw still ends the stream with a sanitized `error` + `done` backstop, and always releases `activeRequests`.
-  - `POST /api/agent` handler: parse `AgentRequestSchema` → 400 `INVALID_REQUEST` JSON (pre-stream); `validateAgentRequest` → 400 `INVALID_MODEL` / `INVALID_SELECTION` JSON (pre-stream); concurrency `>= 3` → 429 `BUSY` JSON (pre-stream); then `setSseHeaders`, `agentRoute(res, requestId, async (clientSignal) => { await runAgent(provider, req, { maxRounds, totalTimeoutMs }, emit, clientSignal); })`. `runAgent` builds the combined `runSignal` itself so it can distinguish client cancel from the total-run timeout.
-  - Add `agentMaxRounds` and `agentTotalTimeoutMs` to `AppOptions`/env (defaults 6 and a configured total). The existing `MODEL_TIMEOUT_MS` is not applied to the whole run.
-- `/api/generate` and `/api/edit` are untouched.
+  - `POST /api/agent` handler, in this order and all before any SSE header:
+    1. `validateAgentRequest(req.body)`. A structural failure → 400 `INVALID_REQUEST`; an `AgentRequestError` → 400 `INVALID_MODEL` or `INVALID_SELECTION` with `requestId`. The body is `{ error: { code, message }, requestId }`, as in `/api/edit`, with fixed Traditional Chinese messages (the response never echoes a part id or Zod text).
+    2. `activeRequests >= 3` → 429 `BUSY` JSON, as in `modelRoute`.
+    3. `agentRoute(res, work)` with `work = (signal, emit) => runAgent(provider, req, { maxRounds, totalTimeoutMs }, emit, signal)`.
+  - `agentRoute(res, work)` sends the SSE headers and creates the emitter. `res` `close` → `controller.abort()` (the `clientSignal`). It increments `activeRequests` and decrements it in `finally`, after `runAgent` has settled (the provider has stopped). `runAgent` emits every terminal event itself, and builds the combined run signal itself so it can tell a client cancel (silent) from the total-run timeout (`error` + `done`).
+  - Final bound, like `modelRoute`'s `terminationGraceMs`: if `runAgent` has not settled `terminationGraceMs` after the total-run timeout, `agentRoute` aborts, emits the sanitized timeout `error` + `done`, ends the stream and releases the slot. Output from a late `runAgent` is dropped because the emitter is closed. An unexpected throw gets the same sanitized `error` + `done` backstop.
+  - `AppOptions.agentMaxRounds` (default 6) and `AppOptions.agentTotalTimeoutMs` (default 600000). `MODEL_TIMEOUT_MS` (`timeoutMs`) still bounds one model call only.
+- `server/agent.ts`: export `AGENT_TIMEOUT_MESSAGE`, shared by the loop and the route's final bound.
+- `server/index.ts` and `.env.example`: `AGENT_MAX_ROUNDS` (integer 1–20, default 6) and `AGENT_TOTAL_TIMEOUT_MS` (integer ≥ 1000, default 600000), validated at startup, documented in Traditional Chinese like the other variables.
+- `/api/generate` and `/api/edit` and their tests are untouched.
 
-**Tests** (`tests/unit/server-agent.test.ts`, supertest against `createApp` with a fake provider):
-- Success stream: POST a valid request (model present) → 200, `text/event-stream`, frames arrive (`status`, `tool`, `result`, `state`, `final`, `done`); the `result` frame's `stateChange.model` is null; the `state` frame carries the `ModelStateChange`.
-- `model: null` accepted: POST with `model: null` and empty selection → stream starts and a `generate_design` round produces a `generated` `state` event.
-- 429 on concurrency: fire 4 concurrent requests → one gets 429 `BUSY` JSON (not an SSE event), status 429, before any `event-stream` header.
-- 400 `INVALID_REQUEST`: malformed body → 400 JSON, no SSE.
-- 400 `INVALID_MODEL`: non-null but invalid model → 400 JSON, no SSE.
-- 400 `INVALID_SELECTION`: selection referencing a missing part, or non-empty selection with `model: null` → 400 `INVALID_SELECTION` JSON, no SSE.
-- Origin rejection: non-loopback origin → 403 JSON (existing middleware).
-- Body > 128 kB → 413 JSON (existing handler).
-- Total-run timeout over the wire: set `agentTotalTimeoutMs` tiny in `AppOptions` (fake provider holds the call) → the stream ends with an `error` event (sanitized zh-TW timeout) + `done`; no hang.
-- Client cancel over the wire: abort the supertest request mid-stream → the fake provider's `run` sees `signal.aborted`; the stream ends with no further `error`/`done` event (cancel is silent).
-- Mid-stream sanitized error: fake provider throws a non-abort `GenerationError` on round 2 → `error` event with a sanitized Traditional Chinese message (no provider body/key) then `done`; response ends.
+**Tests** (`tests/unit/server-agent.test.ts`, supertest against `createApp` with a fake provider whose `run` calls `task.parse` like the real adapters):
+- Success stream: 200, `text/event-stream`, `no-store`, `nosniff`; frames `status`, `tool` (`{ tool, argsJson }`), `result`, `state`, `final`, `done` in order; the `result` frame's `stateChange.model` is null; the `state` frame carries the model change; the full model appears once in the stream.
+- `model: null` accepted: a `generate_design` round produces a `generated` `state` event.
+- `timeoutMs` (the single-call limit) does not bound the whole run.
+- Plain JSON with no event-stream header, and the provider never called: 400 `INVALID_REQUEST` (empty body, unknown field, blank instruction, bad request id, missing `model` key), 400 `INVALID_MODEL`, 400 `INVALID_SELECTION` (unknown part, selection with no model; the id is not echoed), 403 for a non-loopback `Origin`, 413 for a body over 128 kB.
+- 429 `BUSY` as plain JSON when three runs are held.
+- Client abort: the held run's signal is aborted, the other runs are not, and a new run is accepted once the aborted one has settled.
+- Mid-stream `GenerationError` on round 2 → sanitized `error` then `done`. An unexpected `Error` carrying a secret → fixed message, no provider text in the stream.
+- Total-run timeout → timeout `error` then `done`. The slot stays held until a provider that was told to stop has stopped, then the held runs end with the timeout error. A provider that ignores cancellation is ended by the final bound and its slot is released.
+- `createEmitter` unit tests with a stub response: frames, end after `done`, no writes after `done`/`close`/end, no writes or `end` when the socket or response is destroyed, no writes after a throwing write.
 
 **Dependencies:** Tasks 1–4b.
 **Done when:** `npm run check` passes and the above tests are green.
@@ -247,7 +253,7 @@ The DOM-coupled hook and panel. Verified by `npm run check` (types + build) here
 Wire the panel into the app and disable manual interaction during a run.
 
 **Build:**
-- `src/App.tsx`: replace the local `DisplayModel` type with an import from `src/agent/types.ts`; render `<AgentPanel>` in the control column; expose `commit`, `setSelected`, `setExplode`, `setTryingOn`, current `display`, and a bounded turns list (≤10) to `useAgentRun`. Add `agentActive` (from `useAgentRun`) gating the existing `disabled` props for the generate form, edit form, manual adjustment fields, transform handles, undo/redo buttons, explode slider, and selection picking (req 26). The camera toggle stays enabled. Existing prompt/edit forms are retained (req 25). Keep the existing `crypto.randomUUID()` lineage convention by passing it into `applyStateEvent` via `useAgentRun`'s `newLineage`.
+- `src/App.tsx`: replace the local `DisplayModel` type with an import from `src/agent/types.ts`; render `<AgentPanel>` in the control column; expose `commit`, `setSelected`, `setExplode`, `setTryingOn`, current `display`, and a bounded turns list (≤10) to `useAgentRun`. Add `agentActive` (from `useAgentRun`) gating the existing `disabled` props for the generate form, edit form, manual adjustment fields, transform handles, undo/redo buttons, explode slider, and selection picking (req 27). The camera toggle stays enabled. Existing prompt/edit forms are retained (req 26). Keep the existing `crypto.randomUUID()` lineage convention by passing it into `applyStateEvent` via `useAgentRun`'s `newLineage`.
 
 **Tests:** none unit. Verification = `npm run check` (types + build) + the e2e in Task 8 (which asserts controls are disabled during a run and re-enable after cancel).
 
@@ -280,9 +286,9 @@ Playwright e2e using route interception with a scripted SSE body, following the 
 
 ## Notes for every task
 
-- Run `npm run check` before marking a task done; report the real result (req 30).
-- Tests use a fake `ModelProvider` and never call a real back end (req 29).
-- Keep user-facing strings in Traditional Chinese; spec/code/comments in English (req 31).
+- Run `npm run check` before marking a task done; report the real result (req 31).
+- Tests use a fake `ModelProvider` and never call a real back end (req 30).
+- Keep user-facing strings in Traditional Chinese; spec/code/comments in English (req 32).
 - Commit messages: conventional commits naming the spec task, e.g. `feat(agent): add agent schemas (spec agent-harness, task 1)` (hackathon rules).
-- `/api/generate` and `/api/edit` and their tests stay untouched (req 20).
+- `/api/generate` and `/api/edit` and their tests stay untouched (req 21).
 

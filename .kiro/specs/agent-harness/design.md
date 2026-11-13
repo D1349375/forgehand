@@ -6,11 +6,11 @@ This design satisfies `requirements.md`. It reuses existing patterns where possi
 
 A server-side loop drives the conversation. Each round the loop calls `ModelProvider.run(agentTask(...))` to get one `AgentStep`. If the step is a set of tool calls, the loop runs each tool against a working copy of the project state, collects structured results, emits SSE events, appends compact result summaries to the in-run history, and continues. If the step is a final reply, the run ends. State changes flow to the client as SSE events; the client applies them through its existing state setters and the undoable `commit` path.
 
-The server holds a working copy of the model/selection/display state for the duration of one run only. It never persists state across requests (req 1: server is stateless). Cross-run context comes from the bounded history the client sends (req 23).
+The server holds a working copy of the model/selection/display state for the duration of one run only. It never persists state across requests (req 1: server is stateless). Cross-run context comes from the bounded history the client sends (req 24).
 
 ## 2. Data model — `shared/agent.ts`
 
-All schemas live in `shared/` (req 27) so server and client share one Zod authority. The naming and structure mirror `model.ts` / `edit.ts`: a flat strict schema for what is sent to the model, plus `validate*` functions that do semantic checks and return a discriminated TypeScript type. This avoids top-level JSON-Schema unions, which the three back ends' strict structured-output modes handle inconsistently — the same "flat schema + semantic validation" pattern already used for `EditPlan`.
+All schemas live in `shared/` (req 28) so server and client share one Zod authority. The naming and structure mirror `model.ts` / `edit.ts`: a flat strict schema for what is sent to the model, plus `validate*` functions that do semantic checks and return a discriminated TypeScript type. This avoids top-level JSON-Schema unions, which the three back ends' strict structured-output modes handle inconsistently — the same "flat schema + semantic validation" pattern already used for `EditPlan`.
 
 ### 2.1 AgentStep
 
@@ -78,7 +78,7 @@ Per-tool `detail` schemas (in `shared/agent.ts`): e.g. `GenerateDesignDetail { s
 ### 2.3 Request, turns, and history
 
 ```ts
-// One prior turn the client sends for context (req 23): instruction + final reply only.
+// One prior turn the client sends for context (req 24): instruction + final reply only.
 export const AgentTurnSchema = z.strictObject({
   instruction: z.string().trim().min(1).max(4000),
   reply: z.string().trim().min(1).max(2000),
@@ -92,7 +92,7 @@ export const AgentRequestSchema = z.strictObject({
   explode: z.number().min(0).max(1),
   tryOn: z.boolean(),
   cameraOn: z.boolean(),                     // wear_on_arm needs this (req: tool never starts camera)
-  history: z.array(AgentTurnSchema).max(10), // bounded (req 23)
+  history: z.array(AgentTurnSchema).max(10), // bounded (req 24)
 });
 ```
 
@@ -117,7 +117,7 @@ Events the server writes over the stream. Defined in `shared/agent.ts` so the cl
 
 ## 3. Module layout
 
-New files only; no existing file is moved. The server never imports `src/` (req 36).
+New files only; no existing file is moved. The server never imports `src/` (req 37).
 
 ```
 shared/agent.ts        NEW  AgentStep, ToolCall, ToolResult, ModelStateChange, AgentRequest,
@@ -180,7 +180,7 @@ runAgent(provider, req, { maxRounds=6, totalTimeoutMs }, emit, clientSignal):
         rounds.push({ call: { tool: call.tool, argsJson: call.argsJson }, result: { ok: result.ok, summary: result.summary, detail: result.detail } })
       // loop continues: next round sees the accumulated compact rounds + a fresh snapshot
     // reached maxRounds without a final reply
-    emit('error', sanitized zh-TW "agent did not finish"); emit('done')   // earlier rounds' changes already emitted+applied (req 9, 18)
+    emit('error', sanitized zh-TW "agent did not finish"); emit('done')   // earlier rounds' changes already emitted+applied (req 9, 19)
   catch (ABORTED or GenerationError):
     if clientSignal.aborted → return                                    // client cancel/disconnect: emit nothing
     if timeoutSignal.aborted → emit('error', sanitized zh-TW timeout); emit('done')   // so the client does not hang
@@ -189,7 +189,7 @@ runAgent(provider, req, { maxRounds=6, totalTimeoutMs }, emit, clientSignal):
 
 Key points:
 - **Round history vs. session history.** The model input each round = the client-sent `history` (last ≤10 prior turns) + the in-run compact `rounds` (call + `{ ok, summary, detail }`) + the current `instruction` + a compact current-state snapshot. The snapshot is a `get_project_state`-style summary (part ids/names/primitives/key dimensions, selection, explode, tryOn) of the working copy, sent once per round. The rounds array never stores a full `ModelSpec` or a `stateChange`, so history does not grow with model size. The model sees the current model only through that per-round snapshot, and the full model only when `edit_design` actually runs (inside `editTask`).
-- **One combined signal for time limit and cancel (req 10, 18).** `runAgent` builds `runSignal = AbortSignal.any([clientSignal, AbortSignal.timeout(totalTimeoutMs)])` and passes it into every `provider.run` and `runTool`. A timeout or cancel therefore aborts the in-flight `provider.run` directly — CLI processes are stopped, not merely raced — and the current round is discarded. Earlier rounds' `state` events were already sent and applied and stay (the client can undo them).
+- **One combined signal for time limit and cancel (req 10, 19).** `runAgent` builds `runSignal = AbortSignal.any([clientSignal, AbortSignal.timeout(totalTimeoutMs)])` and passes it into every `provider.run` and `runTool`. A timeout or cancel therefore aborts the in-flight `provider.run` directly — CLI processes are stopped, not merely raced — and the current round is discarded. Earlier rounds' `state` events were already sent and applied and stay (the client can undo them).
 - **Errors and timeouts end the run; cancel is silent.** An abort or a `GenerationError` from `provider.run` (inside the agent step or inside `generate_design`/`edit_design`) is NOT turned into a `ToolResult` — it propagates and ends the run. The loop then distinguishes why: on the **total-run timeout** it emits a sanitized Traditional Chinese timeout `error` + `done` (so the client does not hang); on **client cancel/disconnect** it emits nothing (the connection is gone); on any other `GenerationError` it emits a sanitized `error` + `done`. Only local tool failures (bad args, no model, `EditError` from `applyEditPlan`) become `ToolResult`s.
 - **Retry once (req 11).** Only for Zod/semantic validation failure of `AgentStep`, not for provider transport errors (those are `GenerationError`s, surfaced sanitized). A retry first re-checks `runSignal.aborted`; if it has already aborted, the run ends via the cancel/timeout path instead of retrying.
 - **No fabrication (req 15).** The model only sees `ToolResult`s produced by `runTool`; the loop never lets the model assert facts without a result.
@@ -264,7 +264,7 @@ The per-tool result detail schemas (`GenerateDesignDetail`, `EditDesignDetail`, 
 | `edit_design` | `instruction` | yes (`editTask` + `applyEditPlan`) | `model` (kind `edited`, keeps lineage) + `selection` (added+updated) | changes (added/updated/removed), explanation |
 | `select_parts` | `partIds` | no | `selection` | the new selection |
 | `get_project_state` | — | no | none | parts summary, selection, explode, tryOn |
-| `explode_view` | `amount` (0–1) | no | `explode` | amount; **server validates only**, browser computes layout (req 14/36) |
+| `explode_view` | `amount` (0–1) | no | `explode` | amount; **server validates only**, browser computes layout (req 14/37) |
 | `wear_on_arm` | `enabled` | no | `tryOn` only if `state.cameraOn` | tryOn, cameraOn, message; if camera off → ok:false, summary asks user to turn on camera, no `tryOn` change (req: tool never starts camera) |
 | `estimate_weight_cost` *(deferred)* | `densityKgPerM3?`, `material?` | no | none | totalKg, totalCost, perPart (volume × density, default material adjustable) |
 | `check_feasibility` *(deferred)* | — | no | none | issues[] (floating parts, unreasonable interpenetration, out-of-range) |
@@ -273,19 +273,19 @@ The per-tool result detail schemas (`GenerateDesignDetail`, `EditDesignDetail`, 
 
 Notes:
 - `generate_design` / `edit_design` reuse `provider.run(designTask(prompt))` and `provider.run(editTask(model, instruction, selection))` and pass the run `signal` through. The working copy's current model/selection are passed in. A `generate_design` that returns `status !== 'ready'` becomes a `ToolResult` with `ok:false` and no `model` state change (approximation/unsupported surfaced to the model, not silently applied). `GenerateDesignDetail` carries only `{ source, providerModel, status }` — never the model. An abort or `GenerationError` from `provider.run` is NOT caught here — it propagates and ends the run (see §4).
-- `edit_design` runs `applyEditPlan` on the working copy; a local `EditError` (the plan does not apply) returns a `ToolError` with no state change (the model can try again or clarify). On an applied edit it also sets `stateChange.selection` to `[...changes.added, ...changes.updated]` (mirroring `App.tsx`'s `applyEdit`), so the working copy and client never keep a selected part the edit removed. An abort or `GenerationError` from `provider.run` propagates and ends the run. Conflict-with-manual-change handling is not needed here because manual edits are disabled during a run (req 26).
+- `edit_design` runs `applyEditPlan` on the working copy; a local `EditError` (the plan does not apply) returns a `ToolError` with no state change (the model can try again or clarify). On an applied edit it also sets `stateChange.selection` to `[...changes.added, ...changes.updated]` (mirroring `App.tsx`'s `applyEdit`), so the working copy and client never keep a selected part the edit removed. An abort or `GenerationError` from `provider.run` propagates and ends the run. Conflict-with-manual-change handling is not needed here because manual edits are disabled during a run (req 27).
 - `wear_on_arm`: the request carries `cameraOn`. The tool never starts the camera (req 14). If `enabled && !cameraOn` → `ok:false`, summary "請先開啟攝影機再試戴", no `tryOn` change. If `enabled && cameraOn` → `stateChange.tryOn = true`. If `!enabled` → `stateChange.tryOn = false`.
-- `explode_view` only validates `amount ∈ [0,1]` and sets `stateChange.explode`; the browser applies it via `setExplode` and computes layout as today (req 14/35/36). No `src/` import.
+- `explode_view` only validates `amount ∈ [0,1]` and sets `stateChange.explode`; the browser applies it via `setExplode` and computes layout as today (req 14/36/37). No `src/` import.
 
 ## 6. `/api/agent` endpoint — `server/app.ts`
 
-Add a sibling to `modelRoute`: `agentRoute(res, requestId, work)`. It reuses the existing `activeRequests` counter (cap 3 → else 429, req 22), `res.close` → `controller.abort()` for client disconnect/cancel, the existing origin/CORS/no-store/nosniff middleware, and sanitized error handling. The existing 128 kB `express.json` limit already applies (req 21).
+Add a sibling to `modelRoute`: `agentRoute(res, work)`. It reuses the existing `activeRequests` counter (cap 3 → else 429, req 23), `res.close` → `controller.abort()` for client disconnect/cancel, the existing origin/CORS/no-store/nosniff middleware, and sanitized error handling. The existing 128 kB `express.json` limit already applies (req 22).
 
 ```
 POST /api/agent
   // All request validation and concurrency rejection are PLAIN JSON HTTP responses
   // sent BEFORE any SSE byte is written (exactly like /api/generate's 400/429):
-  parse AgentRequestSchema            → 400 INVALID_REQUEST JSON on failure
+  validateAgentRequest(req.body):      → 400 INVALID_REQUEST JSON on a structural failure
   if req.model != null:
     validateModel(req.model)           → 400 INVALID_MODEL JSON on failure
     selection ⊆ model.parts            → 400 INVALID_SELECTION JSON on failure
@@ -293,19 +293,21 @@ POST /api/agent
     selectedPartIds must be empty      → 400 INVALID_SELECTION JSON on failure
   if activeRequests >= 3               → 429 BUSY JSON
   // --- streaming starts here ---
-  set SSE headers: Content-Type text/event-stream; Cache-Control no-store;
-                   X-Content-Type-Options nosniff; Connection keep-alive
-  agentRoute(res, requestId, async (clientSignal) => {
+  set SSE headers: Content-Type text/event-stream; charset=utf-8; Cache-Control no-store;
+                   X-Content-Type-Options nosniff; Connection keep-alive; flushHeaders()
+  agentRoute(res, async (clientSignal, emit) => {
     await runAgent(provider, req, { maxRounds, totalTimeoutMs }, emit, clientSignal)
   })   // runAgent builds runSignal = AbortSignal.any([clientSignal, AbortSignal.timeout(totalTimeoutMs)]) itself,
        // so it can distinguish client cancel from the total-run timeout (see §4).
 ```
 
-`emit(name, data)` writes `event: <name>\ndata: <json>\n\n`. On any terminal condition (final / error / done), flush and end the response. **Only failures that occur after streaming has started** (provider error mid-run, `AgentStep` invalid after retry, round/timeout limit reached) are reported as an `error` event followed by `done` — except client cancel/disconnect, which emits nothing. Request-validation errors (bad body, invalid model, invalid selection) and concurrency rejection (429) are plain JSON status responses sent before the SSE headers, consistent with the existing `/api/generate` 400/429 — they never appear as SSE events.
+`emit(name, data)` writes `event: <name>\ndata: <json>\n\n`. The emitter ends the response after `done`, and never writes once the response has ended or the socket is destroyed. **Only failures that occur after streaming has started** (provider error mid-run, `AgentStep` invalid after retry, round/timeout limit reached) are reported as an `error` event followed by `done` — except client cancel/disconnect, which emits nothing. Request-validation errors (bad body, invalid model, invalid selection) and concurrency rejection (429) are plain JSON status responses sent before the SSE headers, consistent with the existing `/api/generate` 400/429 — they never appear as SSE events.
 
-`agentRoute` lifecycle mirrors `modelRoute`: it increments `activeRequests` before streaming and decrements it in a `finally` block that runs only after `runAgent` has settled — i.e. after the last in-flight `provider.run` has been aborted and awaited, so the concurrency slot is held until the provider has actually stopped. `runAgent` builds the combined `runSignal` (`clientSignal` OR `AbortSignal.timeout(totalTimeoutMs)`) and passes it into every `provider.run`, so a timeout or cancel aborts the CLI process directly rather than just racing the loop, and `runAgent` can tell the two apart to decide whether to emit a timeout `error`+`done` or nothing (cancel). **The single-call `MODEL_TIMEOUT_MS` (180 s) from `modelRoute` is not applied to the whole run**; the run is bounded only by its own larger `totalTimeoutMs`. `maxRounds` and `totalTimeoutMs` come from `AppOptions` / env (defaults 6 and a configured total).
+`agentRoute` lifecycle mirrors `modelRoute`: it increments `activeRequests` before streaming and decrements it in a `finally` block that runs only after `runAgent` has settled — i.e. after the last in-flight `provider.run` has been aborted and awaited, so the concurrency slot is held until the provider has actually stopped. `runAgent` builds the combined `runSignal` (`clientSignal` OR `AbortSignal.timeout(totalTimeoutMs)`) and passes it into every `provider.run`, so a timeout or cancel aborts the CLI process directly rather than just racing the loop, and `runAgent` can tell the two apart to decide whether to emit a timeout `error`+`done` or nothing (cancel). **The single-call `MODEL_TIMEOUT_MS` (180 s) from `modelRoute` is not applied to the whole run**; the run is bounded only by its own larger `totalTimeoutMs`. `maxRounds` and `totalTimeoutMs` come from `AppOptions` (`agentMaxRounds`, default 6; `agentTotalTimeoutMs`, default 600000) and the env vars `AGENT_MAX_ROUNDS` / `AGENT_TOTAL_TIMEOUT_MS`.
 
-`/api/generate` and `/api/edit` are untouched (req 20); their tests run unchanged.
+**Final bound.** A provider that ignores cancellation would hold the slot forever, so `agentRoute` also waits `terminationGraceMs` after the total-run timeout (the same option and default as `modelRoute`). If `runAgent` has not settled by then, the route aborts, emits the sanitized timeout `error` + `done`, ends the stream and releases the slot. The emitter drops anything a late `runAgent` still tries to write. The 400 bodies use the `/api/edit` shape, `{ error: { code, message }, requestId }`, with fixed Traditional Chinese messages: they never echo a part id or Zod text.
+
+`/api/generate` and `/api/edit` are untouched (req 21); their tests run unchanged.
 
 ## 7. Frontend — `src/agent/`
 
@@ -324,24 +326,24 @@ POST /api/agent
   - `final` → set the agent's final reply, end run.
   - `error` → show sanitized message, end run.
   - `done` → end run.
-- Exposes `{ run, cancel, active, log, reply }`. `cancel` aborts the fetch; the server's `res.close` fires `clientSignal` abort, which ends the loop (req 18).
+- Exposes `{ run, cancel, active, log, reply }`. `cancel` aborts the fetch; the server's `res.close` fires `clientSignal` abort, which ends the loop (req 19).
 - `DisplayModel` is exported from `src/agent/types.ts` (moved out of `App.tsx`), imported by `App.tsx`, `useAgentRun`, and `apply-state.ts`.
 
 ### 7.2 `AgentPanel`
 
-A new panel in the control column: instruction textarea, "執行" button, a scrollable progress log (status/tool/result lines), the final reply, and a "取消" button while active. It uses `useArmTracking`-style status text. UI strings are Traditional Chinese (req 31). The existing prompt/edit forms stay (req 25).
+A new panel in the control column: instruction textarea, "執行" button, a scrollable progress log (status/tool/result lines), the final reply, and a "取消" button while active. It uses `useArmTracking`-style status text. UI strings are Traditional Chinese (req 32). The existing prompt/edit forms stay (req 26).
 
-### 7.3 Disable manual interaction during a run (req 26)
+### 7.3 Disable manual interaction during a run (req 27)
 
 While `active`, `App.tsx` disables: the generate form, the edit form, manual part adjustment fields, transform handles, undo/redo buttons, and the explode slider. The camera toggle stays enabled (so the user can turn the camera on for `wear_on_arm`). This is a single `agentActive` boolean gating the existing `disabled` props, mirroring how `busy` already disables the generate button. Selection picking is disabled too.
 
-### 7.4 Turns for follow-ups (req 23)
+### 7.4 Turns for follow-ups (req 24)
 
-`App.tsx` keeps a bounded list (≤10) of `{ instruction, reply }` from completed agent runs and passes it as `history`. Tool details are not stored — only the user's instruction and the agent's final reply — so "make the legs longer" after a prior run has context without a huge payload (and stays under 128 kB, req 21).
+`App.tsx` keeps a bounded list (≤10) of `{ instruction, reply }` from completed agent runs and passes it as `history`. Tool details are not stored — only the user's instruction and the agent's final reply — so "make the legs longer" after a prior run has context without a huge payload (and stays under 128 kB, req 22).
 
 ## 8. Testing strategy
 
-Unit tests (Vitest, fake `ModelProvider`, never a real back end — req 29). **No jsdom or happy-dom is added** — the frontend pieces that need a DOM are covered by the Playwright e2e test below; everything unit-tested in `src/agent` is a pure function.
+Unit tests (Vitest, fake `ModelProvider`, never a real back end — req 30). **No jsdom or happy-dom is added** — the frontend pieces that need a DOM are covered by the Playwright e2e test below; everything unit-tested in `src/agent` is a pure function.
 
 - `shared/agent.ts`: `validateAgentStep` accepts valid tool_calls/final; rejects type/call mismatches; a call is `{ tool, argsJson }` and neither the tool name nor the args are checked there; `agentJsonSchema` has `tool` and `argsJson` as plain strings; `agentJsonSchema` is a single top-level object (no `anyOf`/`oneOf` at the root), every property `required`, `$schema` stripped (nullable fields' nested `anyOf` are expected, as in `editJsonSchema()`); `ModelStateChangeSchema` round-trips; `AgentRequestSchema` accepts `model: null`.
 - `server/agent-tools.ts`: each tool with a scripted working copy — generate returns ready→model state change (kind `generated`, detail has no model); edit applies and changes model (kind `edited`); select changes selection; get_project_state returns snapshot (works with null model too); explode_view validates 0–1 (rejects out of range) and emits explode only; wear_on_arm with `cameraOn:false` returns `ok:false` no tryOn, with `cameraOn:true` emits tryOn; **every model-required tool returns a `NO_MODEL` ToolError when `state.model` is null**; bad `argsJson` (not JSON, missing arg, wrong type, stray key) → `INVALID_ARGS` ToolError for every tool, an unregistered name → `UNKNOWN_TOOL`, both with no state change and without reaching the provider; **an abort/GenerationError from `provider.run` propagates (not a ToolResult)**. Deferred tools get basic tests when implemented.
@@ -351,7 +353,7 @@ Unit tests (Vitest, fake `ModelProvider`, never a real back end — req 29). **N
 - `src/agent/sse.ts`: the SSE frame parser as a pure function in Node — splits a streamed string into `{ event, data }` frames, handles partial chunks, multi-line `data`, and the terminal `done` event.
 - `src/agent/apply-state.ts`: `applyStateEvent(event, current, { requestId, now, newLineage })` as a pure function in Node — given a state event and a current `DisplayModel | null` plus deterministic `requestId`/`now`/`newLineage`, returns the `commit` argument (uses `newLineage` for `generated`, keeps `current.lineage` for `edited`) and the `selection`/`explode`/`tryOn` values to set; asserts `generated` resets selection/explode and `edited` keeps them; `edited` with `null` current → no `commitArg`. `DisplayModel` is imported (type-only) from `src/agent/types.ts`.
 
-E2E test (Playwright, req 29 — follows the existing route-interception pattern in `tests/e2e`):
+E2E test (Playwright, req 30 — follows the existing route-interception pattern in `tests/e2e`):
 
 - `tests/e2e/agent-panel.spec.ts`: route `**/api/agent` to fulfill with a scripted SSE body (a `status` frame, a `tool` frame, a `result` frame, a `state` frame carrying a `generated` `ModelStateChange` built from a **distinct ModelSpec with a different name and part count from `demoModel`**, then a `final` frame and `done`). Assertions: the panel shows progress lines as frames arrive; the `state` event updates the 3D model to the distinct model (assert via the canvas `data-model-name`/`data-part-count` attributes as the existing tests do); undo works afterwards (reverts to the previous model); the generate/edit forms, manual adjustment, undo/redo, and explode slider are disabled while `active`; and cancel aborts the run and re-enables the controls. A second case streams a `tool` frame then holds the response to assert controls stay disabled mid-run and the cancel button returns them.
 
