@@ -13,21 +13,21 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 Create `shared/agent.ts` with the Zod authority for the agent contract. Both server and client import it.
 
 **Build:**
-- `ToolCallSchema`, `AgentStepSchema` (flat-nullable, strict — see design §2.1).
+- `ToolCallSchema` with `{ tool: string, argsJson: string, reason: nullable }` — no per-tool arg fields; the tool registry validates the tool name and each tool parses `argsJson`.
+- `AgentStepSchema` (fixed schema, same as before but `ToolCallSchema` changed).
 - `ModelStateChangeSchema` (`{ kind: 'generated'|'edited', model: ModelSpecSchema, source, providerModel }`).
 - `ToolResultSchema` (`{ tool, ok, summary, detail, stateChange }` — `stateChange.model` is `ModelStateChangeSchema.nullable()`).
 - `AgentTurnSchema`, `AgentRequestSchema` (`model` is `nullable()`; `selectedPartIds` must be empty when `model` is null — enforced in `validateAgentRequest`, not the raw schema).
-- Per-tool detail schemas: `GenerateDesignDetail` (no `model` field), `EditDesignDetail`, `GetProjectStateDetail`, `ExplodeViewDetail`, `WearOnArmDetail`, `ToolErrorDetail`. (`EstimateDetail`/`FeasibilityDetail` are stubbed here, implemented in Task 9.)
-- `validateAgentStep(input)`: parse + consistency rules (type/calls/reply, per-tool arg presence, all other args null). Returns `AgentToolCalls | AgentFinal`.
+- Per-tool detail schemas: `GenerateDesignDetail` (no `model` field), `EditDesignDetail`, `GetProjectStateDetail`, `ExplodeViewDetail`, `WearOnArmDetail`, `ToolErrorDetail`.
+- `validateAgentStep(input)`: parse + consistency rules (type/calls/reply). Tool name validation (check against the registry) is done in `server/agent-tools.ts` dispatch, not here.
 - `validateAgentRequest(input)`: parse + semantic checks (selection empty when model null; selection ⊆ parts when model present). Returns typed request with `model: ModelSpec | null`.
 - `agentJsonSchema()`: `z.toJSONSchema(AgentStepSchema, { target: 'draft-7' })` with `$schema` stripped, matching `designJsonSchema()`/`editJsonSchema()`.
 - SSE event-name constants and a `serializeSseEvent(name, data)` helper (pure string builder: `event: <name>\ndata: <json>\n\n`).
 
 **Tests** (`tests/unit/agent.test.ts`):
-- `validateAgentStep` accepts a valid `tool_calls` step (one call, `generate_design` with `prompt`, all other args null) and a valid `final` step.
+- `validateAgentStep` accepts a valid `tool_calls` step (one call with `tool` string and `argsJson` string) and a valid `final` step.
 - Rejects: `tool_calls` with empty/null `calls`, `final` with `calls`, `final` with null `reply`, `tool_calls` with non-null `reply`.
-- Per-tool arg presence: `edit_design` requires `instruction`; `select_parts` requires `partIds`; `explode_view` requires `amount`; `wear_on_arm` requires `enabled`; `get_project_state` requires all args null; each rejects when a required arg is null or a non-required arg is non-null.
-- `agentJsonSchema()` is a single top-level object (no `anyOf`/`oneOf` at the root), every property `required`, `$schema` stripped. Nullable fields' nested `anyOf: [T, { type: 'null' }]` are expected and present (same as `editJsonSchema()`'s five) — assert they exist inside `args`/`stateChange`, not at the root.
+- `agentJsonSchema()` is a single top-level object (no `anyOf`/`oneOf` at the root), every property `required`, `$schema` stripped, `argsJson` is a plain string (no nested object schema that grows with tool count).
 - `ModelStateChangeSchema` round-trips a generated and an edited change; rejects a `model` that fails `ModelSpecSchema`.
 - `validateAgentRequest` accepts `model: null` with empty selection; rejects `model: null` with non-empty selection; rejects an invalid model (non-null but bad parts) with `INVALID_MODEL`; rejects a selection referencing a part not in the model.
 - `serializeSseEvent` produces the exact frame format for a given name and data.
@@ -125,6 +125,41 @@ Create the loop, the `agentTask` builder, and `AGENT_INSTRUCTIONS`.
 
 ---
 
+## Task 4b — Tool registry and schema migration
+
+`[ ]`
+
+Migrate from the flat-args `AgentStep` to the tool-registry architecture. `ToolCallSchema` becomes `{ tool: string, argsJson: string }`; each tool defines its own Zod args schema and parses `argsJson`. The tool list in `AGENT_INSTRUCTIONS` is generated from the registry. This task changes the schema, updates the six working tools, and updates all tests.
+
+**Build:**
+- `shared/agent.ts`:
+  - Replace `ToolCallSchema.tool` enum and `ToolCallSchema.args` flat object with `{ tool: z.string().trim().min(1).max(64), argsJson: z.string().max(8000), reason: nullable }`.
+  - Remove per-tool arg validators (`validateToolCallArgs`) — tool-specific validation moves to each tool's registered schema.
+  - `validateAgentStep` still checks `type`/`calls`/`reply` consistency, but does not validate tool names or args — that is done in `server/agent-tools.ts` dispatch.
+  - Update `agentJsonSchema()` output (no change needed if the schema itself is updated).
+- `server/agent-tools.ts`:
+  - Add `defineTool<TArgs, TDetail>({ name, category, description, args: ZodSchema<TArgs>, side, scope, effects, run })` and a `toolRegistry` map.
+  - Migrate the six working tools (`generate_design`, `edit_design`, `select_parts`, `get_project_state`, `explode_view`, `wear_on_arm`) from inline dispatch to `defineTool` calls with their own arg schemas (e.g. `z.strictObject({ prompt: z.string().trim().min(1).max(4000) })` for `generate_design`).
+  - Each tool's `run` function receives `(args: TArgs, ctx: { state, provider }, signal)` and returns `ToolResult<TDetail>`.
+  - `runTool(call, state, provider, signal)` becomes: look up `call.tool` in the registry → not found: `ToolError { code: 'UNKNOWN_TOOL' }`; found: parse `JSON.parse(call.argsJson)` with `tool.args.parse(...)` → on parse failure: `ToolError { code: 'INVALID_ARGS', ... }`; on success: `tool.run(args, { state, provider }, signal)`.
+  - `argsShapeText(schema: ZodSchema)`: produces a brief arg signature for display (e.g. `"prompt"`, `"instruction"`, `"partIds"`, etc.) by inspecting the schema's shape. Used in `AGENT_INSTRUCTIONS` generation.
+  - `AGENT_INSTRUCTIONS = generateInstructions()`: builds the tool list from the registry at module load. Filters to `scope === 'project'` and `side === 'server'` (client tools and home-scope tools are out of scope for this task). Format: `- tool_name(args_shape): description`.
+  - The geometry/units reuse block stays the same.
+- `server/agent.ts`:
+  - No changes needed to the loop itself — `runTool` signature and `AGENT_INSTRUCTIONS` stay module exports, so the loop continues to call `runTool(call, state, provider, signal)` and use `AGENT_INSTRUCTIONS`.
+  - `agentTask` continues to use `AGENT_INSTRUCTIONS` (now generated) and `agentJsonSchema()` (now reflects the `{ tool, argsJson }` schema).
+
+**Tests** (`tests/unit/agent-tools.test.ts`, `tests/unit/agent-tools-model.test.ts`, `tests/unit/agent.test.ts`, `tests/unit/agent-loop.test.ts`):
+- Update `agent.test.ts`: remove per-tool arg presence tests (those move to the tool tests); update `validateAgentStep` tests to use `{ tool: 'generate_design', argsJson: '{"prompt":"test"}', reason: null }` format; assert `agentJsonSchema()` has `tool` as a string (not an enum) and `argsJson` as a string (no nested object).
+- Update `agent-tools.test.ts` and `agent-tools-model.test.ts`: each tool call now uses `{ tool: 'tool_name', argsJson: JSON.stringify({ arg: value }) }`; add `INVALID_ARGS` tests for each tool (bad JSON, missing required arg, wrong arg type); add an `UNKNOWN_TOOL` test (call with a tool name not in the registry).
+- Update `agent-loop.test.ts`: fake provider returns `{ type: 'tool_calls', calls: [{ tool: 'get_project_state', argsJson: '{}', reason: null }], ... }`; the fake provider calls `task.parse` like real adapters (already done in Task 4 fixes); add a test where the provider returns an `INVALID_MODEL` error on first call, retry succeeds on second call (already added in Task 4 fixes, verify it still works).
+- `AGENT_INSTRUCTIONS` contains the six tool names and their descriptions (assert the generated string contains `generate_design`, `edit_design`, `select_parts`, `get_project_state`, `explode_view`, `wear_on_arm`).
+
+**Dependencies:** Tasks 1–4.
+**Done when:** `npm run check` passes and all updated tests are green.
+
+---
+
 ## Task 5 — `server/agent-events.ts` + `server/app.ts`: the `/api/agent` route
 
 `[ ]`
@@ -152,7 +187,7 @@ Add the SSE writer and the `/api/agent` route with the `agentRoute` lifecycle.
 - Client cancel over the wire: abort the supertest request mid-stream → the fake provider's `run` sees `signal.aborted`; the stream ends with no further `error`/`done` event (cancel is silent).
 - Mid-stream sanitized error: fake provider throws a non-abort `GenerationError` on round 2 → `error` event with a sanitized Traditional Chinese message (no provider body/key) then `done`; response ends.
 
-**Dependencies:** Tasks 1–4.
+**Dependencies:** Tasks 1–4b.
 **Done when:** `npm run check` passes and the above tests are green.
 
 ---
@@ -239,28 +274,6 @@ Playwright e2e using route interception with a scripted SSE body, following the 
 
 ---
 
-## Task 9 — Deferred tools: `estimate_weight_cost` and `check_feasibility`
-
-`[ ]`
-
-Implement last; drop without affecting the loop or other tools if time runs short.
-
-**Build:**
-- `estimate_weight_cost(call, state, provider, signal)`: requires no model call; when `state.model` is null → `NO_MODEL`; compute each part's bounding-box volume × `densityKgPerM3` (default a sensible material density, adjustable via `material` arg); return `EstimateDetail { totalKg, totalCost, perPart }`; no `stateChange`. Add `densityKgPerM3`/`material` arg validation to the per-tool validator.
-- `check_feasibility(call, state, provider, signal)`: when `state.model` is null → `NO_MODEL`; local geometry checks (floating parts — no support below; unreasonable interpenetration; dimensions out of the 0.001–100 m range); return `FeasibilityDetail { issues }`; no `stateChange`.
-- Wire both into `runTool` dispatch (their enum entries and arg fields already exist from Task 1; the instructions already list them).
-- Extend `AGENT_INSTRUCTIONS` notes only if needed (the tools are already listed).
-
-**Tests** (`tests/unit/agent-tools-deferred.test.ts`):
-- `estimate_weight_cost`: returns sensible `totalKg`/`totalCost`/`perPart` for a scripted model; uses the provided `densityKgPerM3`; uses the default when omitted; `NO_MODEL` when model null; bad `densityKgPerM3` (out of range) → `INVALID_ARGS`.
-- `check_feasibility`: flags a floating part and an out-of-range dimension; returns empty `issues` for a well-formed model; `NO_MODEL` when model null.
-- Neither tool sets a `stateChange` and neither calls `provider.run`.
-
-**Dependencies:** Tasks 1, 2.
-**Done when:** `npm run check` passes and the above tests are green.
-
----
-
 ## Notes for every task
 
 - Run `npm run check` before marking a task done; report the real result (req 30).
@@ -268,3 +281,4 @@ Implement last; drop without affecting the loop or other tools if time runs shor
 - Keep user-facing strings in Traditional Chinese; spec/code/comments in English (req 31).
 - Commit messages: conventional commits naming the spec task, e.g. `feat(agent): add agent schemas (spec agent-harness, task 1)` (hackathon rules).
 - `/api/generate` and `/api/edit` and their tests stay untouched (req 20).
+

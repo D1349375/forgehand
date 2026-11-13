@@ -14,22 +14,12 @@ All schemas live in `shared/` (req 27) so server and client share one Zod author
 
 ### 2.1 AgentStep
 
+The model-facing step uses a fixed schema that does not grow with the tool count. Tool calls become `{ tool: string, argsJson: string }` — the tool name and a JSON-stringified argument object. Each tool parses `argsJson` with its own Zod schema registered in the tool registry (§5); a bad call returns `INVALID_ARGS` and the model corrects itself next round.
+
 ```ts
-// One tool call requested by the model. `args` is a single strict object holding
-// every tool's possible arguments as nullable fields; the validator checks the
-// right ones are present for the chosen tool.
 export const ToolCallSchema = z.strictObject({
-  tool: z.enum(['generate_design', 'edit_design', 'select_parts', 'get_project_state',
-    'explode_view', 'wear_on_arm', 'estimate_weight_cost', 'check_feasibility']),
-  args: z.strictObject({
-    prompt: z.string().trim().min(1).max(4000).nullable(),          // generate_design
-    instruction: z.string().trim().min(1).max(4000).nullable(),     // edit_design
-    partIds: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/)).max(64).nullable(), // select_parts
-    amount: z.number().min(0).max(1).nullable(),                    // explode_view
-    enabled: z.boolean().nullable(),                                // wear_on_arm
-    densityKgPerM3: z.number().min(0).max(100000).nullable(),        // estimate_weight_cost (deferred)
-    material: z.string().trim().min(1).max(100).nullable(),         // estimate_weight_cost (deferred)
-  }),
+  tool: z.string().trim().min(1).max(64),  // tool name, validated against the registry
+  argsJson: z.string().max(8000),          // JSON-stringified args, parsed by the tool's schema
   reason: z.string().trim().min(1).max(300).nullable(), // why the model chose this call (optional)
 });
 
@@ -42,11 +32,11 @@ export const AgentStepSchema = z.strictObject({
 ```
 
 `validateAgentStep(input)` parses, then enforces consistency:
-- `type === 'tool_calls'` → `calls` non-null and non-empty, `reply` null.
+- `type === 'tool_calls'` → `calls` non-null and non-empty, `reply` null; each `call.tool` must be a registered tool name.
 - `type === 'final'` → `reply` non-null, `calls` null; a stray `note` is dropped (not rejected), so a harmless extra note costs no retry round.
-- Per tool, the required arg fields are non-null and the rest are null (e.g. `generate_design` requires `prompt`, everything else null). Returns `AgentToolCalls | AgentFinal`.
+- Returns `AgentToolCalls | AgentFinal`.
 
-This flat-nullable form is strict-mode safe for all three back ends (every property is `required`, nullable values are `null`). Nullable fields do produce `anyOf: [T, { type: 'null' }]` in the draft-7 output, exactly as `editJsonSchema()` already does (five such fields) and all three back ends accept — so we send `z.toJSONSchema(AgentStepSchema, { target: 'draft-7' })` with `$schema` stripped, like `designJsonSchema()` / `editJsonSchema()`. The top-level node is a single object (no `anyOf`/`oneOf` at the root).
+This fixed-schema form is strict-mode safe for all three back ends. The top-level node is a single object (no `anyOf`/`oneOf` at the root), and `argsJson` is a plain string so the schema never grows with the tool count. We send `z.toJSONSchema(AgentStepSchema, { target: 'draft-7' })` with `$schema` stripped, like `designJsonSchema()` / `editJsonSchema()`.
 
 ### 2.2 Tool results
 
@@ -208,6 +198,55 @@ System prompt, English rules, user-facing strings in Traditional Chinese. It lis
 
 ## 5. Tool registry — `server/agent-tools.ts`
 
+Tools are defined once with `defineTool` and stored in a registry. The registry drives the `AgentStep` schema validation (tool name lookup), the tool list in `AGENT_INSTRUCTIONS` (generated), and dispatch.
+
+```ts
+interface ToolDefinition<TArgs, TDetail> {
+  name: string;
+  category: string;  // 'design' | 'inspect' | 'view' | 'body' | 'analysis' | 'export' | 'jobs' | 'home' | 'memory' | ...
+  description: string;  // one-line, shown in AGENT_INSTRUCTIONS
+  args: ZodSchema<TArgs>;
+  side: 'server' | 'client';
+  scope: 'project' | 'home';
+  effects: 'read-only' | 'writes-scene' | 'writes-project' | 'writes-memory' | 'uses-camera' | 'sends-image' | 'long-running';
+  run: (args: TArgs, ctx: ToolContext, signal: AbortSignal) => Promise<ToolResult<TDetail>>;
+}
+
+interface ToolContext {
+  state: AgentWorkingState;   // { model, selection, explode, tryOn, cameraOn }
+  provider: ModelProvider;
+}
+
+function defineTool<TArgs, TDetail>(def: ToolDefinition<TArgs, TDetail>): void {
+  toolRegistry.set(def.name, def);
+}
+```
+
+**Registration.** Each tool calls `defineTool` at module load. The six working tools are migrated from the existing `runTool` dispatch to the registry. The enum in the old `ToolCallSchema.tool` is removed — `validateAgentStep` checks `call.tool` against the registry instead.
+
+**Generated instructions.** `AGENT_INSTRUCTIONS` is built from the registry at module load:
+
+```ts
+const toolListText = Array.from(toolRegistry.values())
+  .filter(t => t.scope === 'project' && t.side === 'server')  // only project/server tools for now
+  .map(t => `- ${t.name}(${argsShapeText(t.args)}): ${t.description}`)
+  .join('\n');
+
+export const AGENT_INSTRUCTIONS = `You are an agent that helps users...
+Available tools:
+${toolListText}
+Rules:
+...`;
+```
+
+`argsShapeText(schema)` produces a brief arg signature (e.g. `prompt`, `instruction`, `partIds`, `amount`, `enabled`) from the Zod schema for display only.
+
+**Dispatch.** `runTool(call, state, provider, signal)` looks up `call.tool` in the registry:
+- Not found → `ToolError { code: 'UNKNOWN_TOOL', ... }`
+- Found → parse `call.argsJson` with `tool.args.parse(JSON.parse(call.argsJson))`; on parse failure → `ToolError { code: 'INVALID_ARGS', ... }`; on success → `tool.run(args, { state, provider }, signal)`.
+
+The per-tool result detail schemas (`GenerateDesignDetail`, `EditDesignDetail`, etc.) stay in `shared/agent.ts` as before.
+
 `runTool(call, state, provider, signal): ToolResult`. Each tool validates its own args (per-tool validator from `shared/agent.ts`); bad args → `ToolResult { ok:false, summary, detail: ToolErrorDetail }` (req 15), no state change. A provider abort or `GenerationError` from `provider.run` (in `generate_design`/`edit_design`) is **not** caught here — it propagates and ends the run (see §4).
 
 | Tool | Args | Calls model? | State change | Result detail |
@@ -308,7 +347,9 @@ E2E test (Playwright, req 29 — follows the existing route-interception pattern
 
 ## 9. Key decisions
 
-- **Flat-nullable `AgentStep`, not a discriminated union, for the model-facing schema.** Mirrors `EditPlan`/`ModelSpec` (strict object + semantic `validate*`). Strict-mode safe across OpenAI Responses, Codex `outputSchema`, and Claude `--json-schema`: every property is `required`, optionals are `null`. Nullable fields' nested `anyOf` are expected and already accepted by all three back ends (as in `editJsonSchema()`); the top level stays a single object. Avoids top-level `oneOf`/`anyOf` portability risk.
+- **Fixed-schema `AgentStep` with `{ tool, argsJson }`, not a flat args object.** The schema no longer grows with the tool count. Each tool parses its own `argsJson` with a registered Zod schema. Strict-mode safe across all three back ends: every property is `required`, `argsJson` is a plain string. The top level stays a single object (no `anyOf`/`oneOf` at the root).
+- **Tool registry as the single source of truth.** `defineTool` registers name, description, args schema, side, scope, effects, and run. The tool list in `AGENT_INSTRUCTIONS` is generated from the registry, so adding a tool is one `defineTool` call with no schema/validator/instructions changes elsewhere.
+- **No client tools, background jobs, or home scope in this spec.** They are deferred to later specs (§4.4, §4.5, §4.7 in VISION.md). This spec builds the foundation: the registry, the server-side project-scoped tools, and the fixed-schema `AgentStep`.
 - **Tool result is the single source of truth.** The model sees `ToolResult` summaries; the UI renders `ToolResult` detail; tests assert on `ToolResult`. The model's `note` is narration only.
 - **The full `ModelSpec` is sent exactly once, in the `state` event.** A model change carries a `ModelStateChange` (`{ kind, model, source, providerModel }`) giving the client everything `commit` needs (the client supplies `requestId`/`startedAt`/`lineage`); the `result` event strips `stateChange.model`; the round history stores only `{ ok, summary, detail }`. The model sees the current model through the compact per-round state snapshot, and the full model only inside an `editTask` when `edit_design` runs.
 - **Empty scene is a first-class state.** `AgentRequest.model` is nullable; the working copy starts `null`; model-required tools return a `NO_MODEL` `ToolError`, and `generate_design` works with or without a model.
@@ -317,6 +358,3 @@ E2E test (Playwright, req 29 — follows the existing route-interception pattern
 - **Server never imports `src/`.** `explode_view` validates and records only; `wear_on_arm` never touches the camera; layout and tracking stay browser-side.
 - **Reuses, not rewrites.** `designTask`/`editTask`/`applyEditPlan`/`validateModel`/`commit`/`activeRequests` are reused; `/api/generate` and `/api/edit` are unchanged.
 
-## 10. Deferred tools
-
-`estimate_weight_cost` and `check_feasibility` are designed here but scheduled last in `tasks.md`. If time runs short they are dropped without affecting the loop or the other tools — they are pure local tools with no `stateChange`, so removing them only shortens the tool enum and the instructions. Their arg fields stay nullable and unused.
