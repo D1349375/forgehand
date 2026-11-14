@@ -40,6 +40,7 @@ Priority: **P0** needed for the hackathon demo, **P1** strong demo value if time
 | C14 | Import model files | Import a GLB/STL as a reference | Import meshes as non-editable reference objects (saving and reopening work is C17) | Three.js loaders exist | P2 |
 | C15 | Voice | Speaks instead of typing; can interrupt | Push-to-talk speech-to-text into the same agent run; later a realtime voice front end | Browser speech APIs send audio to a vendor (**privacy**) | P1 push-to-talk, P2 realtime |
 | C16 | English UI | Judges read the screen | i18n of existing strings | Mechanical | P0 |
+| C18 | Design fidelity | Gets believable internals (battery, PCB, motor) with typical real dimensions, in a concept or a detailed mode; asks the agent to look up references | Stronger generation rules, a standard-parts table, a hollow `shell` primitive, advisory fit checks, and an isolated research sub-agent with web access (see §4.10) | Prompt and one primitive; web research needs a spike | P1 |
 | C17 | Personal AI, projects and memory | Starts by talking to a personal assistant: "I still have a few products unfinished." "Bring up the bracelet." The project opens, or the projects float as cards in the camera view to pick from | A home agent with project tools; each project keeps its workspace, its own memory and its sessions; a small shared memory about the user; long sessions are summarised (see §4.8) | Local files on the user's machine; same harness with a different tool set | P1 (core), P2 (hand-picked floating cards) |
 
 **Why export is P0:** a workbench whose designs cannot leave it has no practical use. A GLB/STL file and an exploded-view image are the minimum; assembly by snapping (C9) is a nice interaction but not required to make the result usable.
@@ -224,6 +225,7 @@ round input = shared-memory index (short) + project memory + session summary
 | `snap_parts(a, b)` | assembly | server | writes-scene | P2 |
 | `scan_object(mode)` | capture | client | sends-image | P2 |
 | `measure_body()` / `show_body_avatar()` | body | client | uses-camera | P2 |
+| `research_reference(query)` | research | server | read-only, uses-network (isolated sub-agent, §4.10) | P1 |
 
 ### 4.9 Hand control (C4)
 
@@ -254,6 +256,28 @@ Decided with the user on 2026-11-14, after an independent design review of the r
 - `body-fit` takes the shared part: hand tracking runs whenever the camera is on (not only during try-on), raw landmarks are exposed, pose is skipped when not needed, and the skeleton overlay and badge are drawn. The overlay also helps debug try-on tracking.
 - `hand-manipulation` keeps the gestures: the pinch state machine, picking, pinch-move, empty-space orbit, rotate mode, double-pinch zoom. Cut order inside it if time runs short: rotate mode, then orbit, then move.
 
+### 4.10 Design fidelity (C18)
+
+Decided with the user on 2026-11-15, after comparing the open-source Teardown skill (https://github.com/elvarofficial/teardown, MIT; ideas only, no code copied) and an independent review of the proposal.
+
+**What Teardown teaches.** Its detail comes from method, not from a special format: start from a reference, use real dimensions and cross-check them, never hide a collision, and review rendered frames. It builds one known machine per long session; Forgehand generates any object in seconds to a minute, so only the method transfers. Its core rule also applies here: every number shown is computed from the model, never stated by the language model (today `assumptions` repeat dimensions that go stale after a manual edit).
+
+**Why today's models are thin.** `MODEL_INSTRUCTIONS` barely asks for internals, and there is no hollow primitive: an internal PCB sits inside a solid box, so weight (volume × density) and STL export would be wrong.
+
+**Decisions.**
+- **Concept or detailed.** Default is concept. The agent may ask whether the user wants typical internals; the user can keep a detailed mode on, or ask the agent at any time to add internals. Detailed mode is capped at about 20 parts (about 50 s on the Claude CLI; Codex is slower).
+- **Honest internals.** Only components typical of the product category, named generically ("typical 40 mm driver"), marked `role=interior`, children of a chassis or PCB part so the exploded view reveals them, plus an assumption line that the layout is typical, not taken from a specific product.
+- **Standard-parts table** in the generation rules (about 20 entries with published dimensions: 18650 and CR2032 cells, 1.6 mm PCB, M2/M3 screws and standoffs, USB-C socket, 10 mm haptic motor, typical plastic and aluminium wall thickness). The reviewer checks the numbers against public datasheets.
+- **`shell` primitive**: a closed hollow box whose wall comes from the existing `tubeRatio`, so the part schema keeps its shape and old models and edit plans stay valid. Exact volume and a valid STL with an internal void.
+- **Advisory fit checks** (local, in `shared/`, reusing `shared/bounds.ts`): an interior part outside its shell, a floating part, an interior part with no hollow shell around it. Shown in the tool result and the details panel; the agent may offer an edit. No automatic repair call (it would add 10–80 s).
+- **Show computed numbers**: overall W×D×H in mm from the bounds, a permanent "concept, dimensions provisional" badge, and a note that assumptions may be stale after a manual edit. Optional: one section-plane (cutaway) toggle; the x-ray look already exists (`src/scene/style.ts`).
+- **References through an isolated research sub-agent**, never by giving the main agent web tools. A `research_reference(query)` tool runs a separate model call that may only search and read the web and must return a short, schema-checked brief: components, typical dimensions and source URLs. The design call stays tool-less and sees only that brief; the UI lists the sources so professional users can check them. Without network access the table above is the fallback. Page text is never copied into the model; only facts and links come back.
+- **Reference images from the user** (an uploaded photo or a webcam capture) come later and share the path of scanning (C12). Both the research sub-agent and image input need a spike first: whether the Claude and Codex CLIs can search the web and accept images under Forgehand's isolated settings. Spikes and real runs spend the user's quota and run only on the user's go-ahead.
+- **Measure it.** Six product prompts (Bluetooth speaker, smart bracelet, doorbell, game controller, desk lamp, drone arm) in `scripts/verify-real-provider.ts`; local metrics (part and interior count, interior parts contained, floating parts, shell used, JSON size, latency) before and after, on both CLIs (about 24 calls, run on the user's go-ahead), plus a 1–5 human score from screenshots.
+- **Not now:** lathe, extrusion and `array` primitives (they grow every part or break part ids), per-part metadata fields (the BOM is derived from names, primitives, volume and material), and visual self-review of rendered frames.
+
+**Spec `design-fidelity`** (phase C, at most 5 tasks): 1. `shell` primitive; 2. generation rules for internals, the standard-parts table, the concept/detailed mode, and making sure new rules also reach `EDIT_INSTRUCTIONS` (`GEOMETRY_RULES` copies only some lines); 3. advisory fit checks and the W×D×H readout; 4. the research sub-agent tool (after its spike); 5. eval prompts and metrics. Optional: cutaway toggle. `materials-analysis` uses the shell volume for weight and reuses the fit checks in `check_feasibility`; `export` derives the BOM. If `shell` should exist before saved projects, land task 1 before `projects-memory` saves files. The English UI spec changes the language line of `MODEL_INSTRUCTIONS` separately from these rules.
+
 ## 5. Hackathon plan
 
 Deadline: 2026-12-04 14:00 PT (2026-12-05 06:00 Taiwan). About three weeks remain. Each spec below is created and implemented in Kiro, reviewed task by task, and committed with the spec task in the message.
@@ -262,13 +286,13 @@ Deadline: 2026-12-04 14:00 PT (2026-12-05 06:00 Taiwan). About three weeks remai
 |---|---|---|
 | A | 11/13 – 11/17 | `agent-harness`: fix the task 4 retry bug, insert a tool-registry task before task 5, then tasks 5–8 (route, panel, e2e) |
 | B | 11/17 – 11/23 | `workspace-v2` (C2), `export` (C11 files and image, P0), `projects-memory` (C17 core: home agent, projects, sessions, memory, compaction), `materials-analysis` (C5, C6, task 9 moved here) |
-| C | 11/23 – 11/29 | `body-fit` (C10: shared hand tracking and the skeleton overlay from §4.9, then generalise try-on to any designed object on hand/wrist, then head), `candidates-tray` (C3), `background-jobs` (C7), `hand-manipulation` (C4) |
+| C | 11/23 – 11/29 | `body-fit` (C10: shared hand tracking and the skeleton overlay from §4.9, then generalise try-on to any designed object on hand/wrist, then head), `design-fidelity` (C18, §4.10), `candidates-tray` (C3), `background-jobs` (C7), `hand-manipulation` (C4) |
 | D | 11/29 – 12/03 | `english-ui` (C16), push-to-talk voice if time allows (C15), README and privacy update, demo video, Devpost submission, make the repo public |
 | After | — | snap assembly (C9), scanning (C12), body avatar (C13), floating project cards picked by hand, drawings, realtime voice |
 
-If time runs short, cut in this order: `hand-manipulation`, `background-jobs`, `candidates-tray`, then the floating-cards part of `projects-memory`. Export and body fit stay (including the hand skeleton overlay, which lives in `body-fit`).
+If time runs short, cut in this order: `hand-manipulation`, `background-jobs`, `candidates-tray`, the research sub-agent and the cutaway of `design-fidelity`, then the floating-cards part of `projects-memory`. The internals rules of `design-fidelity` (task 2) are the last part of that spec to cut, because they are prompt-only and give the most visible gain. Export and body fit stay (including the hand skeleton overlay, which lives in `body-fit`).
 
-Demo path for the video, using only P0/P1: "I have unfinished products" → open the bracelet project → candidates → pick one → steel → background feasibility report → exploded view → put it on my wrist → export STL.
+Demo path for the video, using only P0/P1 (the demo object is a smart bracelet for now, so the exploded view shows a battery, PCB and haptic motor): "I have unfinished products" → open the bracelet project → candidates → pick one → detailed internals with their sources → steel → background feasibility report → exploded view → put it on my wrist → export STL.
 
 ## 6. Open questions and risks
 
@@ -276,6 +300,7 @@ Demo path for the video, using only P0/P1: "I have unfinished products" → open
 - **Image input per provider (C12):** untested in the isolated CLI modes.
 - **Head anchor units (C10):** the face transformation matrix needs a spike before the spec.
 - **Try-on quality today (C10):** in the author's own test (2026-11-13) the forearm tracking still loses the arm and the cuff does not feel worn. The `body-fit` spec must cover tracking stability and realism, not only "attach any object": hand and arm occlusion (a person-segmentation mask so the far side of the object hides behind the arm), a contact shadow, matching light, scale from metric world landmarks, and smoothing measured on recordings like `docs/PRIOR_WORK.md` did.
+- **Design fidelity (C18):** whether the CLIs can search the web and accept images under the isolated settings is unverified (spike first); detailed mode may be slow on Codex; the standard-parts numbers need checking against datasheets.
 - **Hand control (C4):** whether tracking is stable enough for drags on the user's laptop is unknown; the cancel-on-loss default may need to flip (§4.9). Changing real size by hand is deferred.
 - **Printable export:** union of primitives needs a CSG dependency; decide in the `export` spec.
 - **Credits and time:** Kiro credits are sufficient at the observed ~12 credits per task with Claude Sonnet 4.5; time is the real limit. Phase D is fixed; cut P1 items from phases B and C first.
