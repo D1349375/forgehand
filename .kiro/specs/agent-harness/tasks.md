@@ -284,7 +284,7 @@ Wire the panel into the app and disable manual interaction during a run.
 
 ## Task 8 — `tests/e2e/agent-panel.spec.ts`: agent panel e2e
 
-`[ ]`
+`[x]`
 
 Playwright e2e using route interception with a scripted SSE body, following the existing `tests/e2e` pattern (`page.route('**/api/agent', ...)` returning a hand-built SSE response).
 
@@ -295,8 +295,9 @@ Playwright e2e using route interception with a scripted SSE body, following the 
   - The panel shows progress lines as frames arrive (`status`, tool, result, final).
   - The `state` event updates the 3D model to the distinct model — assert via the canvas `data-model-name`/`data-part-count` attributes (as the existing tests do); the name and part count differ from the pre-run model.
   - Undo works afterwards: click "復原" → reverts to the previous model (start from `loadDemo` so undo has a prior state; assert the name/part count return to `demoModel`'s).
-  - Controls are disabled during the run: a held-response case (stream `status` + `tool`, then hold) asserts the generate form, edit form, undo/redo, explode slider, and manual adjustment are disabled while `active`.
-  - Cancel works: in the held-response case, click "取消" → the run ends and the controls re-enable.
+  - Controls are disabled during the run: a held-response case (the route does not respond at all, so the hold happens before any frame; the handler is released and aborted after the assertions) asserts the edit form, undo, explode button and slider, part list buttons, and a part number field are disabled while `active`, and that 執行 is disabled.
+  - Cancel works: in the held-response case, click "取消" → the status text starts with 已取消 and the controls re-enable (the edit textarea is checked and filled, because a submit button also needs text).
+  - Error responses: `/api/agent` returning `400` and `429` JSON `{ error: { code, message } }` shows the message in `agent-error` and leaves the controls enabled.
 
 **Tests:** this file is the test.
 **Dependencies:** Task 7b.
