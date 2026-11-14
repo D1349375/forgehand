@@ -8,7 +8,7 @@ The user is designing a bracelet. They talk to the agent and use their hands in 
 
 0. On arrival they talk to their personal AI: "I still have a few products unfinished." It lists them. "Bring up the bracelet." The bracelet project opens where they left off (§4.7).
 1. "Make five candidate bracelets." The agent generates five concepts. They appear as small thumbnails in a tray at the bottom right of the camera view.
-2. The user pinches one thumbnail and drags it to the centre. It grows to full size. They pinch with two hands to scale and rotate it and look at the details.
+2. The user pinches one thumbnail and drags it to the centre. It grows to full size. They pinch and drag to move or rotate it, and double-pinch a part to zoom in on the details.
 3. "Make it steel and show me." The material changes. "And send an agent to check whether steel still works." A background agent starts, runs a weight, cost and feasibility check, and reports back when it is done, while the user keeps working.
 4. "Show me the exploded view" (or a gesture). The parts separate. The user pulls individual parts out to look at them, and snaps parts together like building blocks. Parts that cannot connect refuse and spring back.
 5. "Put it on my hand." The bracelet attaches to the wrist and follows it live. The user adjusts size and position until it fits.
@@ -27,7 +27,7 @@ Priority: **P0** needed for the hackathon demo, **P1** strong demo value if time
 | C1 | Agent harness | Talks to the agent; sees progress; cancels | Server-side tool loop (done: tasks 1–4), tool registry, client tools, background jobs | Built on existing code | P0 |
 | C2 | Workspace with several objects | Has more than one object on screen | Project state v2: objects with their own model, transform, material, anchor | Data-model change, no new technology | P0 |
 | C3 | Candidates tray | "Make five candidates"; picks one | N generations in parallel (bounded), thumbnails rendered from the same Three.js scene | Latency: N model calls; show each as it lands | P1 |
-| C4 | Hand manipulation | Pinch to grab, drag, two-hand scale/rotate | Hand landmarks (already tracked) → pinch detection → ray into the scene | Hand tracking exists; gestures are new code | P1 |
+| C4 | Hand manipulation | A hand skeleton drawn over the camera view; pinch a part to move or rotate it in the current mode, pinch empty space to orbit the view, double-pinch to zoom in on a part (see §4.9) | Hand landmarks (already tracked) → smoothed cursor → pinch state machine → screen-space raycast into the scene → the gizmo's commit path | Hand tracking exists; gestures are new code | P1 (skeleton overlay moves into `body-fit`) |
 | C5 | Materials and appearance | "Make it steel" | Material presets: PBR look + density + price per kg; per object or per part | Three.js `MeshPhysicalMaterial`; data table | P1 |
 | C6 | Analysis tools | Weight, cost, feasibility | Local: volume × density, simple geometry checks (task 9) | Local and cheap | P1 |
 | C7 | Background agents (jobs) | "Send an agent to check …, report back" | Child agent run with a read-only tool set; job events; report card | Harness feature; reuses the loop | P1 |
@@ -225,6 +225,35 @@ round input = shared-memory index (short) + project memory + session summary
 | `scan_object(mode)` | capture | client | sends-image | P2 |
 | `measure_body()` / `show_body_avatar()` | body | client | uses-camera | P2 |
 
+### 4.9 Hand control (C4)
+
+Decided with the user on 2026-11-14, after an independent design review of the repo.
+
+**One gesture, explicit mode.** A laptop webcam gives about one reliable "button": the pinch. So the pinch is the only action gesture, and the mode decides what it does, as in Blender.
+- Pinch on a part: select it and move or rotate it in the current mode. Pinch on empty space: orbit the view (no data change, no undo step).
+- The mode is the existing `transformMode` (移動 / 旋轉), switched by the existing buttons, new G/R keys, and later the agent or voice.
+- Wrist-twist rotation and two-hand gestures are out: palm-facing roll is ambiguous (`src/try-on/arm-pose.ts`), the worker tracks one hand, and two raised hands tire the user quickly.
+
+**What the user sees.**
+- The hand skeleton is drawn over the camera view whenever the hand is tracked, so the user always knows whether the hand is seen.
+- **Skeleton colour = mode** (two or three colour-blind-safe hues; not the cyan already used for part edges). State is shown separately by line weight and a cursor ring: thin = tracked, hollow ring = over a part, filled = grabbed, grey dashed = locked.
+- A short zh-TW badge next to the hand, e.g. 「手勢：移動 · 已抓取」, so colour is never the only signal.
+
+**Zoom and size are different things.**
+- *Looking at details* is view zoom and never changes the model: double-pinch a part to frame it, double-pinch empty space to reset the view. The mouse wheel and the zoom buttons stay.
+- *Changing the real size* (the whole object, or stretching one dimension) is not a hand gesture in this version: the user cannot show which axis or how many millimetres with one pinch. It goes through the agent ("整體放大 1.5 倍", "握把拉長 2 公分"; the agent asks when the axis is unclear) or the number fields. Later option: a 尺寸 mode where the drag direction picks the axis, with a live mm readout.
+
+**Behaviour.**
+- On automatically when the camera is on. Off (skeleton still shown) while an agent run is active, while the exploded view is open, during try-on, and on the CPU fallback (about 2 fps in `docs/PRIOR_WORK.md`), with a notice.
+- Cursor from a stable point (the index knuckle or the thumb–index midpoint), smoothed with a One Euro filter; relative mapping with gain from the pinch start, so the part does not jump.
+- Pinch hysteresis on the metric world landmarks (engage below about 3 cm for 2 frames, release above about 5 cm for 3 frames); a hover target changes only after about 150 ms.
+- A drag previews like the gizmo and commits once on release through `onTransform`, so one gesture is one undo step.
+- **Tracking lost mid-drag: cancel and revert by default** (after about 300 ms). This is a named constant, and debug stats (`?hands=debug`) count losses during drags; if losses are frequent in real use, switch the default to keep the change.
+
+**Split between specs.**
+- `body-fit` takes the shared part: hand tracking runs whenever the camera is on (not only during try-on), raw landmarks are exposed, pose is skipped when not needed, and the skeleton overlay and badge are drawn. The overlay also helps debug try-on tracking.
+- `hand-manipulation` keeps the gestures: the pinch state machine, picking, pinch-move, empty-space orbit, rotate mode, double-pinch zoom. Cut order inside it if time runs short: rotate mode, then orbit, then move.
+
 ## 5. Hackathon plan
 
 Deadline: 2026-12-04 14:00 PT (2026-12-05 06:00 Taiwan). About three weeks remain. Each spec below is created and implemented in Kiro, reviewed task by task, and committed with the spec task in the message.
@@ -233,11 +262,11 @@ Deadline: 2026-12-04 14:00 PT (2026-12-05 06:00 Taiwan). About three weeks remai
 |---|---|---|
 | A | 11/13 – 11/17 | `agent-harness`: fix the task 4 retry bug, insert a tool-registry task before task 5, then tasks 5–8 (route, panel, e2e) |
 | B | 11/17 – 11/23 | `workspace-v2` (C2), `export` (C11 files and image, P0), `projects-memory` (C17 core: home agent, projects, sessions, memory, compaction), `materials-analysis` (C5, C6, task 9 moved here) |
-| C | 11/23 – 11/29 | `body-fit` (C10: generalise try-on to any designed object on hand/wrist, then head), `candidates-tray` (C3), `background-jobs` (C7), `hand-manipulation` (C4) |
+| C | 11/23 – 11/29 | `body-fit` (C10: shared hand tracking and the skeleton overlay from §4.9, then generalise try-on to any designed object on hand/wrist, then head), `candidates-tray` (C3), `background-jobs` (C7), `hand-manipulation` (C4) |
 | D | 11/29 – 12/03 | `english-ui` (C16), push-to-talk voice if time allows (C15), README and privacy update, demo video, Devpost submission, make the repo public |
 | After | — | snap assembly (C9), scanning (C12), body avatar (C13), floating project cards picked by hand, drawings, realtime voice |
 
-If time runs short, cut in this order: `hand-manipulation`, `background-jobs`, `candidates-tray`, then the floating-cards part of `projects-memory`. Export and body fit stay.
+If time runs short, cut in this order: `hand-manipulation`, `background-jobs`, `candidates-tray`, then the floating-cards part of `projects-memory`. Export and body fit stay (including the hand skeleton overlay, which lives in `body-fit`).
 
 Demo path for the video, using only P0/P1: "I have unfinished products" → open the bracelet project → candidates → pick one → steel → background feasibility report → exploded view → put it on my wrist → export STL.
 
@@ -247,5 +276,6 @@ Demo path for the video, using only P0/P1: "I have unfinished products" → open
 - **Image input per provider (C12):** untested in the isolated CLI modes.
 - **Head anchor units (C10):** the face transformation matrix needs a spike before the spec.
 - **Try-on quality today (C10):** in the author's own test (2026-11-13) the forearm tracking still loses the arm and the cuff does not feel worn. The `body-fit` spec must cover tracking stability and realism, not only "attach any object": hand and arm occlusion (a person-segmentation mask so the far side of the object hides behind the arm), a contact shadow, matching light, scale from metric world landmarks, and smoothing measured on recordings like `docs/PRIOR_WORK.md` did.
+- **Hand control (C4):** whether tracking is stable enough for drags on the user's laptop is unknown; the cancel-on-loss default may need to flip (§4.9). Changing real size by hand is deferred.
 - **Printable export:** union of primitives needs a CSG dependency; decide in the `export` spec.
 - **Credits and time:** Kiro credits are sufficient at the observed ~12 credits per task with Claude Sonnet 4.5; time is the real limit. Phase D is fixed; cut P1 items from phases B and C first.
