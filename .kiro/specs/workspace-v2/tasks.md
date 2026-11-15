@@ -8,7 +8,7 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Task 1 — E2E isolation: own ports, never reuse a server
 
-`[ ]`
+`[x]`
 
 The e2e suite has twice tested an unrelated app listening on port 5173. Give it its own ports and make a taken port a loud failure.
 
