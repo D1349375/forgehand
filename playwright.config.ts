@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
+import { e2ePorts } from './tests/e2e/ports';
 const externalServer = process.env.PLAYWRIGHT_BASE_URL;
+const { port, apiPort, localUrl } = e2ePorts(process.env);
 
 // The camera and model service are deliberately simulated in these tests.
 // Chromium still constructs and renders the real Three.js WebGL scene.
@@ -11,7 +13,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
-    baseURL: externalServer || 'http://127.0.0.1:5173',
+    baseURL: externalServer || localUrl,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     viewport: { width: 1440, height: 1000 },
@@ -38,9 +40,13 @@ export default defineConfig({
     command: 'npm run dev',
     // Browser fixtures provide model responses. No real CLI/key is needed for
     // the default suite; RUN_LIVE_CLI is the explicit real-service opt-in.
-    env: process.env.RUN_LIVE_CLI === '1' ? {} : { MODEL_PROVIDER: 'openai', OPENAI_API_KEY: '' },
-    url: 'http://127.0.0.1:5173',
-    reuseExistingServer: !process.env.CI,
+    env: {
+      PORT: String(port),
+      API_PORT: String(apiPort),
+      ...(process.env.RUN_LIVE_CLI === '1' ? {} : { MODEL_PROVIDER: 'openai', OPENAI_API_KEY: '' }),
+    },
+    url: localUrl,
+    reuseExistingServer: false,
     timeout: 90_000,
   },
 });

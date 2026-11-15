@@ -54,7 +54,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Browser tests use a simulated camera and model service but render the real Three.js scene. They never call a real model. `npm run verify:real` and `npm run verify:edit` call the selected back end on purpose and use its quota.
+The e2e suite starts its own server on ports 5197/8797 (override with `E2E_PORT` / `E2E_API_PORT`) and stops with an error if those ports are taken. Browser tests use a simulated camera and model service but render the real Three.js scene. They never call a real model. `npm run verify:real` and `npm run verify:edit` call the selected back end on purpose and use its quota.
 
 ## Privacy
 
