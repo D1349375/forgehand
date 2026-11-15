@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
-import { serializeSseEvent, type LegacyStateChange, type LegacyToolResult } from '../../shared/agent';
+import { serializeSseEvent, type StateChange, type ToolResult } from '../../shared/agent';
+import type { SceneObject } from '../../shared/workspace';
 import { demoModel } from '../../shared/demo';
 import { validateModel } from '../../shared/model';
 
@@ -50,24 +51,30 @@ test('代理串流更新模型、進度與回覆，並可復原', async ({ page 
   const note = '正在規劃手環外形。';
   const summary = '已建立「測試手環」，共 2 個零件。';
   const reply = '已為你生成測試手環，並把爆炸圖拉開一半。';
-  const result: LegacyToolResult = {
-    tool: 'generate_design', ok: true, summary,
-    detail: { source: 'claude', providerModel: 'test-double', status: 'ready' },
-    stateChange: { model: null, selection: null, explode: 0.5, tryOn: null },
+  // The server builds the whole object (id, placement, timestamp); the browser adds it as received.
+  const created: SceneObject = {
+    id: 'agent-bracelet', model: testModel,
+    transform: { position: { x: 0.8, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } },
+    source: 'claude', providerModel: 'test-double', edited: false, createdAt: '2026-11-21T09:30:00.000Z',
   };
-  const state: LegacyStateChange = {
-    model: { kind: 'generated', model: testModel, source: 'claude', providerModel: 'test-double' },
-    selection: null, explode: 0.5, tryOn: null,
+  // The `result` event nulls an `add` object change; the `state` event carries it.
+  const result: ToolResult = {
+    tool: 'generate_design', ok: true, summary,
+    detail: { source: 'claude', providerModel: 'test-double', status: 'ready', objectId: created.id },
+    stateChange: { activeObjectId: null, object: null, selection: null, explode: 0.5, tryOn: null },
+  };
+  const state: StateChange = {
+    activeObjectId: null, object: { op: 'add', object: created }, selection: null, explode: 0.5, tryOn: null,
   };
   const body = [
     serializeSseEvent('status', { note }),
-    serializeSseEvent('tool', { tool: 'generate_design', argsJson: '{"prompt":"手環"}' }),
+    serializeSseEvent('tool', { tool: 'generate_design', label: '生成設計', argsJson: '{"prompt":"手環"}' }),
     serializeSseEvent('result', result),
     serializeSseEvent('state', state),
     serializeSseEvent('final', { reply }),
     serializeSseEvent('done', {}),
   ].join('');
-  let requestBody: { instruction?: string; model?: { name?: string } | null } | null = null;
+  let requestBody: { instruction?: string; workspace?: { objects?: { model?: { name?: string } }[] } } | null = null;
   await page.route('**/api/agent', route => {
     requestBody = route.request().postDataJSON();
     return route.fulfill({ status: 200, contentType: 'text/event-stream', body });
@@ -82,7 +89,8 @@ test('代理串流更新模型、進度與回覆，並可復原', async ({ page 
   await expect(log).toContainText('生成設計');
   await expect(log).toContainText(summary);
   await expect(agentStatus(page)).toHaveText('已完成。');
-  expect(requestBody).toMatchObject({ instruction: '生成一個手環', model: { name: demoModel.name } });
+  expect(requestBody).toMatchObject({ instruction: '生成一個手環' });
+  expect(requestBody!.workspace!.objects![0]!.model!.name).toBe(demoModel.name);
 
   await expect(canvas(page)).toHaveAttribute('data-model-name', testModel.name);
   await expect(canvas(page)).toHaveAttribute('data-part-count', String(testModel.parts.length));

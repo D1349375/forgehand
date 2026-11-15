@@ -1,48 +1,35 @@
-import { LegacyStateChangeSchema } from '../../shared/agent';
-import type { DisplayModel } from './types';
+import { StateChangeSchema } from '../../shared/agent';
+import { WorkspaceError, applyWorkspaceChange, type Workspace } from '../../shared/workspace';
 
-/** What the caller should apply for one `state` event. Absent fields mean "leave as is". */
+/** What the caller should apply for one `state` event. */
 export interface StateEffects {
-  commitArg?: DisplayModel;
-  selection?: string[];
-  explode?: number;
+  /** The workspace after the event's activation step: the undo snapshot when `recordUndo` is true. */
+  before: Workspace;
+  /** The workspace the event leads to. */
+  after: Workspace;
+  /** True only when the event changed an object (add, model, transform or remove); selection, explode and activation are not undo steps. */
+  recordUndo: boolean;
+  /** Present only when the event sets the try-on flag. */
   tryOn?: boolean;
 }
 
 /**
- * Turns a `state` event payload into the arguments for `commit`, `setSelected`,
- * `setExplode` and `setTryingOn`. The payload carries none of `requestId`,
- * `startedAt` or `lineage`; the caller supplies them so this stays deterministic.
- * An invalid payload yields `{}` (nothing to apply).
- *
- * Apply `commitArg` first: a `generated` model has a new lineage, so `commit`
- * resets selection and explode, and the event's own `selection`/`explode` then
- * set the values the agent chose.
+ * Turns a `state` event payload into the workspaces to apply. The server builds
+ * the whole change, so an `add` adds exactly the received object: nothing here
+ * creates ids, timestamps or placement. Returns `null` when the payload does
+ * not parse or the workspace rejects the change (the change is dropped).
  */
-export function applyStateEvent(
-  event: unknown,
-  current: DisplayModel | null,
-  context: { requestId: string; now: number; newLineage: string },
-): StateEffects {
-  const parsed = LegacyStateChangeSchema.safeParse(event);
-  if (!parsed.success) return {};
-  const { model, selection, explode, tryOn } = parsed.data;
-  const effects: StateEffects = {};
-
-  if (model?.kind === 'generated') {
-    effects.commitArg = {
-      model: model.model, source: model.source, providerModel: model.providerModel,
-      requestId: context.requestId, startedAt: context.now, lineage: context.newLineage, edited: false,
-    };
-  } else if (model?.kind === 'edited' && current) {
-    effects.commitArg = {
-      ...current,
-      model: model.model, source: model.source, providerModel: model.providerModel,
-      requestId: context.requestId, startedAt: context.now, edited: true,
-    };
+export function applyStateEvent(payload: unknown, workspace: Workspace): StateEffects | null {
+  const parsed = StateChangeSchema.safeParse(payload);
+  if (!parsed.success) return null;
+  const { tryOn, ...change } = parsed.data;
+  try {
+    const { before, after } = applyWorkspaceChange(workspace, change);
+    const effects: StateEffects = { before, after, recordUndo: change.object !== null };
+    if (tryOn !== null) effects.tryOn = tryOn;
+    return effects;
+  } catch (cause) {
+    if (cause instanceof WorkspaceError) return null;
+    throw cause;
   }
-  if (selection !== null) effects.selection = selection;
-  if (explode !== null) effects.explode = explode;
-  if (tryOn !== null) effects.tryOn = tryOn;
-  return effects;
 }

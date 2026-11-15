@@ -1,5 +1,6 @@
 import type { AgentEvent } from './events';
-import { resultText, toolLabel } from './labels';
+import { UNKNOWN_TOOL_LABEL } from '../../shared/agent';
+import { resultText } from './labels';
 
 /** One line of the progress log. `label` is a friendly tool name; `text` is user-facing. */
 export interface LogEntry {
@@ -52,14 +53,18 @@ export function agentRunReducer(state: AgentRunState, action: AgentRunAction): A
   }
 }
 
+const labelOfLatestTool = (state: AgentRunState): string =>
+  [...state.log].reverse().find(entry => entry.kind === 'tool')?.label ?? UNKNOWN_TOOL_LABEL;
+
 function reduceEvent(state: AgentRunState, event: AgentEvent): AgentRunState {
   switch (event.type) {
     case 'status':
       return event.note === null ? state : append(state, { kind: 'status', label: null, text: event.note, ok: null });
     case 'tool':
-      return append(state, { kind: 'tool', label: toolLabel(event.tool), text: '進行中', ok: null });
+      return append(state, { kind: 'tool', label: event.label, text: '進行中', ok: null });
     case 'result':
-      return append(state, { kind: 'result', label: toolLabel(event.result.tool), text: resultText(event.result), ok: event.result.ok });
+      // The loop emits a tool's `result` right after its `tool` event, so the latest tool entry is its own.
+      return append(state, { kind: 'result', label: labelOfLatestTool(state), text: resultText(event.result), ok: event.result.ok });
     case 'state':
       return state;
     case 'final':

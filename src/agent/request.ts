@@ -1,11 +1,9 @@
 import type { AgentTurn } from '../../shared/agent';
-import type { DisplayModel } from './types';
+import type { Workspace } from '../../shared/workspace';
 
 /** The workbench state a run starts from. */
 export interface RunSnapshot {
-  display: DisplayModel | null;
-  selectedPartIds: string[];
-  explode: number;
+  workspace: Workspace;
   tryOn: boolean;
   cameraOn: boolean;
 }
@@ -14,19 +12,14 @@ export interface RunSnapshot {
 export const HISTORY_TURN_LIMIT = 10;
 
 /**
- * The `/api/agent` request body. The model is `null` for an empty scene, the
- * selection is limited to parts that exist in the model, and only the latest
- * turns are sent.
+ * The `/api/agent` request body: the whole workspace (objects, active object,
+ * selection, explode) plus the try-on flags, and only the latest turns.
  */
 export function buildAgentRequest(instruction: string, snapshot: RunSnapshot, turns: AgentTurn[], requestId: string) {
-  const model = snapshot.display?.model ?? null;
-  const partIds = new Set(model?.parts.map(part => part.id));
   return {
     instruction: instruction.trim(),
     requestId,
-    model,
-    selectedPartIds: model ? snapshot.selectedPartIds.filter(id => partIds.has(id)) : [],
-    explode: snapshot.explode,
+    workspace: snapshot.workspace,
     tryOn: snapshot.tryOn,
     cameraOn: snapshot.cameraOn,
     history: turns.slice(-HISTORY_TURN_LIMIT),

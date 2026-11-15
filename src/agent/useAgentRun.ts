@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import type { AgentTurn } from '../../shared/agent';
-import { applyStateEvent } from './apply-state';
+import { applyStateEvent, type StateEffects } from './apply-state';
 import { parseAgentEvent } from './events';
 import { buildAgentRequest, errorMessageFromBody, type RunSnapshot } from './request';
 import { agentRunReducer, initialAgentRunState } from './run-reducer';
 import type { SseFrame } from './sse';
 import { readAgentStream } from './stream';
-import type { DisplayModel } from './types';
 
 /** How the hook reads from and writes to the workbench. Held in a ref, so these can change every render. */
 export interface AgentRunOptions {
-  commit(next: DisplayModel): void;
-  setSelected(ids: string[]): void;
-  setExplode(amount: number): void;
+  /** Applies one state event's workspace change: an undo step when `recordUndo`, else a plain replace. */
+  applyWorkspace(effects: StateEffects): void;
   setTryingOn(on: boolean): void;
   /** The workbench state to start a run from. */
   getSnapshot(): RunSnapshot;
@@ -45,23 +43,22 @@ export function useAgentRun(options: AgentRunOptions) {
     const { signal } = controller;
     const requestId = crypto.randomUUID();
     const snapshot = optionsRef.current.getSnapshot();
-    // Manual editing is disabled during a run, so the display only changes through this
-    // run's own commits. Track it here so a second `state` event in the same chunk
-    // builds on the first instead of on a React state that has not rendered yet.
-    let display = snapshot.display;
+    // Manual editing is disabled during a run, so the workspace only changes through this
+    // run's own events. Track it here so a second `state` event in the same chunk builds on
+    // the first instead of on a React state that has not rendered yet.
+    let workspace = snapshot.workspace;
     dispatch({ type: 'start' });
 
     const handleFrame = (frame: SseFrame) => {
       const event = parseAgentEvent(frame);
       if (!event) return;
       if (event.type === 'state') {
-        const effects = applyStateEvent(event.payload, display, { requestId, now: performance.now(), newLineage: crypto.randomUUID() });
-        const { commit, setSelected, setExplode, setTryingOn } = optionsRef.current;
-        // Commit first: a new lineage resets selection and explode, which the event may then set.
-        if (effects.commitArg) { commit(effects.commitArg); display = effects.commitArg; }
-        if (effects.selection) setSelected(effects.selection);
-        if (effects.explode !== undefined) setExplode(effects.explode);
-        if (effects.tryOn !== undefined) setTryingOn(effects.tryOn);
+        // An event the workspace rejects is dropped; the run goes on.
+        const effects = applyStateEvent(event.payload, workspace);
+        if (!effects) return;
+        workspace = effects.after;
+        optionsRef.current.applyWorkspace(effects);
+        if (effects.tryOn !== undefined) optionsRef.current.setTryingOn(effects.tryOn);
         return;
       }
       if (event.type === 'final') optionsRef.current.pushTurn({ instruction: text, reply: event.reply });

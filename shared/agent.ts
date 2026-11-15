@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ModelSpecSchema, PartIdSchema } from './model';
+import { PartIdSchema } from './model';
 import {
   ObjectIdSchema, ObjectTransformSchema, WorkspaceChangeSchema, WorkspaceError, validateWorkspace,
   type Workspace,
@@ -40,40 +40,6 @@ export const AgentStepSchema = z.strictObject({
 });
 
 export type ToolCall = z.infer<typeof ToolCallSchema>;
-
-// ----- Legacy: removed in workspace-v2 Task 8 -----
-// The browser still speaks the single-model contract until Task 8 moves it to the
-// workspace contract below. These exports keep their old content; only the names changed.
-
-export const LegacyModelStateChangeSchema = z.strictObject({
-  kind: z.enum(['generated', 'edited']),
-  model: ModelSpecSchema,
-  source: z.string().min(1).max(100),
-  providerModel: z.string().min(1).max(100),
-});
-
-export type LegacyModelStateChange = z.infer<typeof LegacyModelStateChangeSchema>;
-
-/** What a tool changed. Sent whole in the `state` event; the `result` event nulls `model`. */
-export const LegacyStateChangeSchema = z.strictObject({
-  model: LegacyModelStateChangeSchema.nullable(),
-  selection: z.array(partId).max(64).nullable(),
-  explode: z.number().min(0).max(1).nullable(),
-  tryOn: z.boolean().nullable(),
-});
-export type LegacyStateChange = z.infer<typeof LegacyStateChangeSchema>;
-
-export const LegacyToolResultSchema = z.strictObject({
-  tool: z.string().trim().min(1).max(64),
-  ok: z.boolean(),
-  summary: z.string().trim().min(1).max(1000),
-  detail: z.unknown().nullable(),
-  stateChange: LegacyStateChangeSchema.nullable(),
-});
-
-export type LegacyToolResult = z.infer<typeof LegacyToolResultSchema>;
-
-export const LegacyToolEventSchema = z.strictObject({ tool: z.string().min(1).max(64), argsJson: z.string() });
 
 // ----- ToolResult -----
 
@@ -249,24 +215,6 @@ export function validateAgentRequest(input: unknown): AgentRequest {
   }
   return { ...raw, workspace };
 }
-
-// ----- Legacy: removed in workspace-v2 Task 8 -----
-
-export const LegacyAgentRequestSchema = z.strictObject({
-  instruction: z.string().trim().min(1).max(4000),
-  requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
-  // A missing key or an explicit `undefined` is a structural error (INVALID_REQUEST);
-  // only an explicit `null` means "no model". Any non-null value is validated later.
-  model: z.union([
-    z.null(),
-    z.unknown().refine((value) => value !== undefined, { message: 'model 必須明確為 null 或模型資料。' }),
-  ]),
-  selectedPartIds: z.array(partId).max(64),
-  explode: z.number().min(0).max(1),
-  tryOn: z.boolean(),
-  cameraOn: z.boolean(),
-  history: z.array(AgentTurnSchema).max(10),
-});
 
 // ----- AgentStep validation -----
 
