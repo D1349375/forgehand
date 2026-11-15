@@ -27,7 +27,7 @@ Priority: **P0** needed for the hackathon demo, **P1** strong demo value if time
 | C1 | Agent harness | Talks to the agent; sees progress; cancels | Server-side tool loop (done: tasks 1–4), tool registry, client tools, background jobs | Built on existing code | P0 |
 | C2 | Workspace with several objects | Has more than one object on screen | Project state v2: objects with their own model, transform, material, anchor | Data-model change, no new technology | P0 |
 | C3 | Candidates tray | "Make five candidates"; picks one | N generations in parallel (bounded), thumbnails rendered from the same Three.js scene | Latency: N model calls; show each as it lands | P1 |
-| C4 | Hand manipulation | A hand skeleton drawn over the camera view; pinch a part to move or rotate it in the current mode, pinch empty space to orbit the view, double-pinch to zoom in on a part (see §4.9) | Hand landmarks (already tracked) → smoothed cursor → pinch state machine → screen-space raycast into the scene → the gizmo's commit path | Hand tracking exists; gestures are new code | P1 (skeleton overlay moves into `body-fit`) |
+| C4 | Hand manipulation | A hand skeleton drawn over the camera view; pinch a part to move or rotate it in the current mode, pinch empty space to orbit the view, double-pinch to zoom in on a part (see §4.9) | Hand landmarks (already tracked) → smoothed cursor → pinch state machine → screen-space raycast into the scene → the gizmo's commit path | Hand tracking exists; gestures are new code | P0 (skeleton overlay, pinch-move, empty-space orbit), P1 (rotate mode, double-pinch zoom) |
 | C5 | Materials and appearance | "Make it steel" | Material presets: PBR look + density + price per kg; per object or per part | Three.js `MeshPhysicalMaterial`; data table | P1 |
 | C6 | Analysis tools | Weight, cost, feasibility | Local: volume × density, simple geometry checks (task 9) | Local and cheap | P1 |
 | C7 | Background agents (jobs) | "Send an agent to check …, report back" | Child agent run with a read-only tool set; job events; report card | Harness feature; reuses the loop | P1 |
@@ -44,6 +44,8 @@ Priority: **P0** needed for the hackathon demo, **P1** strong demo value if time
 | C17 | Personal AI, projects and memory | Starts by talking to a personal assistant: "I still have a few products unfinished." "Bring up the bracelet." The project opens, or the projects float as cards in the camera view to pick from | A home agent with project tools; each project keeps its workspace, its own memory and its sessions; a small shared memory about the user; long sessions are summarised (see §4.8) | Local files on the user's machine; same harness with a different tool set | P1 (core), P2 (hand-picked floating cards) |
 
 **Why export is P0:** a workbench whose designs cannot leave it has no practical use. A GLB/STL file and an exploded-view image are the minimum; assembly by snapping (C9) is a nice interaction but not required to make the result usable.
+
+**Why hand control is P0:** the product promise is "develop hardware by talking and using your hands" (README). A demo where the hands never touch a part does not show that promise. The core (skeleton overlay, pinch-move, empty-space orbit) is therefore P0 and starts in phase B, right after `workspace-v2`, so there is time to tune tracking on a real laptop webcam. Decided with the user on 2026-11-15.
 
 ## 3. Research notes
 
@@ -253,8 +255,9 @@ Decided with the user on 2026-11-14, after an independent design review of the r
 - **Tracking lost mid-drag: cancel and revert by default** (after about 300 ms). This is a named constant, and debug stats (`?hands=debug`) count losses during drags; if losses are frequent in real use, switch the default to keep the change.
 
 **Split between specs.**
-- `body-fit` takes the shared part: hand tracking runs whenever the camera is on (not only during try-on), raw landmarks are exposed, pose is skipped when not needed, and the skeleton overlay and badge are drawn. The overlay also helps debug try-on tracking.
-- `hand-manipulation` keeps the gestures: the pinch state machine, picking, pinch-move, empty-space orbit, rotate mode, double-pinch zoom. Cut order inside it if time runs short: rotate mode, then orbit, then move.
+Changed on 2026-11-15: the core became P0 and moved to phase B (see "Why hand control is P0" in §2), so the shared tracking now lives in `hand-manipulation` instead of `body-fit`.
+- `hand-manipulation` (phase B) takes the shared part and the core gestures: hand tracking runs whenever the camera is on (not only during try-on), raw landmarks are exposed, pose is skipped when not needed, the skeleton overlay and badge are drawn, then the pinch state machine, picking, pinch-move and empty-space orbit. Its last tasks are P1: rotate mode and double-pinch zoom. Cut order inside it if time runs short: double-pinch zoom, then rotate mode. The overlay, pinch-move and orbit stay.
+- `body-fit` (phase C) reuses that tracking for try-on of any designed object. The overlay also helps debug try-on tracking.
 
 ### 4.10 Design fidelity (C18)
 
@@ -285,14 +288,14 @@ Deadline: 2026-12-04 14:00 PT (2026-12-05 06:00 Taiwan). About three weeks remai
 | Phase | Dates (Taiwan) | Specs |
 |---|---|---|
 | A | 11/13 – 11/17 | `agent-harness`: fix the task 4 retry bug, insert a tool-registry task before task 5, then tasks 5–8 (route, panel, e2e) |
-| B | 11/17 – 11/23 | `workspace-v2` (C2), `export` (C11 files and image, P0), `projects-memory` (C17 core: home agent, projects, sessions, memory, compaction), `materials-analysis` (C5, C6, task 9 moved here) |
-| C | 11/23 – 11/29 | `body-fit` (C10: shared hand tracking and the skeleton overlay from §4.9, then generalise try-on to any designed object on hand/wrist, then head), `design-fidelity` (C18, §4.10), `candidates-tray` (C3), `background-jobs` (C7), `hand-manipulation` (C4) |
+| B | 11/17 – 11/23 | `workspace-v2` (C2), `hand-manipulation` (C4: shared hand tracking, skeleton overlay and badge, pinch-move, empty-space orbit; rotate mode and double-pinch zoom as its last, P1 tasks; §4.9), `export` (C11 files and image, P0), `projects-memory` (C17 core: home agent, projects, sessions, memory, compaction) |
+| C | 11/23 – 11/29 | `materials-analysis` (C5, C6, task 9 moved here), `body-fit` (C10: reuse the shared hand tracking from `hand-manipulation`, generalise try-on to any designed object on hand/wrist, then head), `design-fidelity` (C18, §4.10), `candidates-tray` (C3), `background-jobs` (C7) |
 | D | 11/29 – 12/03 | `english-ui` (C16), push-to-talk voice if time allows (C15), README and privacy update, demo video, Devpost submission, make the repo public |
 | After | — | snap assembly (C9), scanning (C12), body avatar (C13), floating project cards picked by hand, drawings, realtime voice |
 
-If time runs short, cut in this order: `hand-manipulation`, `background-jobs`, `candidates-tray`, the research sub-agent and the cutaway of `design-fidelity`, then the floating-cards part of `projects-memory`. The internals rules of `design-fidelity` (task 2) are the last part of that spec to cut, because they are prompt-only and give the most visible gain. Export and body fit stay (including the hand skeleton overlay, which lives in `body-fit`).
+If time runs short, cut in this order: `background-jobs`, `candidates-tray`, the P1 tasks of `hand-manipulation` (double-pinch zoom, then rotate mode), the research sub-agent and the cutaway of `design-fidelity`, then the floating-cards part of `projects-memory`. The internals rules of `design-fidelity` (task 2) are the last part of that spec to cut, because they are prompt-only and give the most visible gain. Export, body fit and the P0 core of `hand-manipulation` (skeleton overlay, pinch-move, empty-space orbit) stay.
 
-Demo path for the video, using only P0/P1 (the demo object is a smart bracelet for now, so the exploded view shows a battery, PCB and haptic motor): "I have unfinished products" → open the bracelet project → candidates → pick one → detailed internals with their sources → steel → background feasibility report → exploded view → put it on my wrist → export STL.
+Demo path for the video, using only P0/P1 (the demo object is a smart bracelet for now, so the exploded view shows a battery, PCB and haptic motor): "I have unfinished products" → open the bracelet project → candidates → pick one → pinch it to move it and orbit the view by hand → detailed internals with their sources → steel → background feasibility report → exploded view → put it on my wrist → export STL.
 
 ## 6. Open questions and risks
 
