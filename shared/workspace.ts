@@ -213,3 +213,208 @@ export function createObject(ws: Workspace, input: NewObjectInput): SceneObject 
     createdAt: input.createdAt,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Part 2: operations (design 2.3) and changes (design 2.4).
+//
+// Every operation is pure, never mutates its input, returns the same reference
+// when nothing changes, keeps the references of unchanged objects, and runs
+// `assertWorkspace` on the workspace it returns.
+// ---------------------------------------------------------------------------
+
+const EMPTY_SELECTION: WorkspaceSelection = { objectId: null, partIds: [] };
+
+/** Validates an incoming model. Fixed error: validator messages can contain part ids. */
+function checkedModel(input: unknown): ModelSpec {
+  try {
+    return validateModel(input);
+  } catch {
+    throw new WorkspaceError('INVALID_WORKSPACE');
+  }
+}
+
+function checked(ws: Workspace): Workspace {
+  assertWorkspace(ws);
+  return ws;
+}
+
+function requireObject(ws: Workspace, id: string): SceneObject {
+  const object = findObject(ws, id);
+  if (!object) throw new WorkspaceError('UNKNOWN_OBJECT');
+  return object;
+}
+
+const createdAtSchema = SceneObjectSchema.shape.createdAt;
+
+/**
+ * Adds an object and makes it active: clears the selection and resets explode.
+ * Throws `INVALID_WORKSPACE` for an id or `createdAt` that fails the schema or
+ * a model that fails `validateModel`, `OBJECT_LIMIT` at `MAX_OBJECTS` and
+ * `DUPLICATE_OBJECT` for an id already in use.
+ */
+export function addObject(ws: Workspace, object: SceneObject): Workspace {
+  if (!ObjectIdSchema.safeParse(object.id).success || !createdAtSchema.safeParse(object.createdAt).success) {
+    throw new WorkspaceError('INVALID_WORKSPACE');
+  }
+  if (ws.objects.length >= MAX_OBJECTS) throw new WorkspaceError('OBJECT_LIMIT');
+  if (findObject(ws, object.id)) throw new WorkspaceError('DUPLICATE_OBJECT');
+  const added: SceneObject = { ...object, model: checkedModel(object.model) };
+  return checked({
+    ...ws,
+    objects: [...ws.objects, added],
+    activeObjectId: added.id,
+    selection: EMPTY_SELECTION,
+    display: { explode: 0 },
+  });
+}
+
+/**
+ * Replaces an object's model and marks it edited. `meta` keeps the current
+ * `source` and `providerModel` when omitted (manual edits). If the object is
+ * active, selected part ids that no longer exist are dropped.
+ */
+export function replaceModel(
+  ws: Workspace, id: string, model: ModelSpec, meta: { source?: string; providerModel?: string } = {},
+): Workspace {
+  const current = requireObject(ws, id);
+  const source = meta.source ?? current.source;
+  const providerModel = meta.providerModel ?? current.providerModel;
+  if (model === current.model && current.edited && source === current.source && providerModel === current.providerModel) return ws;
+  const next: SceneObject = { ...current, model: model === current.model ? model : checkedModel(model), edited: true, source, providerModel };
+  let selection = ws.selection;
+  if (selection.objectId === id) {
+    const known = new Set(next.model.parts.map(part => part.id));
+    const kept = selection.partIds.filter(partId => known.has(partId));
+    if (kept.length !== selection.partIds.length) selection = kept.length > 0 ? { objectId: id, partIds: kept } : EMPTY_SELECTION;
+  }
+  return checked({ ...ws, objects: ws.objects.map(object => (object === current ? next : object)), selection });
+}
+
+/**
+ * Removes an object. Removing the active object activates the one before it
+ * (or the new first), clears the selection and resets explode. Removing the
+ * last object gives an empty workspace.
+ */
+export function removeObject(ws: Workspace, id: string): Workspace {
+  const index = ws.objects.findIndex(object => object.id === id);
+  if (index < 0) throw new WorkspaceError('UNKNOWN_OBJECT');
+  const objects = ws.objects.filter((_, at) => at !== index);
+  if (ws.activeObjectId !== id) return checked({ ...ws, objects });
+  const next = objects[index - 1] ?? objects[0] ?? null;
+  return checked({
+    ...ws,
+    objects,
+    activeObjectId: next?.id ?? null,
+    selection: EMPTY_SELECTION,
+    display: { explode: 0 },
+  });
+}
+
+const sameVector = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) =>
+  a.x === b.x && a.y === b.y && a.z === b.z;
+
+/**
+ * Merges the given position and/or rotation into an object's transform.
+ * Throws `INVALID_WORKSPACE` for values outside the transform limits.
+ */
+export function setTransform(
+  ws: Workspace, id: string, patch: { position?: ObjectTransform['position']; rotation?: ObjectTransform['rotation'] },
+): Workspace {
+  const current = requireObject(ws, id);
+  const merged = ObjectTransformSchema.safeParse({
+    position: patch.position ?? current.transform.position,
+    rotation: patch.rotation ?? current.transform.rotation,
+  });
+  if (!merged.success) throw new WorkspaceError('INVALID_WORKSPACE');
+  const positionSame = sameVector(merged.data.position, current.transform.position);
+  const rotationSame = sameVector(merged.data.rotation, current.transform.rotation);
+  if (positionSame && rotationSame) return ws;
+  const transform: ObjectTransform = {
+    position: positionSame ? current.transform.position : merged.data.position,
+    rotation: rotationSame ? current.transform.rotation : merged.data.rotation,
+  };
+  const next: SceneObject = { ...current, transform };
+  return checked({ ...ws, objects: ws.objects.map(object => (object === current ? next : object)) });
+}
+
+/** Makes an object active. Another object: clears the selection and resets explode. */
+export function setActiveObject(ws: Workspace, id: string): Workspace {
+  requireObject(ws, id);
+  if (ws.activeObjectId === id) return ws;
+  return checked({ ...ws, activeObjectId: id, selection: EMPTY_SELECTION, display: { explode: 0 } });
+}
+
+/**
+ * Selects parts of an object, activating it first when it is not active.
+ * An empty list clears the selection. Unknown or duplicate part ids throw
+ * `INVALID_SELECTION`.
+ */
+export function selectParts(ws: Workspace, id: string, partIds: readonly string[]): Workspace {
+  const activated = setActiveObject(ws, id);
+  const object = requireObject(activated, id);
+  const known = new Set(object.model.parts.map(part => part.id));
+  const unique = new Set(partIds);
+  if (unique.size !== partIds.length || partIds.some(partId => !known.has(partId))) throw new WorkspaceError('INVALID_SELECTION');
+  const current = activated.selection;
+  if (partIds.length === 0) {
+    return current.objectId === null ? activated : checked({ ...activated, selection: EMPTY_SELECTION });
+  }
+  if (current.objectId === id && current.partIds.length === partIds.length && current.partIds.every((partId, at) => partId === partIds[at])) {
+    return activated;
+  }
+  return checked({ ...activated, selection: { objectId: id, partIds: [...partIds] } });
+}
+
+/** Sets the explode amount (0 to 1). A workspace without objects only accepts 0. */
+export function setExplode(ws: Workspace, amount: number): Workspace {
+  if (ws.display.explode === amount) return ws;
+  return checked({ ...ws, display: { explode: amount } });
+}
+
+export const ObjectChangeSchema = z.discriminatedUnion('op', [
+  z.strictObject({ op: z.literal('add'), object: SceneObjectSchema }),
+  z.strictObject({
+    op: z.literal('model'),
+    objectId: ObjectIdSchema,
+    model: ModelSpecSchema,
+    source: z.string().min(1).max(100),
+    providerModel: z.string().min(1).max(100),
+  }),
+  z.strictObject({ op: z.literal('transform'), objectId: ObjectIdSchema, transform: ObjectTransformSchema }),
+  z.strictObject({ op: z.literal('remove'), objectId: ObjectIdSchema }),
+]);
+
+export const WorkspaceChangeSchema = z.strictObject({
+  activeObjectId: ObjectIdSchema.nullable(), // null = no change; applied first, must name an existing object
+  object: ObjectChangeSchema.nullable(), // at most one object change
+  selection: WorkspaceSelectionSchema.nullable(), // null = no change
+  explode: z.number().min(0).max(1).nullable(), // null = no change
+});
+
+export type ObjectChange = z.infer<typeof ObjectChangeSchema>;
+export type WorkspaceChange = z.infer<typeof WorkspaceChangeSchema>;
+
+/**
+ * Applies a change in the order activation, object, selection, explode.
+ * `before` is the workspace after the activation step (the undo snapshot for
+ * a change that touches an object); `after` is the final workspace.
+ */
+export function applyWorkspaceChange(ws: Workspace, change: WorkspaceChange): { before: Workspace; after: Workspace } {
+  const before = change.activeObjectId === null ? ws : setActiveObject(ws, change.activeObjectId);
+  let after = before;
+  const op = change.object;
+  if (op) {
+    if (op.op === 'add') after = addObject(after, op.object);
+    else if (op.op === 'model') after = replaceModel(after, op.objectId, op.model, { source: op.source, providerModel: op.providerModel });
+    else if (op.op === 'transform') after = setTransform(after, op.objectId, op.transform);
+    else after = removeObject(after, op.objectId);
+  }
+  if (change.selection) {
+    const { objectId, partIds } = change.selection;
+    if (objectId !== null) after = selectParts(after, objectId, partIds);
+    else if (partIds.length > 0) throw new WorkspaceError('INVALID_SELECTION');
+    else if (after.selection.objectId !== null) after = checked({ ...after, selection: EMPTY_SELECTION });
+  }
+  if (change.explode !== null) after = setExplode(after, change.explode);
+  return { before, after };
+}

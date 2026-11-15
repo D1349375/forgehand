@@ -89,7 +89,7 @@ The workspace data model, its validation, and where a new object goes. Pure code
 
 ## Task 3 — Workspace operations, changes and the undo store
 
-`[ ]`
+`[x]`
 
 All the rules for changing a workspace and undoing changes, as pure functions with tests. Nothing is wired into the UI yet.
 
