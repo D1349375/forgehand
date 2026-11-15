@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { ToolResult } from '../../shared/agent';
+import type { LegacyToolResult } from '../../shared/agent';
 import type { AgentEvent } from '../../src/agent/events';
 import {
   agentRunReducer, initialAgentRunState, type AgentRunAction, type AgentRunState,
 } from '../../src/agent/run-reducer';
 
-const result = (over: Partial<ToolResult> = {}): ToolResult =>
+const result = (over: Partial<LegacyToolResult> = {}): LegacyToolResult =>
   ({ tool: 'generate_design', ok: true, summary: '已產生「測試桌」。', detail: null, stateChange: null, ...over });
 const event = (e: AgentEvent): AgentRunAction => ({ type: 'event', event: e });
 const run = (actions: AgentRunAction[], from: AgentRunState = initialAgentRunState) =>

@@ -203,7 +203,7 @@ All the rules for changing a workspace and undoing changes, as pure functions wi
 
 ## Task 6 — Agent contract and loop on the workspace
 
-`[ ]`
+`[x]`
 
 The agent request carries the workspace, `state` events carry workspace changes, and the loop and the six existing tools work on the workspace (on the active object; `objectId` arguments come in Task 7). The browser keeps the old contract under `Legacy*` names until Task 8.
 

@@ -1,5 +1,5 @@
 import type { ToolCall, ToolResult } from '../shared/agent';
-import type { ModelSpec } from '../shared/model';
+import type { Workspace } from '../shared/workspace';
 import type { ModelProvider } from './provider';
 import { fail } from './tools/helpers';
 import { argKeys, argsShapeText, getTool, listTools } from './tools';
@@ -18,11 +18,15 @@ export { fail, noModel, ok } from './tools/helpers';
  * between tool calls, so a multi-call round sees earlier calls' effects.
  */
 export interface AgentWorkingState {
-  model: ModelSpec | null;
-  selection: string[];
-  explode: number;
+  workspace: Workspace;
   tryOn: boolean;
   cameraOn: boolean;
+}
+
+/** Sources of ids and time for tools that create objects; tests inject fixed ones. */
+export interface ToolEnv {
+  newObjectId?: () => string;
+  now?: () => string;
 }
 
 /**
@@ -37,6 +41,7 @@ export async function runTool(
   state: AgentWorkingState,
   provider: ModelProvider,
   signal: AbortSignal,
+  env: ToolEnv = {},
 ): Promise<ToolResult> {
   const tool = getTool(call.tool);
   if (!tool) {
@@ -70,5 +75,10 @@ export async function runTool(
     if (declared) return invalid(`參數 ${key} 的值不正確。`);
     return invalid('參數格式不符。');
   }
-  return tool.run(parsed.data, { state, provider }, signal);
+  return tool.run(parsed.data, {
+    state,
+    provider,
+    newObjectId: env.newObjectId ?? (() => crypto.randomUUID()),
+    now: env.now ?? (() => new Date().toISOString()),
+  }, signal);
 }

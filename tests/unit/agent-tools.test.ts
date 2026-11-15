@@ -1,20 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { demoModel } from '../../shared/demo';
-import { runTool, type AgentWorkingState } from '../../server/agent-tools';
+import { applyWorkspaceChange } from '../../shared/workspace';
+import { runTool } from '../../server/agent-tools';
 import type { ModelProvider } from '../../server/provider';
+import { noModel, sceneObject, stateOver, withModel, workspaceOf } from './agent-fixtures';
 
 const call = (tool: string, args: Record<string, unknown> = {}) => ({ tool, argsJson: JSON.stringify(args), reason: null });
 const rawCall = (tool: string, argsJson: string) => ({ tool, argsJson, reason: null });
 
-const withModel = (over: Partial<AgentWorkingState> = {}): AgentWorkingState => ({
-  model: structuredClone(demoModel), selection: [], explode: 0, tryOn: false, cameraOn: false, ...over,
-});
-const noModel = (over: Partial<AgentWorkingState> = {}): AgentWorkingState => ({
-  model: null, selection: [], explode: 0, tryOn: false, cameraOn: false, ...over,
-});
-
 const provider = { name: 'openai', configured: true, model: 'm' } as unknown as ModelProvider;
 const signal = new AbortController().signal;
+
+/** Two objects: `obj-1` is active, `obj-2` is beside it. The tools act on the active one. */
+const twoObjects = (options: Parameters<typeof stateOver>[1] = {}) =>
+  stateOver(workspaceOf(sceneObject('obj-1'), sceneObject('obj-2', demoModel, 1)), options);
 
 describe('agent local tools', () => {
   describe('select_parts', () => {
@@ -22,11 +21,23 @@ describe('agent local tools', () => {
       const state = withModel({ selection: ['battery'] });
       const result = await runTool(call('select_parts', { partIds: ['housing', 'battery'] }), state, provider, signal);
       expect(result.ok).toBe(true);
-      expect(result.stateChange?.selection).toEqual(['housing', 'battery']);
-      expect(result.stateChange?.model).toBeNull();
+      expect(result.stateChange?.selection).toEqual({ objectId: 'obj-1', partIds: ['housing', 'battery'] });
+      expect(result.stateChange?.activeObjectId).toBeNull(); // obj-1 is already active
+      expect(result.stateChange?.object).toBeNull();
       expect(result.stateChange?.explode).toBeNull();
       expect(result.stateChange?.tryOn).toBeNull();
-      expect(state.selection).toEqual(['battery']); // runTool is pure; the loop applies stateChange
+      expect(result.detail).toEqual({ objectId: 'obj-1', selection: ['housing', 'battery'] });
+      expect(state.workspace.selection.partIds).toEqual(['battery']); // runTool is pure; the loop applies stateChange
+    });
+    it('acts on the active object when the workspace has several', async () => {
+      const result = await runTool(call('select_parts', { partIds: ['housing'] }), twoObjects(), provider, signal);
+      expect(result.stateChange?.selection).toEqual({ objectId: 'obj-1', partIds: ['housing'] });
+    });
+    it('clears the selection with an empty list', async () => {
+      const result = await runTool(call('select_parts', { partIds: [] }), withModel({ selection: ['battery'] }), provider, signal);
+      expect(result.ok).toBe(true);
+      expect(result.summary).toBe('已取消選取。');
+      expect(result.stateChange?.selection).toEqual({ objectId: 'obj-1', partIds: [] });
     });
     it('rejects partIds not in the model (INVALID_ARGS)', async () => {
       const result = await runTool(call('select_parts', { partIds: ['missing'] }), withModel(), provider, signal);
@@ -49,14 +60,28 @@ describe('agent local tools', () => {
       const state = withModel({ selection: ['housing'], explode: 0.5, tryOn: true });
       const result = await runTool(call('get_project_state', {}), state, provider, signal);
       expect(result.ok).toBe(true);
-      expect(result.detail).toMatchObject({ selection: ['housing'], explode: 0.5, tryOn: true });
-      expect((result.detail as { parts: unknown[] }).parts).toHaveLength(demoModel.parts.length);
+      expect(result.detail).toMatchObject({
+        activeObjectId: 'obj-1', tryOn: true,
+        target: { objectId: 'obj-1', selection: ['housing'], explode: 0.5 },
+      });
+      const detail = result.detail as { target: { parts: unknown[] }; objects: unknown[] };
+      expect(detail.target.parts).toHaveLength(demoModel.parts.length);
+      expect(detail.objects).toEqual([{
+        id: 'obj-1', name: demoModel.name, partCount: demoModel.parts.length,
+        position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, active: true,
+      }]);
       expect(result.stateChange).toBeNull();
     });
-    it('works with no model (empty parts)', async () => {
+    it('lists every object and describes the active one as the target', async () => {
+      const result = await runTool(call('get_project_state', {}), twoObjects(), provider, signal);
+      const detail = result.detail as { objects: { id: string; active: boolean; position: { x: number } }[]; target: { objectId: string } };
+      expect(detail.objects.map(object => [object.id, object.active, object.position.x])).toEqual([['obj-1', true, 0], ['obj-2', false, 1]]);
+      expect(detail.target.objectId).toBe('obj-1');
+    });
+    it('works on an empty workspace (no objects, no target)', async () => {
       const result = await runTool(call('get_project_state', {}), noModel(), provider, signal);
       expect(result.ok).toBe(true);
-      expect((result.detail as { parts: unknown[] }).parts).toEqual([]);
+      expect(result.detail).toMatchObject({ objects: [], activeObjectId: null, target: null, tryOn: false });
       expect(result.stateChange).toBeNull();
     });
   });
@@ -66,7 +91,8 @@ describe('agent local tools', () => {
       const result = await runTool(call('explode_view', { amount }), withModel(), provider, signal);
       expect(result.ok).toBe(true);
       expect(result.stateChange?.explode).toBe(amount);
-      expect(result.detail).toMatchObject({ amount });
+      expect(result.stateChange).toMatchObject({ activeObjectId: null, object: null, selection: null, tryOn: null });
+      expect(result.detail).toEqual({ objectId: 'obj-1', amount });
     });
     it.each([[1.5], [-0.1]])('rejects out-of-range amount (%s) as INVALID_ARGS', async (amount) => {
       const result = await runTool(call('explode_view', { amount }), withModel(), provider, signal);
@@ -109,6 +135,27 @@ describe('agent local tools', () => {
       expect(result.ok).toBe(false);
       expect(result.detail).toMatchObject({ code: 'NO_MODEL' });
       expect(result.stateChange).toBeNull();
+    });
+  });
+
+  describe('workspace changes', () => {
+    it.each([
+      ['select_parts', { partIds: ['housing'] }],
+      ['explode_view', { amount: 0.5 }],
+      ['wear_on_arm', { enabled: true }],
+    ])('%s returns a change that applies to the working workspace', async (tool, args) => {
+      const state = twoObjects({ cameraOn: true });
+      const result = await runTool(call(tool, args), state, provider, signal);
+      expect(result.ok).toBe(true);
+      const { tryOn: _tryOn, ...change } = result.stateChange!;
+      const { after } = applyWorkspaceChange(state.workspace, change);
+      expect(after.activeObjectId).toBe('obj-1');
+      if (tool === 'select_parts') expect(after.selection).toEqual({ objectId: 'obj-1', partIds: ['housing'] });
+      if (tool === 'explode_view') expect(after.display.explode).toBe(0.5);
+    });
+    it('wear_on_arm changes only tryOn', async () => {
+      const result = await runTool(call('wear_on_arm', { enabled: true }), withModel({ cameraOn: true }), provider, signal);
+      expect(result.stateChange).toEqual({ activeObjectId: null, object: null, selection: null, explode: null, tryOn: true });
     });
   });
 

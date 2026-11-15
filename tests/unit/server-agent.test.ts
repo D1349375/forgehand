@@ -6,6 +6,8 @@ import { createApp, type AppOptions } from '../../server/app';
 import { createEmitter } from '../../server/agent-events';
 import { GenerationError, type ModelProvider, type ModelTask } from '../../server/provider';
 import { demoModel } from '../../shared/demo';
+import { emptyWorkspace, type Workspace } from '../../shared/workspace';
+import { sceneObject, stateOver, workspaceOf } from './agent-fixtures';
 
 /**
  * Task 5: POST /api/agent over HTTP with a fake provider. The fake's `run` calls
@@ -48,9 +50,12 @@ function scripted(steps: unknown[]): Behaviour {
   };
 }
 
+/** One demo object obj-1, active, with the given parts selected. */
+const demoWorkspace = (selection: string[] = []): Workspace => stateOver(workspaceOf(sceneObject('obj-1')), { selection }).workspace;
+
 const body = (over: Record<string, unknown> = {}) => ({
-  instruction: '請處理', requestId: 'run-1', model: structuredClone(demoModel), selectedPartIds: [],
-  explode: 0, tryOn: false, cameraOn: false, history: [], ...over,
+  instruction: '請處理', requestId: 'run-1', workspace: demoWorkspace(),
+  tryOn: false, cameraOn: false, history: [], ...over,
 });
 
 interface Frame { event: string; data: any }
@@ -83,7 +88,7 @@ const isHold = (task: ModelTask<unknown>) => task.input.includes('使用者指�
 describe('POST /api/agent', () => {
   it('streams status, tool, result, state, final and done in order', async () => {
     const server = serve(agentProvider(scripted([callStep('edit_design', { instruction: '電池改藍色' }), finalStep('已改成藍色。')])));
-    const response = await request(server).post('/api/agent').send(body({ selectedPartIds: ['battery'] }));
+    const response = await request(server).post('/api/agent').send(body({ workspace: demoWorkspace(['battery']) }));
 
     expect(response.status).toBe(200);
     expect(response.headers['content-type']).toMatch(/^text\/event-stream/);
@@ -93,31 +98,34 @@ describe('POST /api/agent', () => {
     const list = frames(response.text);
     expect(names(list)).toEqual(['status', 'tool', 'result', 'state', 'final', 'done']);
     expect(list[0]!.data).toEqual({ note: '處理中' });
-    expect(list[1]!.data).toEqual({ tool: 'edit_design', argsJson: '{"instruction":"電池改藍色"}' });
+    expect(list[1]!.data).toEqual({ tool: 'edit_design', label: '修改設計', argsJson: '{"instruction":"電池改藍色"}' });
     // The result frame is compact: no model payload.
     expect(list[2]!.data).toMatchObject({ tool: 'edit_design', ok: true });
-    expect(list[2]!.data.stateChange.model).toBeNull();
-    expect(list[2]!.data.stateChange.selection).toEqual(['battery']);
+    expect(list[2]!.data.stateChange.object).toBeNull();
+    expect(list[2]!.data.stateChange.selection).toEqual({ objectId: 'obj-1', partIds: ['battery'] });
     // The state frame carries the model change.
-    expect(list[3]!.data.model.kind).toBe('edited');
-    expect(list[3]!.data.model.source).toBe('openai');
-    expect(list[3]!.data.model.model.parts.find((part: { id: string }) => part.id === 'battery').color).toBe('#2563eb');
+    expect(list[3]!.data.object).toMatchObject({ op: 'model', objectId: 'obj-1', source: 'openai', providerModel: 'test-double' });
+    expect(list[3]!.data.object.model.parts.find((part: { id: string }) => part.id === 'battery').color).toBe('#2563eb');
     expect(list[4]!.data).toEqual({ reply: '已改成藍色。' });
     expect(list[5]).toEqual({ event: 'done', data: {} });
     // The full model is sent exactly once.
     expect(response.text.split('"schemaVersion"')).toHaveLength(2);
   });
 
-  it('accepts model: null and produces a generated state event from generate_design', async () => {
+  it('accepts an empty workspace and sends the complete new SceneObject from generate_design', async () => {
     const server = serve(agentProvider(scripted([callStep('generate_design', { prompt: '一個新裝置' }), finalStep('完成。')])));
-    const response = await request(server).post('/api/agent').send(body({ model: null }));
+    const response = await request(server).post('/api/agent').send(body({ workspace: emptyWorkspace() }));
 
     expect(response.status).toBe(200);
     const list = frames(response.text);
     expect(names(list)).toEqual(['status', 'tool', 'result', 'state', 'final', 'done']);
-    expect(list[3]!.data.model.kind).toBe('generated');
-    expect(list[3]!.data.model.model.name).toBe('全新的測試模型');
-    expect(list[2]!.data.stateChange.model).toBeNull();
+    const added = list[3]!.data.object;
+    expect(added.op).toBe('add');
+    expect(added.object.model.name).toBe('全新的測試模型');
+    expect(added.object).toMatchObject({ source: 'openai', providerModel: 'test-double', edited: false });
+    expect(added.object.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(list[2]!.data.stateChange.object).toBeNull();
+    expect(list[2]!.data.detail.objectId).toBe(added.object.id);
   });
 
   it('does not apply MODEL_TIMEOUT_MS (timeoutMs) to the whole run', async () => {
@@ -146,31 +154,38 @@ describe('POST /api/agent', () => {
       expect(called).toBe(0);
     });
 
-    it('rejects a body without the model key as INVALID_REQUEST', async () => {
-      const { model: _omitted, ...withoutModel } = body();
-      const response = await request(serve(agentProvider(scripted([])))).post('/api/agent').send(withoutModel);
+    it('rejects a body without the workspace key as INVALID_REQUEST', async () => {
+      const { workspace: _omitted, ...withoutWorkspace } = body();
+      const response = await request(serve(agentProvider(scripted([])))).post('/api/agent').send(withoutWorkspace);
       expect(response.status).toBe(400);
       expect(response.headers['content-type']).toMatch(/^application\/json/);
       expect(response.body.error.code).toBe('INVALID_REQUEST');
     });
 
-    it('rejects an invalid model as INVALID_MODEL with the request id and a fixed message', async () => {
-      const response = await request(serve(agentProvider(scripted([])))).post('/api/agent').send(body({ model: { bad: true } }));
+    it('rejects the old single-model request as INVALID_REQUEST', async () => {
+      const { workspace: _omitted, ...rest } = body();
+      const response = await request(serve(agentProvider(scripted([]))))
+        .post('/api/agent').send({ ...rest, model: structuredClone(demoModel), selectedPartIds: [], explode: 0 });
       expect(response.status).toBe(400);
-      expect(response.headers['content-type']).toMatch(/^application\/json/);
-      expect(response.body).toEqual({ error: { code: 'INVALID_MODEL', message: '目前模型資料無效，無法處理這次請求。' }, requestId: 'run-1' });
+      expect(response.body.error.code).toBe('INVALID_REQUEST');
     });
 
+    const dup = sceneObject('dup-secret-id');
     it.each([
-      ['a part that is not in the model', { selectedPartIds: ['missing-part'] }],
-      ['a selection with no model', { model: null, selectedPartIds: ['housing'] }],
-    ])('rejects %s as INVALID_SELECTION without echoing the id', async (_label, over) => {
-      const response = await request(serve(agentProvider(scripted([])))).post('/api/agent').send(body(over));
+      ['a value that is not a workspace', { bad: true }],
+      ['a null workspace', null],
+      ['a part selection that is not in the model', { ...demoWorkspace(), selection: { objectId: 'obj-1', partIds: ['missing-part'] } }],
+      ['an active object that does not exist', { ...demoWorkspace(), activeObjectId: 'ghost-object' }],
+      ['two objects with the same id', { ...workspaceOf(dup), objects: [dup, dup] }],
+    ])('rejects %s as INVALID_WORKSPACE with the request id, a fixed message and no ids', async (_label, workspace) => {
+      let called = 0;
+      const response = await request(serve(agentProvider(async () => { called++; return finalStep('x'); })))
+        .post('/api/agent').send(body({ workspace }));
       expect(response.status).toBe(400);
       expect(response.headers['content-type']).toMatch(/^application\/json/);
-      expect(response.body.error.code).toBe('INVALID_SELECTION');
-      expect(response.body.requestId).toBe('run-1');
-      expect(JSON.stringify(response.body)).not.toContain('missing-part');
+      expect(response.body).toEqual({ error: { code: 'INVALID_WORKSPACE', message: '目前工作區資料無效，無法處理這次請求。' }, requestId: 'run-1' });
+      for (const id of ['missing-part', 'ghost-object', 'dup-secret-id']) expect(JSON.stringify(response.body)).not.toContain(id);
+      expect(called).toBe(0);
     });
 
     it('rejects a non-loopback origin with 403 JSON', async () => {
@@ -181,12 +196,46 @@ describe('POST /api/agent', () => {
       expect(response.body.error.code).toBe('ORIGIN_REJECTED');
     });
 
-    it('rejects a body over 128 kB with 413 JSON', async () => {
+    it('rejects a body over 512 kB with 413 JSON', async () => {
       const response = await request(serve(agentProvider(scripted([])))).post('/api/agent')
-        .send(body({ instruction: 'x'.repeat(200_000) }));
+        .send(body({ instruction: 'x'.repeat(600_000) }));
       expect(response.status).toBe(413);
       expect(response.headers['content-type']).toMatch(/^application\/json/);
       expect(response.body.error.code).toBe('REQUEST_TOO_LARGE');
+    });
+  });
+
+  describe('body limits', () => {
+    /** A valid workspace of 8 models with 64 long-named parts each. */
+    function largeWorkspace(): Workspace {
+      const model = structuredClone(demoModel);
+      model.summary = 's'.repeat(2000);
+      model.assumptions = Array.from({ length: 20 }, (_, at) => `assumption-${at}-`.padEnd(200, 'a'));
+      const template = { ...model.parts[0]!, parentId: null };
+      model.parts = Array.from({ length: 64 }, (_, at) => ({ ...template, id: `part-${at}`, name: `part-${at}-`.padEnd(150, 'n') }));
+      return workspaceOf(...Array.from({ length: 8 }, (_, at) => sceneObject(`big-${at}`, model, at * 3)));
+    }
+
+    it('streams a valid 200 kB agent request, while a 200 kB /api/edit body gets 413', async () => {
+      const server = serve(agentProvider(scripted([finalStep('完成。')])));
+      const payload = body({ workspace: largeWorkspace() });
+      const size = Buffer.byteLength(JSON.stringify(payload));
+      expect(size).toBeGreaterThan(200_000);
+      expect(size).toBeLessThan(512 * 1024);
+
+      const agent = await request(server).post('/api/agent').send(payload);
+      expect(agent.status).toBe(200);
+      expect(names(frames(agent.text))).toEqual(['final', 'done']);
+
+      const edit = await request(server).post('/api/edit').send({ instruction: 'x'.repeat(200_000), requestId: 'edit-1' });
+      expect(edit.status).toBe(413);
+      expect(edit.body.error.code).toBe('REQUEST_TOO_LARGE');
+    });
+
+    it('keeps the 128 kB limit on /api/generate', async () => {
+      const response = await request(serve(agentProvider(scripted([])))).post('/api/generate')
+        .send({ prompt: 'x'.repeat(200_000), requestId: 'gen-1' });
+      expect(response.status).toBe(413);
     });
   });
 

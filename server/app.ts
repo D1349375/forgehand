@@ -53,6 +53,10 @@ export function createApp(options: AppOptions = {}) {
     }
     next();
   });
+  // Agent requests carry a whole workspace (up to 8 objects), so they get a larger limit.
+  // This parser is mounted first: body-parser skips a body that is already read, so the
+  // global 128 kB parser below does nothing for /api/agent.
+  app.use('/api/agent', express.json({ limit: '512kb', strict: true }));
   // Edit requests carry the current model (up to 64 parts, roughly 25 kB).
   app.use(express.json({ limit: '128kb', strict: true }));
   app.get('/api/status', (_req, res) => {
@@ -212,13 +216,10 @@ export function createApp(options: AppOptions = {}) {
     catch (error) {
       if (error instanceof AgentRequestError) {
         const requestId = (req.body as { requestId: string }).requestId;
-        const message = error.code === 'INVALID_MODEL'
-          ? '目前模型資料無效，無法處理這次請求。'
-          : '選取的零件不在目前模型中，請重新選取。';
-        res.status(400).json({ error: { code: error.code, message }, requestId });
+        res.status(400).json({ error: { code: error.code, message: '目前工作區資料無效，無法處理這次請求。' }, requestId });
         return;
       }
-      res.status(400).json({ error: { code: 'INVALID_REQUEST', message: '請輸入 1–4000 字的指示，並附上目前模型、顯示狀態與有效的請求識別碼。' } });
+      res.status(400).json({ error: { code: 'INVALID_REQUEST', message: '請輸入 1–4000 字的指示，並附上目前工作區、顯示狀態與有效的請求識別碼。' } });
       return;
     }
     if (activeRequests >= 3) {

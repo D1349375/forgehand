@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { demoModel } from '../../shared/demo';
 import {
-  AgentRequestSchema, AgentStepSchema, ModelStateChangeSchema,
+  AgentRequestError, AgentRequestSchema, AgentStepSchema, EditDesignDetailSchema, ExplodeViewDetailSchema,
+  GenerateDesignDetailSchema, GetProjectStateDetailSchema, LegacyAgentRequestSchema, ObjectToolDetailSchema,
+  SelectPartsDetailSchema, StateChangeSchema, ToolEventSchema, ToolResultSchema, UNKNOWN_TOOL_LABEL,
   agentJsonSchema, serializeSseEvent, validateAgentRequest, validateAgentStep,
-  AgentRequestError,
 } from '../../shared/agent';
+import { emptyWorkspace } from '../../shared/workspace';
+import { sceneObject, workspaceOf } from './agent-fixtures';
 
 const call = (tool: string, args: Record<string, unknown> = {}) => ({ tool, argsJson: JSON.stringify(args), reason: null });
 const calls = (tool: string, args: Record<string, unknown> = {}) => [call(tool, args)];
@@ -105,77 +108,147 @@ describe('agent contract', () => {
     });
   });
 
-  describe('ModelStateChangeSchema', () => {
-    it('round-trips a generated and an edited change', () => {
-      const generated = ModelStateChangeSchema.parse({ kind: 'generated', model: demoModel, source: 'openai', providerModel: 'gpt-x' });
-      expect(generated.kind).toBe('generated');
-      const edited = ModelStateChangeSchema.parse({ kind: 'edited', model: demoModel, source: 'claude', providerModel: 'm' });
-      expect(edited.kind).toBe('edited');
+  describe('StateChangeSchema', () => {
+    const none = { activeObjectId: null, object: null, selection: null, explode: null, tryOn: null };
+    const transform = { position: { x: 0.5, y: 0, z: 0 }, rotation: { x: 0, y: 90, z: 0 } };
+    const objectChanges = [
+      ['add', { op: 'add', object: sceneObject('obj-1') }],
+      ['model', { op: 'model', objectId: 'obj-1', model: demoModel, source: 'claude', providerModel: 'm' }],
+      ['transform', { op: 'transform', objectId: 'obj-1', transform }],
+      ['remove', { op: 'remove', objectId: 'obj-1' }],
+    ] as const;
+
+    it.each(objectChanges)('round-trips an object change with op %s', (_op, object) => {
+      const change = { ...none, object };
+      expect(StateChangeSchema.parse(JSON.parse(JSON.stringify(change)))).toEqual(change);
     });
-    it('rejects a model that fails ModelSpecSchema', () => {
-      expect(() => ModelStateChangeSchema.parse({ kind: 'generated', model: { bad: true }, source: 'x', providerModel: 'y' })).toThrow();
+    it('round-trips an activation, a selection, an explode amount and tryOn', () => {
+      const change = { activeObjectId: 'obj-2', object: null, selection: { objectId: 'obj-2', partIds: ['housing'] }, explode: 0.5, tryOn: true };
+      expect(StateChangeSchema.parse(change)).toEqual(change);
+    });
+    it.each([
+      ['a missing tryOn', { activeObjectId: null, object: null, selection: null, explode: null }],
+      ['an unknown key', { ...none, extra: true }],
+      ['the removed model field', { ...none, model: { kind: 'generated', model: demoModel, source: 'x', providerModel: 'y' } }],
+      ['an add with a bad model', { ...none, object: { op: 'add', object: { ...sceneObject('obj-1'), model: { bad: true } } } }],
+      ['an out-of-range explode', { ...none, explode: 1.5 }],
+    ])('rejects %s', (_name, value) => {
+      expect(() => StateChangeSchema.parse(value)).toThrow();
+    });
+    it('is used by ToolResultSchema for stateChange', () => {
+      const result = { tool: 'explode_view', ok: true, summary: 'x', detail: null, stateChange: { ...none, explode: 1 } };
+      expect(ToolResultSchema.parse(result).stateChange?.explode).toBe(1);
+      expect(() => ToolResultSchema.parse({ ...result, stateChange: { explode: 1 } })).toThrow();
+    });
+  });
+
+  describe('ToolEventSchema', () => {
+    it('requires a label of 1 to 40 characters', () => {
+      expect(ToolEventSchema.parse({ tool: 'explode_view', label: '爆炸圖', argsJson: '{}' }).label).toBe('爆炸圖');
+      expect(() => ToolEventSchema.parse({ tool: 'explode_view', argsJson: '{}' })).toThrow();
+      expect(() => ToolEventSchema.parse({ tool: 'explode_view', label: '', argsJson: '{}' })).toThrow();
+      expect(() => ToolEventSchema.parse({ tool: 'explode_view', label: 'x'.repeat(41), argsJson: '{}' })).toThrow();
+    });
+    it('uses 其他步驟 for an unknown tool', () => {
+      expect(UNKNOWN_TOOL_LABEL).toBe('其他步驟');
+    });
+  });
+
+  describe('detail schemas', () => {
+    const position = { x: 1, y: 0, z: 0 };
+    const rotation = { x: 0, y: 0, z: 0 };
+    it('describe the workspace: objects, active id and the target object', () => {
+      const detail = {
+        objects: [{ id: 'obj-1', name: '殼', partCount: 2, position, rotation, active: true }],
+        activeObjectId: 'obj-1',
+        target: { objectId: 'obj-1', parts: [], selection: [], explode: 0 },
+        tryOn: false,
+      };
+      expect(GetProjectStateDetailSchema.parse(detail)).toEqual(detail);
+      expect(GetProjectStateDetailSchema.parse({ objects: [], activeObjectId: null, target: null, tryOn: false }).target).toBeNull();
+    });
+    it('carry the object id on every writing tool', () => {
+      expect(GenerateDesignDetailSchema.parse({ source: 's', providerModel: 'm', status: 'ready', objectId: 'obj-1' }).objectId).toBe('obj-1');
+      expect(GenerateDesignDetailSchema.parse({ source: 's', providerModel: 'm', status: 'unsupported', objectId: null }).objectId).toBeNull();
+      expect(() => GenerateDesignDetailSchema.parse({ source: 's', providerModel: 'm', status: 'ready' })).toThrow();
+      expect(EditDesignDetailSchema.parse({ objectId: 'obj-1', changes: { added: [], updated: ['a'], removed: [] }, explanation: 'x' }).objectId).toBe('obj-1');
+      expect(SelectPartsDetailSchema.parse({ objectId: 'obj-1', selection: ['a'] }).selection).toEqual(['a']);
+      expect(ExplodeViewDetailSchema.parse({ objectId: 'obj-1', amount: 0.5 }).amount).toBe(0.5);
+      expect(ObjectToolDetailSchema.parse({ objectId: 'obj-1', activeObjectId: null, transform: { position, rotation } }).transform).toEqual({ position, rotation });
+      expect(ObjectToolDetailSchema.parse({ objectId: 'obj-1', activeObjectId: 'obj-2', transform: null }).transform).toBeNull();
     });
   });
 
   describe('validateAgentRequest', () => {
-    const base = { instruction: '產生一張桌子', requestId: 'req-1', explode: 0, tryOn: false, cameraOn: false, history: [] };
-    it('accepts model: null with empty selection', () => {
-      const req = validateAgentRequest({ ...base, model: null, selectedPartIds: [] });
-      expect(req.model).toBeNull();
+    const base = { instruction: '產生一張桌子', requestId: 'req-1', tryOn: false, cameraOn: false, history: [] };
+    const twoObjects = () => workspaceOf(sceneObject('obj-1'), sceneObject('obj-2', demoModel, 1));
+    const rejection = (input: unknown) => {
+      try { validateAgentRequest(input); } catch (error) { return error; }
+      throw new Error('should have thrown');
+    };
+
+    it('accepts an empty workspace', () => {
+      const req = validateAgentRequest({ ...base, workspace: emptyWorkspace() });
+      expect(req.workspace).toEqual(emptyWorkspace());
     });
-    it('rejects model: null with a non-empty selection (INVALID_SELECTION)', () => {
-      expect(() => validateAgentRequest({ ...base, model: null, selectedPartIds: ['housing'] })).toThrowError(AgentRequestError);
-      try {
-        validateAgentRequest({ ...base, model: null, selectedPartIds: ['housing'] });
-      } catch (error) {
-        expect(error).toBeInstanceOf(AgentRequestError);
-        expect((error as AgentRequestError).code).toBe('INVALID_SELECTION');
-      }
+    it('accepts a workspace with objects, selection and explode, and returns a validated copy', () => {
+      const workspace = { ...twoObjects(), selection: { objectId: 'obj-1', partIds: ['housing'] }, display: { explode: 0.25 } };
+      const req = validateAgentRequest(JSON.parse(JSON.stringify({ ...base, workspace })));
+      expect(req.workspace).toEqual(workspace);
+      expect(req.requestId).toBe('req-1');
+      expect(req.history).toEqual([]);
     });
-    it('rejects an invalid non-null model (INVALID_MODEL) with a fixed sanitized message', () => {
-      try {
-        validateAgentRequest({ ...base, model: { bad: true }, selectedPartIds: [] });
-        throw new Error('should have thrown');
-      } catch (error) {
-        expect(error).toBeInstanceOf(AgentRequestError);
-        expect((error as AgentRequestError).code).toBe('INVALID_MODEL');
-        expect((error as AgentRequestError).message).toBe('目前模型資料無效，無法處理這次請求。');
-      }
-    });
-    it('rejects a selection referencing a missing part (INVALID_SELECTION)', () => {
-      try {
-        validateAgentRequest({ ...base, model: structuredClone(demoModel), selectedPartIds: ['missing'] });
-        throw new Error('should have thrown');
-      } catch (error) {
-        expect(error).toBeInstanceOf(AgentRequestError);
-        expect((error as AgentRequestError).code).toBe('INVALID_SELECTION');
-      }
-    });
-    it('accepts a valid model with a valid selection', () => {
-      const req = validateAgentRequest({ ...base, model: structuredClone(demoModel), selectedPartIds: ['housing'] });
-      expect(req.model?.parts.length).toBe(demoModel.parts.length);
+    it.each([
+      ['not a workspace', { bad: true }],
+      ['null', null],
+      ['an unknown model part selection', { ...twoObjects(), selection: { objectId: 'obj-1', partIds: ['missing'] } }],
+      ['an active object that does not exist', { ...twoObjects(), activeObjectId: 'obj-9' }],
+      ['a duplicate object id', { ...twoObjects(), objects: [sceneObject('obj-1'), sceneObject('obj-1')] }],
+      ['an invalid model inside an object', { ...twoObjects(), objects: [{ ...sceneObject('obj-1'), model: { bad: true } }] }],
+    ])('rejects %s as INVALID_WORKSPACE with a fixed message', (_name, workspace) => {
+      const error = rejection({ ...base, workspace });
+      expect(error).toBeInstanceOf(AgentRequestError);
+      expect((error as AgentRequestError).code).toBe('INVALID_WORKSPACE');
+      expect((error as AgentRequestError).message).toBe('目前工作區資料無效，無法處理這次請求。');
+      expect((error as AgentRequestError).message).not.toContain('obj-');
     });
     it('rejects a structurally invalid request via Zod (not AgentRequestError)', () => {
-      expect(() => validateAgentRequest({ ...base, model: null, selectedPartIds: [], requestId: 'bad id with space' })).toThrow();
+      const error = rejection({ ...base, workspace: emptyWorkspace(), requestId: 'bad id with space' });
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(AgentRequestError);
     });
-    it('rejects a missing model key as a structural error, not INVALID_MODEL', () => {
-      const cause = thrown(() => validateAgentRequest({ ...base, selectedPartIds: [] }));
-      expect(cause).toBeInstanceOf(Error);
-      expect(cause).not.toBeInstanceOf(AgentRequestError);
+    it('rejects a missing workspace key as a structural error, not INVALID_WORKSPACE', () => {
+      const error = rejection(base);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(AgentRequestError);
     });
-    it('rejects an explicit undefined model as a structural error (only null means no model)', () => {
-      const cause = thrown(() => validateAgentRequest({ ...base, model: undefined, selectedPartIds: [] }));
-      expect(cause).toBeInstanceOf(Error);
-      expect(cause).not.toBeInstanceOf(AgentRequestError);
+    it('rejects an explicit undefined workspace as a structural error', () => {
+      const error = rejection({ ...base, workspace: undefined });
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(AgentRequestError);
+    });
+    it('rejects the old single-model fields', () => {
+      const error = rejection({ ...base, workspace: emptyWorkspace(), model: null, selectedPartIds: [], explode: 0 });
+      expect(error).not.toBeInstanceOf(AgentRequestError);
     });
   });
 
   describe('AgentRequestSchema', () => {
-    it('accepts model: null', () => {
-      expect(() => AgentRequestSchema.parse({ ...{ instruction: 'x', requestId: 'r', selectedPartIds: [], explode: 0, tryOn: false, cameraOn: false, history: [] }, model: null })).not.toThrow();
+    it('requires the workspace key and has no model, selectedPartIds or explode fields', () => {
+      const base = { instruction: 'x', requestId: 'r', tryOn: false, cameraOn: false, history: [] };
+      expect(() => AgentRequestSchema.parse({ ...base, workspace: emptyWorkspace() })).not.toThrow();
+      expect(() => AgentRequestSchema.parse(base)).toThrow();
+      expect(Object.keys(AgentRequestSchema.shape)).toEqual(['instruction', 'requestId', 'workspace', 'tryOn', 'cameraOn', 'history']);
     });
   });
 
+  describe('LegacyAgentRequestSchema (removed in Task 8)', () => {
+    it('still accepts the single-model request the browser sends', () => {
+      const legacy = { instruction: 'x', requestId: 'r', model: null, selectedPartIds: [], explode: 0, tryOn: false, cameraOn: false, history: [] };
+      expect(() => LegacyAgentRequestSchema.parse(legacy)).not.toThrow();
+      expect(() => LegacyAgentRequestSchema.parse({ ...legacy, model: undefined })).toThrow();
+    });
+  });
   describe('serializeSseEvent', () => {
     it('produces the exact frame format for a given name and data', () => {
       expect(serializeSseEvent('status', { note: '產生中' })).toBe('event: status\ndata: {"note":"產生中"}\n\n');

@@ -1,4 +1,8 @@
-import type { ToolErrorDetail, ToolResult } from '../../shared/agent';
+import type { StateChange, ToolErrorDetail, ToolResult } from '../../shared/agent';
+import {
+  activeObject, applyWorkspaceChange, findObject, WorkspaceError, type SceneObject,
+} from '../../shared/workspace';
+import type { AgentWorkingState } from '../agent-tools';
 import { GenerationError, type ModelProvider } from '../provider';
 
 /** Result helpers shared by every tool. `server/agent-tools.ts` re-exports them. */
@@ -16,6 +20,50 @@ export function fail(tool: string, code: string, message: string): ToolResult {
 
 export function noModel(tool: string): ToolResult {
   return fail(tool, 'NO_MODEL', NO_MODEL_MESSAGE);
+}
+
+export function isToolResult(value: SceneObject | ToolResult): value is ToolResult {
+  return 'ok' in value;
+}
+
+/**
+ * The object a tool acts on: the object named by `objectId`, or the active one
+ * when `objectId` is null or absent. Failures are results the tool returns as is:
+ * `NO_MODEL` for an empty workspace, `UNKNOWN_OBJECT` for an id that is not there.
+ */
+export function resolveTarget(state: AgentWorkingState, tool: string, objectId?: string | null): SceneObject | ToolResult {
+  const { workspace } = state;
+  if (workspace.objects.length === 0) return noModel(tool);
+  if (objectId === null || objectId === undefined) {
+    return activeObject(workspace) ?? noModel(tool);
+  }
+  return findObject(workspace, objectId)
+    ?? fail(tool, 'UNKNOWN_OBJECT', `工作區沒有 id 為「${objectId}」的物件。`);
+}
+
+/**
+ * The `activeObjectId` of a change that writes to `target`: its id when it is
+ * not the active object yet, else `null` (no change). For writing tools only.
+ */
+export function switchTo(state: AgentWorkingState, target: SceneObject): string | null {
+  return target.id === state.workspace.activeObjectId ? null : target.id;
+}
+
+/**
+ * Dry-runs `change` on the working workspace. Returns a failure result when the
+ * change does not apply (`WorkspaceError` code and message), else `null`. Every
+ * writing tool calls this before it returns the change, so the loop's own
+ * `applyWorkspaceChange` never sees an invalid one.
+ */
+export function checkedChange(state: AgentWorkingState, tool: string, change: StateChange): ToolResult | null {
+  const { tryOn: _tryOn, ...workspaceChange } = change;
+  try {
+    applyWorkspaceChange(state.workspace, workspaceChange);
+    return null;
+  } catch (error) {
+    if (error instanceof WorkspaceError) return fail(tool, error.code, error.message);
+    throw error;
+  }
 }
 
 /** The agent loop requires `run`; surface a missing one as a provider error that ends the run. */

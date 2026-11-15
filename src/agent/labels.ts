@@ -1,4 +1,4 @@
-import { ToolErrorDetailSchema, type ToolResult } from '../../shared/agent';
+import { ToolErrorDetailSchema, type LegacyToolResult } from '../../shared/agent';
 
 /** Friendly Traditional Chinese names for tools. The UI never shows a raw tool name. */
 const TOOL_LABELS: Record<string, string> = {
@@ -21,7 +21,7 @@ export function toolLabel(tool: string): string {
  * failure kinds are written for the model and name tools and arguments, so they
  * get a plain explanation instead; the agent corrects these on its own.
  */
-export function resultText(result: ToolResult): string {
+export function resultText(result: LegacyToolResult): string {
   if (!result.ok) {
     const detail = ToolErrorDetailSchema.safeParse(result.detail);
     if (detail.success && detail.data.code === 'UNKNOWN_TOOL') return '代理嘗試了不支援的步驟，會改用其他方式。';

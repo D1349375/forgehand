@@ -1,4 +1,4 @@
-import { StateChangeSchema } from '../../shared/agent';
+import { LegacyStateChangeSchema } from '../../shared/agent';
 import type { DisplayModel } from './types';
 
 /** What the caller should apply for one `state` event. Absent fields mean "leave as is". */
@@ -24,7 +24,7 @@ export function applyStateEvent(
   current: DisplayModel | null,
   context: { requestId: string; now: number; newLineage: string },
 ): StateEffects {
-  const parsed = StateChangeSchema.safeParse(event);
+  const parsed = LegacyStateChangeSchema.safeParse(event);
   if (!parsed.success) return {};
   const { model, selection, explode, tryOn } = parsed.data;
   const effects: StateEffects = {};

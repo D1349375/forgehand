@@ -19,10 +19,16 @@ export interface ToolContext {
   /** Read-only view for the tool: the loop, not the tool, applies `stateChange`. */
   state: AgentWorkingState;
   provider: ModelProvider;
+  /** A fresh object id. Defaults to `crypto.randomUUID()`; tests inject a counter. */
+  newObjectId(): string;
+  /** The current time as an ISO string. Defaults to `new Date().toISOString()`; tests inject a fixed time. */
+  now(): string;
 }
 
 export interface ToolDefinition<TArgs = unknown> {
   name: string;
+  /** Short Traditional Chinese name (1–40 characters) shown in the UI instead of the tool name. */
+  label: string;
   category: string;
   /** One line shown to the model after `name(args):` in the generated tool list. */
   description: string;
@@ -47,6 +53,9 @@ export function createToolRegistry(): ToolRegistry {
   return {
     defineTool(definition) {
       if (tools.has(definition.name)) throw new Error(`Tool already registered: ${definition.name}`);
+      if (definition.label.length < 1 || definition.label.length > 40) {
+        throw new Error(`Tool label must be 1-40 characters: ${definition.name}`);
+      }
       tools.set(definition.name, definition as ToolDefinition<unknown>);
       return definition;
     },

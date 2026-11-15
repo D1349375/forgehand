@@ -4,7 +4,7 @@ import { parseAgentEvent } from '../../src/agent/events';
 import { parseSseStream } from '../../src/agent/sse';
 import { buildAgentRequest, errorMessageFromBody, HISTORY_TURN_LIMIT, type RunSnapshot } from '../../src/agent/request';
 import { demoModel } from '../../shared/demo';
-import { AgentRequestSchema } from '../../shared/agent';
+import { LegacyAgentRequestSchema } from '../../shared/agent';
 
 const frame = (event: string, data: unknown) => ({ event, data: JSON.stringify(data) });
 const resultPayload = { tool: 'select_parts', ok: true, summary: '已選取 1 個零件。', detail: { selection: ['housing'] }, stateChange: null };
@@ -54,14 +54,14 @@ describe('buildAgentRequest', () => {
   it('builds a request the server schema accepts', () => {
     const request = buildAgentRequest('  把電池改成藍色  ', snapshot(), [{ instruction: '先前', reply: '好' }], 'run-1');
     expect(request).toMatchObject({ instruction: '把電池改成藍色', requestId: 'run-1', selectedPartIds: ['housing'], explode: 0.5, tryOn: true, cameraOn: true });
-    expect(() => AgentRequestSchema.parse(request)).not.toThrow();
+    expect(() => LegacyAgentRequestSchema.parse(request)).not.toThrow();
   });
 
   it('sends model: null for an empty scene, with no selection', () => {
     const request = buildAgentRequest('生成', snapshot({ display: null, selectedPartIds: ['housing'] }), [], 'run-1');
     expect(request.model).toBeNull();
     expect(request.selectedPartIds).toEqual([]);
-    expect(() => AgentRequestSchema.parse(request)).not.toThrow();
+    expect(() => LegacyAgentRequestSchema.parse(request)).not.toThrow();
   });
 
   it('keeps only selected parts that exist in the model', () => {
