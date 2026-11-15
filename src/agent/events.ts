@@ -1,18 +1,19 @@
 import {
-  ErrorEventSchema, FinalEventSchema, StatusEventSchema, LegacyToolEventSchema, LegacyToolResultSchema,
-  type LegacyToolResult,
+  ErrorEventSchema, FinalEventSchema, StatusEventSchema, ToolEventSchema, ToolResultSchema,
+  type ToolResult,
 } from '../../shared/agent';
 import type { SseFrame } from './sse';
 
 /**
- * A parsed `/api/agent` event. `tool` keeps only the tool name: the raw
- * `argsJson` is model-facing and is deliberately dropped before the UI sees it.
- * `state` keeps its payload unvalidated; `applyStateEvent` validates it.
+ * A parsed `/api/agent` event. `tool` keeps the tool name and its friendly
+ * `label`: the raw `argsJson` is model-facing and is deliberately dropped before
+ * the UI sees it. `state` keeps its payload unvalidated; `applyStateEvent`
+ * validates it.
  */
 export type AgentEvent =
   | { type: 'status'; note: string | null }
-  | { type: 'tool'; tool: string }
-  | { type: 'result'; result: LegacyToolResult }
+  | { type: 'tool'; tool: string; label: string }
+  | { type: 'result'; result: ToolResult }
   | { type: 'state'; payload: unknown }
   | { type: 'final'; reply: string }
   | { type: 'error'; message: string }
@@ -23,18 +24,17 @@ export function parseAgentEvent(frame: SseFrame): AgentEvent | null {
   let payload: unknown;
   try { payload = JSON.parse(frame.data); }
   catch { return null; }
-
   switch (frame.event) {
     case 'status': {
       const parsed = StatusEventSchema.safeParse(payload);
       return parsed.success ? { type: 'status', note: parsed.data.note } : null;
     }
     case 'tool': {
-      const parsed = LegacyToolEventSchema.safeParse(payload);
-      return parsed.success ? { type: 'tool', tool: parsed.data.tool } : null;
+      const parsed = ToolEventSchema.safeParse(payload);
+      return parsed.success ? { type: 'tool', tool: parsed.data.tool, label: parsed.data.label } : null;
     }
     case 'result': {
-      const parsed = LegacyToolResultSchema.safeParse(payload);
+      const parsed = ToolResultSchema.safeParse(payload);
       return parsed.success ? { type: 'result', result: parsed.data } : null;
     }
     case 'state':

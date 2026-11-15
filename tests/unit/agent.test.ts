@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { demoModel } from '../../shared/demo';
 import {
   AgentRequestError, AgentRequestSchema, AgentStepSchema, EditDesignDetailSchema, ExplodeViewDetailSchema,
-  GenerateDesignDetailSchema, GetProjectStateDetailSchema, LegacyAgentRequestSchema, ObjectToolDetailSchema,
+  GenerateDesignDetailSchema, GetProjectStateDetailSchema, ObjectToolDetailSchema,
   SelectPartsDetailSchema, StateChangeSchema, ToolEventSchema, ToolResultSchema, UNKNOWN_TOOL_LABEL,
   agentJsonSchema, serializeSseEvent, validateAgentRequest, validateAgentStep,
 } from '../../shared/agent';
@@ -242,13 +242,6 @@ describe('agent contract', () => {
     });
   });
 
-  describe('LegacyAgentRequestSchema (removed in Task 8)', () => {
-    it('still accepts the single-model request the browser sends', () => {
-      const legacy = { instruction: 'x', requestId: 'r', model: null, selectedPartIds: [], explode: 0, tryOn: false, cameraOn: false, history: [] };
-      expect(() => LegacyAgentRequestSchema.parse(legacy)).not.toThrow();
-      expect(() => LegacyAgentRequestSchema.parse({ ...legacy, model: undefined })).toThrow();
-    });
-  });
   describe('serializeSseEvent', () => {
     it('produces the exact frame format for a given name and data', () => {
       expect(serializeSseEvent('status', { note: '產生中' })).toBe('event: status\ndata: {"note":"產生中"}\n\n');

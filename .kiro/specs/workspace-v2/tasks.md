@@ -286,7 +286,7 @@ The agent can target any object by id, switch the active object, move objects an
 
 ## Task 8 — Agent client on the new contract
 
-`[ ]`
+`[x]`
 
 The browser sends the workspace, applies workspace changes from `state` events, and shows tool labels from the server. This closes the gap opened in Task 6 and removes the temporary code.
 

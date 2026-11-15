@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { serializeSseEvent } from '../../shared/agent';
+import { AgentRequestSchema, serializeSseEvent, validateAgentRequest } from '../../shared/agent';
+import { selectParts, setExplode } from '../../shared/workspace';
 import { parseAgentEvent } from '../../src/agent/events';
 import { parseSseStream } from '../../src/agent/sse';
 import { buildAgentRequest, errorMessageFromBody, HISTORY_TURN_LIMIT, type RunSnapshot } from '../../src/agent/request';
-import { demoModel } from '../../shared/demo';
-import { LegacyAgentRequestSchema } from '../../shared/agent';
+import { sceneObject, workspaceOf } from './agent-fixtures';
 
 const frame = (event: string, data: unknown) => ({ event, data: JSON.stringify(data) });
-const resultPayload = { tool: 'select_parts', ok: true, summary: '已選取 1 個零件。', detail: { selection: ['housing'] }, stateChange: null };
+const resultPayload = { tool: 'select_parts', ok: true, summary: '已選取 1 個零件。', detail: { objectId: 'obj-1', selection: ['housing'] }, stateChange: null };
+const stateChange = (over: Record<string, unknown> = {}) =>
+  ({ activeObjectId: null, object: null, selection: { objectId: 'obj-1', partIds: ['housing'] }, explode: null, tryOn: null, ...over });
 
 describe('parseAgentEvent', () => {
   it('parses every event the server sends', () => {
@@ -17,22 +19,30 @@ describe('parseAgentEvent', () => {
     expect(parseAgentEvent(frame('final', { reply: '完成。' }))).toEqual({ type: 'final', reply: '完成。' });
     expect(parseAgentEvent(frame('error', { message: '逾時' }))).toEqual({ type: 'error', message: '逾時' });
     expect(parseAgentEvent(frame('done', {}))).toEqual({ type: 'done' });
-    const state = { model: null, selection: ['housing'], explode: null, tryOn: null };
+    const state = stateChange();
     expect(parseAgentEvent(frame('state', state))).toEqual({ type: 'state', payload: state });
   });
 
-  it('keeps only the tool name from a tool event and drops argsJson', () => {
-    const parsed = parseAgentEvent(frame('tool', { tool: 'generate_design', argsJson: '{"prompt":"秘密描述"}' }));
-    expect(parsed).toEqual({ type: 'tool', tool: 'generate_design' });
+  it('keeps the tool name and label from a tool event and drops argsJson', () => {
+    const parsed = parseAgentEvent(frame('tool', { tool: 'generate_design', label: '生成設計', argsJson: '{"prompt":"秘密描述"}' }));
+    expect(parsed).toEqual({ type: 'tool', tool: 'generate_design', label: '生成設計' });
     expect(JSON.stringify(parsed)).not.toContain('秘密');
+  });
+
+  it('parses a result with a workspace state change', () => {
+    const result = { ...resultPayload, stateChange: { ...stateChange(), tryOn: null } };
+    expect(parseAgentEvent(frame('result', result))).toEqual({ type: 'result', result });
   });
 
   it.each([
     ['an unknown event name', frame('mystery', {})],
     ['unreadable JSON', { event: 'status', data: '{oops' }],
     ['a status payload with a wrong type', frame('status', { note: 5 })],
-    ['a tool payload without argsJson', frame('tool', { tool: 'x' })],
+    ['a tool payload without argsJson', frame('tool', { tool: 'x', label: '其他步驟' })],
+    ['a tool payload without a label (the old shape)', frame('tool', { tool: 'x', argsJson: '{}' })],
+    ['a tool payload with an empty label', frame('tool', { tool: 'x', label: '', argsJson: '{}' })],
     ['a result payload that fails the schema', frame('result', { tool: 'x' })],
+    ['a result with the old state change shape', frame('result', { ...resultPayload, stateChange: { model: null, selection: null, explode: null, tryOn: null } })],
     ['a final payload with an empty reply', frame('final', { reply: '' })],
     ['an error payload with extra fields', frame('error', { message: 'x', body: 'provider text' })],
   ])('returns null for %s', (_label, input) => {
@@ -40,32 +50,41 @@ describe('parseAgentEvent', () => {
   });
 
   it('parses real server frames end to end', () => {
-    const wire = serializeSseEvent('tool', { tool: 'wear_on_arm', argsJson: '{"enabled":true}' }) + serializeSseEvent('done', {});
+    const wire = serializeSseEvent('tool', { tool: 'wear_on_arm', label: '護臂試戴', argsJson: '{"enabled":true}' }) + serializeSseEvent('done', {});
     const { frames } = parseSseStream(wire, '');
-    expect(frames.map(parseAgentEvent)).toEqual([{ type: 'tool', tool: 'wear_on_arm' }, { type: 'done' }]);
+    expect(frames.map(parseAgentEvent)).toEqual([{ type: 'tool', tool: 'wear_on_arm', label: '護臂試戴' }, { type: 'done' }]);
   });
 });
 
 describe('buildAgentRequest', () => {
-  const display = { model: structuredClone(demoModel), source: 'codex', providerModel: 'm', requestId: 'r', startedAt: 1, lineage: 'l', edited: false };
-  const snapshot = (over: Partial<RunSnapshot> = {}): RunSnapshot =>
-    ({ display, selectedPartIds: ['housing'], explode: 0.5, tryOn: true, cameraOn: true, ...over });
+  const workspace = () => setExplode(selectParts(workspaceOf(sceneObject('obj-1'), sceneObject('obj-2', undefined, 2)), 'obj-1', ['housing']), 0.5);
+  const snapshot = (over: Partial<RunSnapshot> = {}): RunSnapshot => ({ workspace: workspace(), tryOn: true, cameraOn: true, ...over });
 
-  it('builds a request the server schema accepts', () => {
+  it('builds a request the server schema and validator accept', () => {
     const request = buildAgentRequest('  把電池改成藍色  ', snapshot(), [{ instruction: '先前', reply: '好' }], 'run-1');
-    expect(request).toMatchObject({ instruction: '把電池改成藍色', requestId: 'run-1', selectedPartIds: ['housing'], explode: 0.5, tryOn: true, cameraOn: true });
-    expect(() => LegacyAgentRequestSchema.parse(request)).not.toThrow();
+    expect(request).toMatchObject({ instruction: '把電池改成藍色', requestId: 'run-1', tryOn: true, cameraOn: true });
+    expect(() => AgentRequestSchema.parse(request)).not.toThrow();
+    const validated = validateAgentRequest(JSON.parse(JSON.stringify(request)));
+    expect(validated.workspace).toEqual(workspace());
+    expect(validated.workspace.selection).toEqual({ objectId: 'obj-1', partIds: ['housing'] });
+    expect(validated.workspace.display.explode).toBe(0.5);
+    expect(validated.history).toEqual([{ instruction: '先前', reply: '好' }]);
   });
 
-  it('sends model: null for an empty scene, with no selection', () => {
-    const request = buildAgentRequest('生成', snapshot({ display: null, selectedPartIds: ['housing'] }), [], 'run-1');
-    expect(request.model).toBeNull();
-    expect(request.selectedPartIds).toEqual([]);
-    expect(() => LegacyAgentRequestSchema.parse(request)).not.toThrow();
+  it('sends the whole workspace as it is', () => {
+    const ws = workspace();
+    expect(buildAgentRequest('x', snapshot({ workspace: ws }), [], 'r').workspace).toBe(ws);
   });
 
-  it('keeps only selected parts that exist in the model', () => {
-    expect(buildAgentRequest('x', snapshot({ selectedPartIds: ['housing', 'gone'] }), [], 'r').selectedPartIds).toEqual(['housing']);
+  it('accepts an empty workspace', () => {
+    const request = buildAgentRequest('生成', snapshot({ workspace: workspaceOf(), tryOn: false, cameraOn: false }), [], 'run-1');
+    expect(request.workspace.objects).toEqual([]);
+    expect(validateAgentRequest(JSON.parse(JSON.stringify(request))).workspace.activeObjectId).toBeNull();
+  });
+
+  it('has none of the old single-model fields', () => {
+    const request = buildAgentRequest('x', snapshot(), [], 'r');
+    expect(Object.keys(request).sort()).toEqual(['cameraOn', 'history', 'instruction', 'requestId', 'tryOn', 'workspace']);
   });
 
   it('sends only the latest turns', () => {

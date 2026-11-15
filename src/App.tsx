@@ -11,7 +11,7 @@ import { useArmTracking, type ArmTrackingStatus } from './try-on/useArmTracking'
 import type { AgentTurn } from '../shared/agent';
 import { AgentPanel } from './agent/AgentPanel';
 import { HISTORY_TURN_LIMIT } from './agent/request';
-import type { DisplayModel } from './agent/types';
+import type { StateEffects } from './agent/apply-state';
 import { useAgentRun } from './agent/useAgentRun';
 import { NumberField } from './ui/NumberField';
 import { canApplyEdit, pickPart } from './workspace/app-rules';
@@ -34,12 +34,6 @@ const armStatusText: Record<ArmTrackingStatus, string> = {
   'load-error': '無法載入手部追蹤模型。請確認網路連線，結束後重新開啟試戴。',
   'track-error': '視訊追蹤已中斷。請結束後重新開啟試戴。',
 };
-
-/** TEMPORARY (workspace-v2 Task 8): the active object as the single `DisplayModel` the agent client still expects. */
-const toDisplayModel = (object: SceneObject): DisplayModel => ({
-  model: object.model, source: object.source, providerModel: object.providerModel,
-  requestId: 'workspace', startedAt: null, lineage: object.id, edited: object.edited,
-});
 
 declare global { interface Window { __forgehandScene?: SceneHandle | null } }
 
@@ -92,15 +86,9 @@ export default function App() {
   /** The latest completed agent turns, newest last, sent as history so follow-ups have context. */
   const agentTurns = useRef<AgentTurn[]>([]);
   const agent = useAgentRun({
-    commit: commitFromAgent,
-    setSelected: selectInActive,
-    setExplode: setExplodeAmount,
+    applyWorkspace: applyAgentWorkspace,
     setTryingOn,
-    getSnapshot: () => {
-      const now = store.current();
-      const object = activeObject(now);
-      return { display: object ? toDisplayModel(object) : null, selectedPartIds: now.selection.partIds, explode: now.display.explode, tryOn: tryingOn, cameraOn: camera === 'on' };
-    },
+    getSnapshot: () => ({ workspace: store.current(), tryOn: tryingOn, cameraOn: camera === 'on' }),
     getTurns: () => agentTurns.current,
     pushTurn: turn => { agentTurns.current = [...agentTurns.current, turn].slice(-HISTORY_TURN_LIMIT); },
   });
@@ -352,29 +340,29 @@ export default function App() {
   }
 
   /**
-   * TEMPORARY (workspace-v2 Task 8): the agent client still speaks of one `DisplayModel`.
-   * A model committed by the agent: drop dialogs and notices that belonged to the old model, like applyResult/applyEdit.
-   * A lineage that is not the active object's id adds a new object (id = lineage); the active one has its model replaced.
+   * One `state` event from the agent. An object change is an undo step (`commit` with the workspace after activation as `before`)
+   * and drops dialogs and notices that belonged to the old model, like applyResult/applyEdit; selection, explode and
+   * activation alone are not undo steps. The server built the whole change: nothing is created here.
    */
-  function commitFromAgent(next: DisplayModel) {
+  function applyAgentWorkspace({ before, after, recordUndo }: StateEffects) {
+    if (!recordUndo) {
+      store.dispatch({ type: 'replace', next: after });
+      if (after.display.explode > 0) setTransformMode(null);
+      return;
+    }
     setPending(null); setConflict(null); setEditSummary(null); setClarify('');
     setTiming(null); setRenderError('');
-    const before = store.current();
-    if (next.lineage !== before.activeObjectId) {
-      if (!addNewObject({ id: next.lineage, model: next.model, source: next.source, providerModel: next.providerModel, startedAt: next.startedAt })) return;
-    } else {
-      try {
-        store.dispatch({ type: 'commit', next: replaceModel(before, next.lineage, next.model, { source: next.source, providerModel: next.providerModel }) });
-        timingRef.current = next.startedAt === null ? null : { objectId: next.lineage, startedAt: next.startedAt };
-      } catch {
-        setError('代理的修改無法套用，目前模型未變更。');
-        return;
-      }
-    }
-    if (!next.edited) setMode('edit');
-    setMessage(next.edited ? '代理已修改模型，可按「復原」回到上一步。' : '代理已建立新模型，可按「復原」回到上一步。');
+    store.dispatch({ type: 'commit', next: after, before });
+    // The object whose model was added or replaced is the one whose render time is shown.
+    const previous = new Map(before.objects.map(object => [object.id, object.model]));
+    const built = after.objects.find(object => previous.get(object.id) !== object.model);
+    timingRef.current = built ? { objectId: built.id, startedAt: performance.now() } : null;
+    if (after.display.explode > 0) setTransformMode(null);
+    if (after.objects.length > before.objects.length) { setMode('edit'); setMessage('代理已建立新物件，可按「復原」回到上一步。'); }
+    else if (after.objects.length < before.objects.length) setMessage('代理已刪除物件，可按「復原」回到上一步。');
+    else if (built) setMessage('代理已修改物件，可按「復原」回到上一步。');
+    else setMessage('代理已調整物件位置，可按「復原」回到上一步。');
   }
-
   /** Local, immediate change; validated exactly like AI output before display. */
   function adjust(next: ModelSpec, label: string): boolean {
     const before = store.current();
