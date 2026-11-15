@@ -3,10 +3,12 @@
 Three layers, separated by what may import what:
 
 ```
-shared/    Zod schemas + validation, imported by BOTH server and src.
+shared/    Zod schemas, validation, and pure geometry helpers that use only Three.js math classes, imported by BOTH server and src.
            model.ts        PartSchema, ModelSpecSchema, GeneratedDesignSchema, validateModel/validateDesign
            edit.ts         EditPlanSchema, applyEditPlan, editConflicts, describeChanges, EditError
            schema.ts        converts Zod schemas to portable JSON Schema (draft-7) for model back ends
+           bounds.ts       worldMatrices, partBoxes, modelBox, objectBox (Three.js math only, runs in Node)
+           workspace.ts    Workspace schema, validation, operations, placement
            demo.ts         a hand-written ModelSpec for the "load demo" button
 server/    Express API + model provider adapters. Imports shared/. Never imported by src/.
            index.ts        entry point: ports, spawns Vite in dev, signal handling

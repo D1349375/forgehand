@@ -1,5 +1,9 @@
 import * as THREE from 'three';
+import { partBoxes } from '../../shared/bounds';
 import type { ModelSpec, Part } from '../../shared/model';
+
+// Moved to shared/bounds.ts; re-exported so existing imports keep working.
+export { partBoxes, worldMatrices } from '../../shared/bounds';
 
 /**
  * Exploded view computed locally from the part hierarchy and bounding boxes
@@ -25,38 +29,6 @@ const DIRECTIONS = AXES.flatMap(axis => [{ axis, sign: 1 }, { axis, sign: -1 }])
 const component = (vector: THREE.Vector3, axis: number) => axis === 0 ? vector.x : axis === 1 ? vector.y : vector.z;
 const min = (box: THREE.Box3, axis: number) => component(box.min, axis);
 const max = (box: THREE.Box3, axis: number) => component(box.max, axis);
-
-/** World matrix of every part with rotation in XYZ Euler degrees, as built in geometry.ts. */
-export function worldMatrices(model: ModelSpec): Map<string, THREE.Matrix4> {
-  const byId = new Map(model.parts.map(part => [part.id, part]));
-  const result = new Map<string, THREE.Matrix4>();
-  const resolve = (part: Part): THREE.Matrix4 => {
-    const known = result.get(part.id);
-    if (known) return known;
-    const rotation = new THREE.Euler(...[part.rotation.x, part.rotation.y, part.rotation.z].map(THREE.MathUtils.degToRad) as [number, number, number]);
-    const local = new THREE.Matrix4().compose(new THREE.Vector3(part.position.x, part.position.y, part.position.z),
-      new THREE.Quaternion().setFromEuler(rotation), new THREE.Vector3(1, 1, 1));
-    const parent = part.parentId ? byId.get(part.parentId) : undefined;
-    const world = parent ? resolve(parent).clone().multiply(local) : local;
-    result.set(part.id, world);
-    return world;
-  };
-  model.parts.forEach(resolve);
-  return result;
-}
-
-/** Axis-aligned world box of each part's own primitive (every primitive is centred, full size = dimensions). */
-export function partBoxes(model: ModelSpec, offsets?: Map<string, THREE.Vector3>): Map<string, THREE.Box3> {
-  const matrices = worldMatrices(model);
-  const boxes = new Map<string, THREE.Box3>();
-  for (const part of model.parts) {
-    const half = new THREE.Vector3(part.dimensions.x, part.dimensions.y, part.dimensions.z).multiplyScalar(0.5);
-    const box = new THREE.Box3(half.clone().negate(), half).applyMatrix4(matrices.get(part.id)!);
-    const shift = offsets?.get(part.id);
-    boxes.set(part.id, shift ? box.translate(shift) : box);
-  }
-  return boxes;
-}
 
 export function computeExplosion(model: ModelSpec): ExplodePlan {
   const boxes = partBoxes(model);

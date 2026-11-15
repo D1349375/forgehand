@@ -16,6 +16,9 @@ export const PartSchema = z.strictObject({
   tubeRatio: z.number().min(0.05).max(0.95),
 });
 
+/** Part id format, for schemas that refer to parts without repeating the regex. */
+export const PartIdSchema = PartSchema.shape.id;
+
 // Keep the API JSON schema free of refinements. Apply semantic checks below
 // after structured output parsing, and again before constructing any geometry.
 export const ModelSpecSchema = z.strictObject({
