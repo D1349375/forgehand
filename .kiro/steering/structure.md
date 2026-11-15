@@ -23,7 +23,9 @@ src/       React frontend + Three.js. Imports shared/. Never imports server/.
            main.tsx, styles.css, index.html
            scene/          Three.js: geometry.ts (buildModel), explode.ts, SceneViewport.tsx, style.ts, arm-preview.ts
            try-on/         MediaPipe arm tracking: arm-pose.ts (ArmTracker), arm.worker.ts, useArmTracking.ts
+           hands/          hand tracking source, gesture logic (pure) and hand-control wiring
 tests/
+           fixtures/       shared test helpers, e.g. synthetic-hand.ts (used by unit and e2e tests)
            unit/           Vitest (server-app, edit, model, scene, etc.)
            e2e/            Playwright (workbench, edit-select, explode, arm-try-on, captured-models, ...)
 scripts/   verify-real-provider.ts, verify-real-edit.ts

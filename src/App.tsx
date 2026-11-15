@@ -8,6 +8,7 @@ import {
 } from '../shared/workspace';
 import { SceneViewport, type SceneHandle, type TransformMode, type Vector } from './scene/SceneViewport';
 import { useArmTracking, type ArmTrackingStatus } from './try-on/useArmTracking';
+import { useHandTracking } from './hands/useHandTracking';
 import type { AgentTurn } from '../shared/agent';
 import { AgentPanel } from './agent/AgentPanel';
 import { HISTORY_TURN_LIMIT } from './agent/request';
@@ -71,7 +72,10 @@ export default function App() {
   const [contrast, setContrast] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const tryOnActive = tryingOn && camera === 'on';
-  const armTracking = useArmTracking(videoRef, tryOnActive, mirrored);
+  /** 手勢: hand control is on by default whenever the camera is on. */
+  const [handsOn, setHandsOn] = useState(true);
+  const tracking = useHandTracking(videoRef, { running: camera === 'on', needed: handsOn || tryOnActive, wantPose: tryOnActive, mirrored });
+  const armTracking = useArmTracking(tracking.source, tracking.status, tryOnActive);
   const sceneRef = useRef<SceneHandle>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cameraRequest = useRef(0);
@@ -194,6 +198,7 @@ export default function App() {
       streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
       setCamera('off');
       setTryingOn(false);
+      setHandsOn(true);
       const name = cause instanceof DOMException ? cause.name : '';
       setCameraError(name === 'NotAllowedError' || name === 'SecurityError'
         ? '攝影機授權遭拒。請在瀏覽器網址列允許攝影機後，重新開啟。你仍可操作 3D 模型。'
@@ -208,6 +213,7 @@ export default function App() {
     if (videoRef.current) videoRef.current.srcObject = null;
     setCamera('off');
     setTryingOn(false);
+    setHandsOn(true);
   }
   function toggleTryOn() {
     if (agentActive) return;
@@ -512,6 +518,7 @@ export default function App() {
             <button className={`button ${tryingOn ? 'active' : ''}`} type="button" aria-pressed={tryingOn} disabled={(camera === 'starting' && !tryingOn) || agentActive} onClick={toggleTryOn}>
               {tryingOn ? '結束護臂試戴' : '護臂試戴'}
             </button>
+            {camera === 'on' && <button className={`button ${handsOn ? 'active' : ''}`} type="button" aria-pressed={handsOn} onClick={() => setHandsOn(on => !on)}>手勢</button>}
             <label className="contrast-toggle"><input type="checkbox" checked={contrast} onChange={e => setContrast(e.target.checked)} />提高背景對比</label>
           </div>
           <div className="button-group"><button className="button" onClick={undo} disabled={!store.canUndo || agentActive} title="Ctrl+Z">復原</button><button className="button" onClick={redo} disabled={!store.canRedo || agentActive} title="Ctrl+Shift+Z">重做</button><button className="icon-button" onClick={() => sceneRef.current?.zoomOut()} aria-label="縮小" disabled={!active}>−</button><button className="icon-button" onClick={() => sceneRef.current?.zoomIn()} aria-label="放大" disabled={!active}>＋</button><button className="button" onClick={() => sceneRef.current?.reset()} disabled={!active}>重設視角</button></div>

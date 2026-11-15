@@ -58,7 +58,7 @@ The e2e suite starts its own server on ports 5197/8797 (override with `E2E_PORT`
 
 ## Privacy
 
-The camera image stays in your browser. Hand tracking runs on your machine; only the MediaPipe model files are downloaded from Google. Model back ends receive text, not video.
+The camera image stays in your browser. Hand tracking runs on your machine whenever the camera is on; turning the camera on downloads the MediaPipe hand and pose model files from Google's public model storage, and the video and the hand landmarks never leave the browser. Model back ends receive text, not video.
 
 ## License
 

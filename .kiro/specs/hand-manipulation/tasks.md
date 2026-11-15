@@ -8,7 +8,7 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Task 1 — Shared hand tracking and the 手勢 switch
 
-`[ ]`
+`[x]`
 
 Hand tracking runs whenever the camera is on, through one worker that try-on and hand control share, and a 手勢 button turns hand control off. Nothing is drawn yet. This task also builds the test tools every later task uses: a synthetic hand and a scripted fake worker for e2e.
 
