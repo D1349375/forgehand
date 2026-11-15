@@ -322,7 +322,7 @@ The browser sends the workspace, applies workspace changes from `state` events, 
 
 ## Task 9 — 物件 panel
 
-`[ ]`
+`[x]`
 
 A panel in the control column to switch, rename, delete and move objects.
 

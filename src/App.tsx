@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { demoModel } from '../shared/demo';
 import { applyEditPlan, describeChanges, editConflicts, EditError, EditResultSchema, validateEditPlan, type EditPlan, type EditResult } from '../shared/edit';
 import { validateGenerationResult, validateModel, type GenerationResult, type ModelSpec, type Part } from '../shared/model';
 import {
-  MAX_OBJECTS, WorkspaceError, activeObject, addObject, createObject, emptyWorkspace, findObject, replaceModel, selectParts,
-  setExplode as setWorkspaceExplode, type SceneObject, type Workspace,
+  MAX_OBJECTS, WorkspaceError, activeObject, addObject, createObject, emptyWorkspace, findObject, removeObject, replaceModel, selectParts, setActiveObject,
+  setExplode as setWorkspaceExplode, setTransform, type ObjectTransform, type SceneObject, type Workspace,
 } from '../shared/workspace';
 import { SceneViewport, type SceneHandle, type TransformMode, type Vector } from './scene/SceneViewport';
 import { useArmTracking, type ArmTrackingStatus } from './try-on/useArmTracking';
@@ -13,7 +13,10 @@ import { AgentPanel } from './agent/AgentPanel';
 import { HISTORY_TURN_LIMIT } from './agent/request';
 import type { DisplayModel } from './agent/types';
 import { useAgentRun } from './agent/useAgentRun';
+import { NumberField } from './ui/NumberField';
 import { canApplyEdit, pickPart } from './workspace/app-rules';
+import { ObjectPanel } from './workspace/ObjectPanel';
+import { renameObject } from './workspace/object-panel';
 import { useWorkspace } from './workspace/useWorkspace';
 
 type ServiceStatus = { configured: boolean; provider: string; model: string; reason?: string };
@@ -40,26 +43,6 @@ const toDisplayModel = (object: SceneObject): DisplayModel => ({
 
 declare global { interface Window { __forgehandScene?: SceneHandle | null } }
 
-function NumberField({ label, value, scale = 1, min, max, digits = 1, disabled = false, onCommit }: {
-  label: string; value: number; scale?: number; min: number; max: number; digits?: number; disabled?: boolean; onCommit: (value: number) => void;
-}) {
-  const shown = Number((value * scale).toFixed(digits)).toString();
-  const [draft, setDraft] = useState(shown);
-  const [invalid, setInvalid] = useState(false);
-  useEffect(() => { setDraft(shown); setInvalid(false); }, [shown]);
-  const commit = () => {
-    const number = Number(draft);
-    if (draft.trim() === '' || !Number.isFinite(number) || number < min || number > max) { setInvalid(true); return; }
-    setInvalid(false);
-    if (number.toFixed(digits) !== Number(shown).toFixed(digits)) onCommit(number / scale);
-  };
-  return <label className={`number-field ${invalid ? 'invalid' : ''}`}><span>{label}</span>
-    <input inputMode="decimal" value={draft} aria-label={label} aria-invalid={invalid} disabled={disabled}
-      onChange={event => setDraft(event.target.value)} onBlur={commit}
-      onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => { if (event.key === 'Enter') { event.preventDefault(); commit(); } else if (event.key === 'Escape') { setDraft(shown); setInvalid(false); } }} />
-  </label>;
-}
-
 export default function App() {
   const [prompt, setPrompt] = useState('一個紅色、有四條腿的小桌子');
   const [instruction, setInstruction] = useState('');
@@ -81,6 +64,8 @@ export default function App() {
   const [clarify, setClarify] = useState('');
   const [editSummary, setEditSummary] = useState<{ changes: string; explanation: string } | null>(null);
   const [adjustError, setAdjustError] = useState('');
+  /** A rejected 物件 panel change (a bad name), shown inside that panel. */
+  const [objectError, setObjectError] = useState('');
   const [renderError, setRenderError] = useState('');
   const [timing, setTiming] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -145,6 +130,16 @@ export default function App() {
   }, [busy]);
   // Exposed only to automated browsers so tests can click a specific part.
   useEffect(() => { if (navigator.webdriver) window.__forgehandScene = sceneRef.current; return () => { if (navigator.webdriver) window.__forgehandScene = null; }; }, []);
+
+  // Keep the render-error fallback in step with changes that never rebuild geometry (object transform, active object,
+  // selection, explode, removing an object). A workspace whose objects all have the model reference the scene last built
+  // is already what the scene shows, so it becomes the fallback. Anything that needs a build waits for `onReady`.
+  useEffect(() => {
+    const last = lastRendered.current;
+    if (!last || last === workspace) return;
+    const built = new Map(last.objects.map(object => [object.id, object.model]));
+    if (workspace.objects.every(object => built.get(object.id) === object.model)) lastRendered.current = workspace;
+  }, [workspace]);
 
   // Another object becoming active ends any drag mode that belonged to the old one.
   useEffect(() => { setTransformMode(null); }, [workspace.activeObjectId]);
@@ -422,6 +417,34 @@ export default function App() {
     const next = pickPart(before, objectId, id, additive);
     if (next !== before) store.dispatch({ type: 'replace', next });
   }
+  /** 物件 panel changes. Switching is not an undo step; rename, move and delete are one each. */
+  function activateObject(id: string) {
+    if (agentActive) return;
+    setObjectError(''); setAdjustError('');
+    const before = store.current();
+    try {
+      const next = setActiveObject(before, id);
+      if (next !== before) store.dispatch({ type: 'replace', next });
+    } catch { setObjectError('找不到這個物件，工作區未變更。'); }
+  }
+  function commitObjectChange(change: (before: Workspace) => Workspace, label: string) {
+    if (agentActive) return;
+    const before = store.current();
+    try {
+      const next = change(before);
+      setObjectError('');
+      if (next === before) return;
+      setEditSummary(null); setAdjustError('');
+      store.dispatch({ type: 'commit', next });
+      setMessage(label);
+    } catch (cause) {
+      setObjectError(cause instanceof WorkspaceError ? '這個物件調整未通過驗證，未套用。' : cause instanceof Error ? cause.message : '物件調整失敗，未套用。');
+    }
+  }
+  const renameObjectTo = (id: string, text: string) => commitObjectChange(ws => renameObject(ws, id, text), '已重新命名物件，可按「復原」回到上一步。');
+  const moveObject = (id: string, patch: { position?: ObjectTransform['position']; rotation?: ObjectTransform['rotation'] }) =>
+    commitObjectChange(ws => setTransform(ws, id, patch), '已調整物件位置，可按「復原」回到上一步。');
+  const deleteObject = (id: string) => commitObjectChange(ws => removeObject(ws, id), '已刪除物件，可按「復原」回到上一步。');
   function setExplodeAmount(amount: number) {
     const before = store.current();
     if (before.objects.length > 0) store.dispatch({ type: 'replace', next: setWorkspaceExplode(before, amount) });
@@ -537,6 +560,8 @@ export default function App() {
           {pending && <div className="approximation"><h3>近似方案待確認</h3><p>{pending.result.design.explanation}</p><ul>{pending.result.design.model?.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul><button className="button primary" disabled={agentActive || atLimit} onClick={() => { applyResult(pending.result, pending.startedAt); setPending(null); }}>接受近似並建立</button><button className="text-button" disabled={agentActive} onClick={() => { setPending(null); setMessage('已取消近似方案，上一個成功模型仍可操作。'); }}>取消近似</button></div>}
           <div className="service-status"><span className={`status-dot ${service?.configured ? 'connected' : 'unavailable'}`} /><div><strong>{service ? providerLabel(service.provider) : '本機服務未連線'}</strong><span>{service?.configured ? service.model : service?.reason || '尚未設定，請依 README 準備登入或金鑰。'}</span></div><button className="text-button" onClick={() => void refreshService()}>重新檢查</button></div><button className="text-button demo-link" onClick={loadDemo} disabled={agentActive || atLimit}>載入示範模型 <span>非 AI 生成</span></button>
         </section>
+        {active && <ObjectPanel objects={workspace.objects} activeObjectId={workspace.activeObjectId} disabled={agentActive} error={objectError}
+          onActivate={activateObject} onRename={renameObjectTo} onTransform={moveObject} onRemove={deleteObject} />}
         {active && <section className="panel parts-panel" aria-label="零件選取與調整">
           <div className="panel-heading"><span className="eyebrow">SELECT & ADJUST</span><span className="tag">{active.model.parts.length} 件</span></div>
           <h2>零件</h2>

@@ -967,6 +967,51 @@ summary {
   color:#6e91a0;
   margin-top:3px
 }
+.objects-panel h2 {
+  font-size:16px;
+  margin:2px 0 12px
+}
+.object-picker {
+  list-style:none;
+  padding:0;
+  margin:0 0 12px;
+  max-height:160px;
+  overflow-y:auto;
+  border:1px solid var(--border)
+}
+.object-picker li+li {
+  border-top:1px solid #172a34
+}
+.object-picker button {
+  width:100%;
+  display:block;
+  text-align:left;
+  border:0;
+  background:transparent;
+  color:#aecbd6;
+  padding:9px 12px;
+  font-size:12px;
+  cursor:pointer
+}
+.object-picker button:hover {
+  background:#122631
+}
+.object-picker button.selected {
+  background:#2a2410;
+  color:#ffe2a0;
+  box-shadow:inset 3px 0 0 #ffc53d
+}
+.object-picker small {
+  display:block;
+  font-size:9px;
+  color:#6e91a0;
+  margin-top:3px
+}
+.object-editor {
+  border-top:1px solid var(--border);
+  padding-top:14px;
+  margin-top:4px
+}
 .part-editor {
   border-top:1px solid var(--border);
   padding-top:14px;
