@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { demoModel } from '../shared/demo';
 import { applyEditPlan, describeChanges, editConflicts, EditError, EditResultSchema, validateEditPlan, type EditPlan, type EditResult } from '../shared/edit';
 import { validateGenerationResult, validateModel, type GenerationResult, type ModelSpec, type Part } from '../shared/model';
+import { ZERO_TRANSFORM } from '../shared/workspace';
 import { SceneViewport, type SceneHandle, type TransformMode, type Vector } from './scene/SceneViewport';
 import { useArmTracking, type ArmTrackingStatus } from './try-on/useArmTracking';
 import type { AgentTurn } from '../shared/agent';
@@ -362,7 +363,7 @@ export default function App() {
     adjust({ ...current.model, parts: current.model.parts.filter(part => !removing.has(part.id)) }, `已刪除 ${selected.length} 個零件，可按「復原」回到上一步。`);
     setSelected([]); setTransformMode(null);
   }
-  function pick(id: string | null, additive: boolean) {
+  function pick(_objectId: string | null, id: string | null, additive: boolean) {
     if (agentActive) return;
     setAdjustError('');
     if (!id) { if (!additive) setSelected([]); return; }
@@ -372,7 +373,7 @@ export default function App() {
     setExplode(amount);
     if (amount > 0) setTransformMode(null);
   }
-  function onTransform(id: string, position: Vector, rotation: Vector) {
+  function onTransform(_objectId: string, id: string, position: Vector, rotation: Vector) {
     if (agentActive) return;
     updatePart(id, { position, rotation }, transformMode === 'rotate' ? '已旋轉零件，可按「復原」回到上一步。' : '已移動零件，可按「復原」回到上一步。');
   }
@@ -393,6 +394,8 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler);
   });
 
+  // One object for now; the scene only re-syncs when the displayed model changes.
+  const sceneObjects = useMemo(() => display ? [{ id: display.lineage, model: display.model, transform: ZERO_TRANSFORM }] : [], [display]);
   const editing = mode === 'edit' && Boolean(display);
   const selectedParts = display ? selected.map(id => display.model.parts.find(part => part.id === id)).filter((part): part is Part => Boolean(part)) : [];
   const single = selectedParts.length === 1 ? selectedParts[0]! : null;
@@ -416,7 +419,7 @@ export default function App() {
         <div className={`viewport ${contrast ? 'high-contrast' : ''}`} data-testid="viewport">
           <video ref={videoRef} muted playsInline autoPlay className={`camera-video ${camera === 'on' ? 'visible' : ''} ${mirrored ? 'mirrored' : ''}`} data-mirrored={mirrored} aria-label="即時攝影機背景" />
           <div className="viewport-shade" />
-          <SceneViewport ref={sceneRef} model={display?.model ?? null} fitKey={display?.lineage ?? null} selectedIds={selected} transformMode={agentActive ? null : transformMode} explode={explode}
+          <SceneViewport ref={sceneRef} objects={sceneObjects} activeObjectId={display?.lineage ?? null} selectedIds={selected} transformMode={agentActive ? null : transformMode} explode={explode}
             tryOn={tryOnActive ? armTracking.sample : undefined}
             onPick={pick} onTransform={onTransform}
             onError={message => { setRenderError(message); setMessage('3D 顯示未完成，已保留上一個成功模型。'); if (lastRendered.current !== currentDisplay.current) setDisplay(lastRendered.current); }} onReady={() => {
@@ -477,7 +480,7 @@ export default function App() {
         {display && <section className="panel parts-panel" aria-label="零件選取與調整">
           <div className="panel-heading"><span className="eyebrow">SELECT & ADJUST</span><span className="tag">{display.model.parts.length} 件</span></div>
           <h2>零件</h2>
-          <ul className="part-picker" aria-label="零件清單">{display.model.parts.map(part => <li key={part.id}><button type="button" aria-pressed={selected.includes(part.id)} disabled={agentActive} className={selected.includes(part.id) ? 'selected' : ''} onClick={event => pick(part.id, event.shiftKey)}>
+          <ul className="part-picker" aria-label="零件清單">{display.model.parts.map(part => <li key={part.id}><button type="button" aria-pressed={selected.includes(part.id)} disabled={agentActive} className={selected.includes(part.id) ? 'selected' : ''} onClick={event => pick(display.lineage, part.id, event.shiftKey)}>
             <span className="color-chip" style={{ background: part.color }} /><span>{part.name}<small>{part.id}{part.parentId ? ` · 屬於 ${display.model.parts.find(p => p.id === part.parentId)?.name ?? part.parentId}` : ''}</small></span></button></li>)}</ul>
           {!selectedParts.length && <p className="small-muted">點選畫面中的零件或上方清單即可選取；Shift 可多選，Esc 取消選取。</p>}
           {adjustError && <p className="notice warning" role="alert">{adjustError}</p>}

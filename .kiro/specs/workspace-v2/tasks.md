@@ -122,7 +122,7 @@ All the rules for changing a workspace and undoing changes, as pure functions wi
 
 ## Task 4 — Scene: several objects in `SceneViewport`
 
-`[ ]`
+`[x]`
 
 `SceneViewport` renders a list of objects, each in its own group with its own transform. App still has one model and passes it as a one-object list, so nothing visible changes yet.
 

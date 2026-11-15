@@ -95,3 +95,16 @@ export function modelBounds(object: THREE.Object3D) {
   const sphere = bounds.getBoundingSphere(new THREE.Sphere());
   return { bounds, center: sphere.center, radius: Math.max(sphere.radius, 0.001) };
 }
+
+/** Union box and bounding sphere of several objects (their world boxes); used to frame the whole scene. */
+export function objectsBounds(objects: Iterable<THREE.Object3D>) {
+  const bounds = new THREE.Box3();
+  for (const object of objects) {
+    object.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(object);
+    if (!box.isEmpty()) bounds.union(box);
+  }
+  if (bounds.isEmpty()) throw new Error('模型沒有可展示的零件。');
+  const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+  return { bounds, center: sphere.center, radius: Math.max(sphere.radius, 0.001) };
+}
