@@ -7,7 +7,10 @@ import {
 } from '../../server/tools';
 import { ok } from '../../server/tools/helpers';
 
-const SIX_TOOLS = ['generate_design', 'edit_design', 'select_parts', 'get_project_state', 'explode_view', 'wear_on_arm'];
+const NINE_TOOLS = [
+  'generate_design', 'edit_design', 'select_parts', 'get_project_state', 'explode_view',
+  'set_active_object', 'set_transform', 'remove_object', 'wear_on_arm',
+];
 
 const fakeTool = (over: Partial<ToolDefinition<Record<string, never>>> = {}): ToolDefinition<Record<string, never>> => ({
   name: 'fake_tool',
@@ -62,9 +65,9 @@ describe('createToolRegistry', () => {
 });
 
 describe('default registry', () => {
-  it('holds exactly the six working tools, all project-scope server tools, in the order the model sees them', () => {
-    expect(listTools().map(tool => tool.name)).toEqual(SIX_TOOLS);
-    expect(listTools({ scope: 'project', side: 'server' }).map(tool => tool.name)).toEqual(SIX_TOOLS);
+  it('holds exactly the nine working tools, all project-scope server tools, in the order the model sees them', () => {
+    expect(listTools().map(tool => tool.name)).toEqual(NINE_TOOLS);
+    expect(listTools({ scope: 'project', side: 'server' }).map(tool => tool.name)).toEqual(NINE_TOOLS);
     expect(listTools({ scope: 'home' })).toEqual([]);
     expect(listTools({ side: 'client' })).toEqual([]);
   });
@@ -80,6 +83,9 @@ describe('default registry', () => {
       select_parts: '選取零件',
       get_project_state: '檢視目前狀態',
       explode_view: '爆炸圖',
+      set_active_object: '切換物件',
+      set_transform: '移動物件',
+      remove_object: '移除物件',
       wear_on_arm: '護臂試戴',
     });
   });
@@ -87,7 +93,7 @@ describe('default registry', () => {
   it('refuses to register an existing tool name again', () => {
     expect(() => defineTool(fakeTool({ name: 'generate_design' }))).toThrow(/generate_design/);
     expect(getTool('generate_design')).toBe(generateDesign);
-    expect(listTools()).toHaveLength(SIX_TOOLS.length);
+    expect(listTools()).toHaveLength(NINE_TOOLS.length);
   });
 
   it('gives every tool a description, a strict args schema and declared effects', () => {
@@ -101,6 +107,9 @@ describe('default registry', () => {
       select_parts: 'writes-scene',
       get_project_state: 'read-only',
       explode_view: 'writes-scene',
+      set_active_object: 'writes-scene',
+      set_transform: 'writes-scene',
+      remove_object: 'writes-scene',
       wear_on_arm: 'uses-camera',
     });
   });
@@ -110,10 +119,13 @@ describe('argsShapeText', () => {
   it('renders each tool argument with its type', () => {
     const shape = (name: string) => argsShapeText(getTool(name)!.args);
     expect(shape('generate_design')).toBe('prompt: string');
-    expect(shape('edit_design')).toBe('instruction: string');
-    expect(shape('select_parts')).toBe('partIds: string[]');
-    expect(shape('get_project_state')).toBe('');
-    expect(shape('explode_view')).toBe('amount: number');
+    expect(shape('edit_design')).toBe('instruction: string, objectId?: string | null');
+    expect(shape('select_parts')).toBe('partIds: string[], objectId?: string | null');
+    expect(shape('get_project_state')).toBe('objectId?: string | null');
+    expect(shape('explode_view')).toBe('amount: number, objectId?: string | null');
+    expect(shape('set_active_object')).toBe('objectId: string');
+    expect(shape('set_transform')).toBe('objectId: string, position?: object | null, rotation?: object | null');
+    expect(shape('remove_object')).toBe('objectId: string');
     expect(shape('wear_on_arm')).toBe('enabled: boolean');
   });
 
@@ -126,10 +138,10 @@ describe('generated tool list in AGENT_INSTRUCTIONS', () => {
   const section = AGENT_INSTRUCTIONS.split('Available tools:\n')[1]!.split('\nRules:')[0]!;
   const lines = section.split('\n').filter(line => line.trim());
 
-  it('lists exactly the six tools, in registration order, as `- name(args): description`', () => {
+  it('lists exactly the nine tools, in registration order, as `- name(args): description`', () => {
     expect(lines).toEqual(listTools({ scope: 'project', side: 'server' })
       .map(tool => `- ${tool.name}(${argsShapeText(tool.args)}): ${tool.description}`));
-    expect(lines.map(line => /^- (\w+)\(/.exec(line)![1])).toEqual(SIX_TOOLS);
+    expect(lines.map(line => /^- (\w+)\(/.exec(line)![1])).toEqual(NINE_TOOLS);
   });
 
   it('tells the model that wear_on_arm shows a stand-in cuff, not the user design', () => {
@@ -138,6 +150,9 @@ describe('generated tool list in AGENT_INSTRUCTIONS', () => {
     expect(line).toContain("not the user's design");
   });
 
+  it('has one line per tool, nine in all', () => {
+    expect(lines).toHaveLength(9);
+  });
   it('does not mention tools that are not registered', () => {
     expect(AGENT_INSTRUCTIONS).not.toContain('estimate_weight_cost');
     expect(AGENT_INSTRUCTIONS).not.toContain('check_feasibility');

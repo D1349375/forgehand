@@ -1,19 +1,19 @@
 import { z } from 'zod';
 import { PartIdSchema, type SelectPartsDetail, type StateChange } from '../../shared/agent';
-import { checkedChange, fail, isToolResult, ok, resolveTarget, switchTo } from './helpers';
+import { checkedChange, fail, isToolResult, ok, OptionalObjectIdSchema, resolveTarget, switchTo } from './helpers';
 import { defineTool } from './registry';
 
 export const selectParts = defineTool({
   name: 'select_parts',
   label: '選取零件',
   category: 'design',
-  description: 'sets the part selection on the active object. Returns NO_MODEL if the workspace is empty.',
-  args: z.strictObject({ partIds: z.array(PartIdSchema).max(64) }),
+  description: 'sets the part selection on an object (objectId, default: the active object) and makes it active. Returns UNKNOWN_OBJECT for an unknown objectId and NO_MODEL if the workspace is empty.',
+  args: z.strictObject({ partIds: z.array(PartIdSchema).max(64), objectId: OptionalObjectIdSchema }),
   side: 'server',
   scope: 'project',
   effects: 'writes-scene',
-  async run({ partIds }, { state }) {
-    const target = resolveTarget(state, 'select_parts');
+  async run({ partIds, objectId }, { state }) {
+    const target = resolveTarget(state, 'select_parts', objectId);
     if (isToolResult(target)) return target;
     const ids = new Set(target.model.parts.map(part => part.id));
     for (const id of partIds) {

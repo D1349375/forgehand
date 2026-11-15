@@ -2,11 +2,11 @@ import { z } from 'zod';
 import type { EditDesignDetail, StateChange } from '../../shared/agent';
 import { applyEditPlan, describeChanges, EditError, validateEditPlan, type EditPlan } from '../../shared/edit';
 import { editTask } from '../provider';
-import { checkedChange, fail, isToolResult, ok, requireRun, resolveTarget, switchTo } from './helpers';
+import { checkedChange, fail, isToolResult, ok, OptionalObjectIdSchema, requireRun, resolveTarget, switchTo } from './helpers';
 import { defineTool } from './registry';
 
 /**
- * Applies a text edit instruction to the active object. Reuses `editTask` +
+ * Applies a text edit instruction to the target object (`objectId`, default the active one). Reuses `editTask` +
  * `applyEditPlan`. clarify/unsupported become `ok:false` with no state change; a
  * local `EditError` (the plan does not apply) becomes a `ToolError`. An
  * abort/GenerationError from `provider.run` propagates and ends the run.
@@ -15,13 +15,13 @@ export const editDesign = defineTool({
   name: 'edit_design',
   label: '修改設計',
   category: 'design',
-  description: 'applies a text edit instruction to the active object. Returns applied/clarify/unsupported. If the workspace is empty, returns NO_MODEL.',
-  args: z.strictObject({ instruction: z.string().trim().min(1).max(4000) }),
+  description: 'applies a text edit instruction to an object (objectId, default: the active object) and makes it active. Returns applied/clarify/unsupported. Returns UNKNOWN_OBJECT for an unknown objectId and NO_MODEL if the workspace is empty.',
+  args: z.strictObject({ instruction: z.string().trim().min(1).max(4000), objectId: OptionalObjectIdSchema }),
   side: 'server',
   scope: 'project',
   effects: 'writes-scene',
-  async run({ instruction }, { state, provider }, signal) {
-    const target = resolveTarget(state, 'edit_design');
+  async run({ instruction, objectId }, { state, provider }, signal) {
+    const target = resolveTarget(state, 'edit_design', objectId);
     if (isToolResult(target)) return target;
     const run = requireRun(provider);
     const { selection } = state.workspace;

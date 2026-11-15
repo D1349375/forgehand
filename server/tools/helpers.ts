@@ -1,6 +1,6 @@
 import type { StateChange, ToolErrorDetail, ToolResult } from '../../shared/agent';
 import {
-  activeObject, applyWorkspaceChange, findObject, WorkspaceError, type SceneObject,
+  activeObject, applyWorkspaceChange, findObject, ObjectIdSchema, WorkspaceError, type SceneObject,
 } from '../../shared/workspace';
 import type { AgentWorkingState } from '../agent-tools';
 import { GenerationError, type ModelProvider } from '../provider';
@@ -8,6 +8,12 @@ import { GenerationError, type ModelProvider } from '../provider';
 /** Result helpers shared by every tool. `server/agent-tools.ts` re-exports them. */
 
 export const NO_MODEL_MESSAGE = '目前沒有模型，請先生成設計。';
+
+/**
+ * The optional `objectId` argument of the tools that act on one object. Models
+ * often send `null` for "not given", so null and absent both mean the active object.
+ */
+export const OptionalObjectIdSchema = ObjectIdSchema.nullable().optional();
 
 export function ok(tool: string, summary: string, detail: unknown, stateChange: ToolResult['stateChange'] = null): ToolResult {
   return { tool, ok: true, summary, detail, stateChange };

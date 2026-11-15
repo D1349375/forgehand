@@ -1,19 +1,19 @@
 import { z } from 'zod';
 import type { ExplodeViewDetail, StateChange } from '../../shared/agent';
-import { checkedChange, isToolResult, ok, resolveTarget, switchTo } from './helpers';
+import { checkedChange, isToolResult, ok, OptionalObjectIdSchema, resolveTarget, switchTo } from './helpers';
 import { defineTool } from './registry';
 
 export const explodeView = defineTool({
   name: 'explode_view',
   label: '爆炸圖',
   category: 'view',
-  description: 'sets the explode amount (0–1) of the active object. Display state only; the browser computes layout. Returns NO_MODEL if the workspace is empty.',
-  args: z.strictObject({ amount: z.number().min(0).max(1) }),
+  description: 'sets the explode amount (0–1) of an object (objectId, default: the active object) and makes it active. Display state only; the browser computes layout. Returns UNKNOWN_OBJECT for an unknown objectId and NO_MODEL if the workspace is empty.',
+  args: z.strictObject({ amount: z.number().min(0).max(1), objectId: OptionalObjectIdSchema }),
   side: 'server',
   scope: 'project',
   effects: 'writes-scene',
-  async run({ amount }, { state }) {
-    const target = resolveTarget(state, 'explode_view');
+  async run({ amount, objectId }, { state }) {
+    const target = resolveTarget(state, 'explode_view', objectId);
     if (isToolResult(target)) return target;
     const change: StateChange = {
       activeObjectId: switchTo(state, target), object: null, selection: null, explode: amount, tryOn: null,
