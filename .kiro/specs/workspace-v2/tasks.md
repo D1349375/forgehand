@@ -357,7 +357,7 @@ A panel in the control column to switch, rename, delete and move objects.
 
 ## Task 10 — Workspace e2e and the full suite
 
-`[ ]`
+`[x]`
 
 One Playwright spec that checks the multi-object behaviour end to end, then the full suite.
 
