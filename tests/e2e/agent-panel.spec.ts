@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
-import { serializeSseEvent, type StateChange, type ToolResult } from '../../shared/agent';
+import { serializeSseEvent, type LegacyStateChange, type LegacyToolResult } from '../../shared/agent';
 import { demoModel } from '../../shared/demo';
 import { validateModel } from '../../shared/model';
 
@@ -50,12 +50,12 @@ test('代理串流更新模型、進度與回覆，並可復原', async ({ page 
   const note = '正在規劃手環外形。';
   const summary = '已建立「測試手環」，共 2 個零件。';
   const reply = '已為你生成測試手環，並把爆炸圖拉開一半。';
-  const result: ToolResult = {
+  const result: LegacyToolResult = {
     tool: 'generate_design', ok: true, summary,
     detail: { source: 'claude', providerModel: 'test-double', status: 'ready' },
     stateChange: { model: null, selection: null, explode: 0.5, tryOn: null },
   };
-  const state: StateChange = {
+  const state: LegacyStateChange = {
     model: { kind: 'generated', model: testModel, source: 'claude', providerModel: 'test-double' },
     selection: null, explode: 0.5, tryOn: null,
   };

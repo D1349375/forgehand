@@ -11,6 +11,7 @@ const SIX_TOOLS = ['generate_design', 'edit_design', 'select_parts', 'get_projec
 
 const fakeTool = (over: Partial<ToolDefinition<Record<string, never>>> = {}): ToolDefinition<Record<string, never>> => ({
   name: 'fake_tool',
+  label: '測試工具',
   category: 'test',
   description: 'a fake tool.',
   args: z.strictObject({}),
@@ -38,6 +39,12 @@ describe('createToolRegistry', () => {
     expect(registry.listTools()).toHaveLength(1);
   });
 
+  it.each([['an empty label', ''], ['a label of 41 characters', 'x'.repeat(41)]])('rejects %s', (_name, label) => {
+    const registry = createToolRegistry();
+    expect(() => registry.defineTool(fakeTool({ name: 'bad_label', label }))).toThrow(/bad_label/);
+    expect(registry.getTool('bad_label')).toBeUndefined();
+  });
+
   it('lists tools in registration order and filters by scope and side', () => {
     const registry = createToolRegistry();
     registry.defineTool(fakeTool({ name: 'project_server', scope: 'project', side: 'server' }));
@@ -60,6 +67,21 @@ describe('default registry', () => {
     expect(listTools({ scope: 'project', side: 'server' }).map(tool => tool.name)).toEqual(SIX_TOOLS);
     expect(listTools({ scope: 'home' })).toEqual([]);
     expect(listTools({ side: 'client' })).toEqual([]);
+  });
+
+  it('gives every tool a Traditional Chinese label of 1 to 40 characters', () => {
+    for (const tool of listTools()) {
+      expect(tool.label.length, tool.name).toBeGreaterThanOrEqual(1);
+      expect(tool.label.length, tool.name).toBeLessThanOrEqual(40);
+    }
+    expect(Object.fromEntries(listTools().map(tool => [tool.name, tool.label]))).toEqual({
+      generate_design: '生成設計',
+      edit_design: '修改設計',
+      select_parts: '選取零件',
+      get_project_state: '檢視目前狀態',
+      explode_view: '爆炸圖',
+      wear_on_arm: '護臂試戴',
+    });
   });
 
   it('refuses to register an existing tool name again', () => {
@@ -124,6 +146,6 @@ describe('generated tool list in AGENT_INSTRUCTIONS', () => {
   it('explains the argsJson convention and keeps the existing rules', () => {
     expect(AGENT_INSTRUCTIONS).toContain('argsJson');
     expect(AGENT_INSTRUCTIONS).toContain('Rules:\n- Use real tool results.');
-    expect(AGENT_INSTRUCTIONS).toContain('If the scene is empty (no model), only generate_design and get_project_state will work');
+    expect(AGENT_INSTRUCTIONS).toContain('If the workspace is empty, only generate_design and get_project_state work; other tools return NO_MODEL.');
   });
 });

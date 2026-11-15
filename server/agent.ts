@@ -1,12 +1,12 @@
 import {
-  agentJsonSchema, serializeSseEvent, validateAgentStep,
+  agentJsonSchema, UNKNOWN_TOOL_LABEL, validateAgentStep,
   type AgentEventName, type AgentRequest, type AgentStep, type AgentTurn, type ToolResult,
 } from '../shared/agent';
-import { validateModel } from '../shared/model';
+import { activeObject, applyWorkspaceChange, MAX_OBJECTS } from '../shared/workspace';
 import { GenerationError, type ModelProvider, type ModelTask } from './provider';
 import { MODEL_INSTRUCTIONS } from './provider';
 import { runTool, type AgentWorkingState } from './agent-tools';
-import { argsShapeText, listTools } from './tools';
+import { argsShapeText, getTool, listTools } from './tools';
 
 /** Sanitized message for a run that hit its total time limit (also used by the route's final bound). */
 export const AGENT_TIMEOUT_MESSAGE = '這次請求已逾時，請稍後重試或簡化任務。';
@@ -27,18 +27,18 @@ interface Round {
 export async function runAgent(
   provider: ModelProvider,
   req: AgentRequest,
-  options: { maxRounds: number; totalTimeoutMs: number },
+  options: { maxRounds: number; totalTimeoutMs: number; newObjectId?: () => string; now?: () => string },
   emit: (name: AgentEventName, data: unknown) => void,
   clientSignal: AbortSignal,
 ): Promise<void> {
-  const { maxRounds, totalTimeoutMs } = options;
+  const { maxRounds, totalTimeoutMs, newObjectId, now } = options;
   const timeoutSignal = AbortSignal.timeout(totalTimeoutMs);
   const runSignal = AbortSignal.any([clientSignal, timeoutSignal]);
 
+  // `req.workspace` was validated at the route; the loop only ever replaces it
+  // with the result of `applyWorkspaceChange`.
   const state: AgentWorkingState = {
-    model: req.model === null ? null : validateModel(req.model),
-    selection: req.model === null ? [] : req.selectedPartIds.filter(id => req.model!.parts.some(part => part.id === id)),
-    explode: req.explode,
+    workspace: req.workspace,
     tryOn: req.tryOn,
     cameraOn: req.cameraOn,
   };
@@ -62,24 +62,17 @@ export async function runAgent(
       emit('status', { note: step.note });
 
       for (const call of step.calls) {
-        emit('tool', { tool: call.tool, argsJson: call.argsJson });
+        emit('tool', { tool: call.tool, label: getTool(call.tool)?.label ?? UNKNOWN_TOOL_LABEL, argsJson: call.argsJson });
         // runTool returns a ToolResult for local failures (bad args, NO_MODEL,
         // EditError); an abort/GenerationError propagates to the outer try-catch.
-        const result = await runTool(call, state, provider, runSignal);
+        const result = await runTool(call, state, provider, runSignal, { newObjectId, now });
         // Strip the big model payload: the result event carries only the compact
         // summary+detail; the state event carries the full model exactly once.
-        emit('result', stripModel(result));
+        emit('result', stripModels(result));
         if (result.stateChange) {
           // Apply to the working copy so subsequent calls in this round see the change.
-          if (result.stateChange.model) {
-            state.model = result.stateChange.model.model;
-          }
-          if (result.stateChange.selection !== null) {
-            state.selection = result.stateChange.selection;
-          }
-          if (result.stateChange.explode !== null) {
-            state.explode = result.stateChange.explode;
-          }
+          // Tools dry-run their change (checkedChange), so this does not throw.
+          state.workspace = applyWorkspaceChange(state.workspace, result.stateChange).after;
           if (result.stateChange.tryOn !== null) {
             state.tryOn = result.stateChange.tryOn;
           }
@@ -149,14 +142,12 @@ async function getStep(provider: ModelProvider, task: ModelTask<AgentStep>, sign
  * Builds the `ModelTask<AgentStep>` for one round. The `input` contains: the
  * client-sent session `history` (last ≤10 prior turns), the in-run compact
  * `rounds` (call + {ok, summary, detail}), the user's `instruction`, and a
- * compact snapshot of the current working copy (parts summary, selection,
- * explode, tryOn). The model sees the current model only through the snapshot,
- * and the full model only when edit_design runs (inside editTask).
+ * compact snapshot of the current working copy (see `workspaceSnapshot`).
+ * The model sees a model only through the snapshot, and the full model only
+ * when edit_design runs (inside editTask).
  */
 function agentTask(history: AgentTurn[], rounds: Round[], state: AgentWorkingState, instruction: string): ModelTask<AgentStep> {
-  const snapshot = state.model === null
-    ? '目前沒有模型。'
-    : `目前模型：「${state.model.name}」，共 ${state.model.parts.length} 個零件：${state.model.parts.map(part => `${part.name}(${part.id}, ${part.primitive}, ${part.color})`).join('、')}。已選取：${state.selection.length ? state.selection.join('、') : '無'}。爆炸圖程度：${Math.round(state.explode * 100)}%。試戴：${state.tryOn ? '已開啟' : '關閉'}。`;
+  const snapshot = workspaceSnapshot(state);
 
   const historyText = history.length ? history.map(turn => `使用者：${turn.instruction}\n回覆：${turn.reply}`).join('\n\n') : '';
   const roundsText = rounds.length ? rounds.map((r, i) => {
@@ -181,10 +172,38 @@ function agentTask(history: AgentTurn[], rounds: Round[], state: AgentWorkingSta
   };
 }
 
-/** Strips the big model payload from a ToolResult so the result event is compact. */
-export function stripModel(result: ToolResult): ToolResult {
-  if (!result.stateChange || !result.stateChange.model) return result;
-  return { ...result, stateChange: { ...result.stateChange, model: null } };
+const number = (value: number) => String(Math.round(value * 1000) / 1000);
+const vectorText = ({ x, y, z }: { x: number; y: number; z: number }) => `(${number(x)}, ${number(y)}, ${number(z)})`;
+
+/**
+ * The per-round view of the working copy: every object (full id, name, part
+ * count, placement, which one is active) and the parts of the active object
+ * only. `get_project_state` shows another object's parts.
+ */
+export function workspaceSnapshot(state: AgentWorkingState): string {
+  const { workspace } = state;
+  if (workspace.objects.length === 0) return '工作區沒有物件。';
+  const lines = workspace.objects.map(object =>
+    `- ${object.id}「${object.model.name}」${object.model.parts.length} 個零件，位置 ${vectorText(object.transform.position)} m，角度 ${vectorText(object.transform.rotation)}°${object.id === workspace.activeObjectId ? '【目前物件】' : ''}`);
+  const active = activeObject(workspace);
+  const selected = active !== null && workspace.selection.objectId === active.id ? workspace.selection.partIds : [];
+  const activeText = active === null ? '' : `目前物件「${active.model.name}」的零件：${active.model.parts.map(part => `${part.name}(${part.id}, ${part.primitive}, ${part.color})`).join('、')}。已選取：${selected.length ? selected.join('、') : '無'}。爆炸圖程度：${Math.round(workspace.display.explode * 100)}%。`;
+  return [
+    `工作區共 ${workspace.objects.length} 個物件（上限 ${MAX_OBJECTS}）：`,
+    ...lines,
+    `${activeText}試戴：${state.tryOn ? '已開啟' : '關閉'}。`,
+  ].join('\n');
+}
+
+/**
+ * Strips the big payloads from a ToolResult so the `result` event is compact:
+ * an `add` or `model` object change becomes `null`. The `state` event carries
+ * the complete `SceneObject` or model exactly once.
+ */
+export function stripModels(result: ToolResult): ToolResult {
+  const op = result.stateChange?.object?.op;
+  if (!result.stateChange || (op !== 'add' && op !== 'model')) return result;
+  return { ...result, stateChange: { ...result.stateChange, object: null } };
 }
 
 // Generated from the registry, in registration order. Only project-scope server tools are listed;
@@ -213,7 +232,7 @@ Rules:
 - Return type='final' with a reply when the task is done. Return type='tool_calls' with one or more tool calls (and an optional short note for the user) when more work is needed.
 - All user-facing text (notes, final replies, and any Traditional-Chinese content) must be in Traditional Chinese (繁體中文).
 - If a tool returns ok:false, read its summary to understand why, and either try a different approach or ask the user for clarification in your final reply.
-- If the scene is empty (no model), only generate_design and get_project_state will work; other tools return NO_MODEL.
+- If the workspace is empty, only generate_design and get_project_state work; other tools return NO_MODEL.
 
 ${GEOMETRY_RULES}
 

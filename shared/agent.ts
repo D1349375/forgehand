@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { ModelSpecSchema, PartIdSchema, validateModel, type ModelSpec } from './model';
+import { ModelSpecSchema, PartIdSchema } from './model';
+import {
+  ObjectIdSchema, ObjectTransformSchema, WorkspaceChangeSchema, WorkspaceError, validateWorkspace,
+  type Workspace,
+} from './workspace';
 
 /**
  * Agent contract — the Zod authority shared by server and client, mirroring
@@ -37,24 +41,48 @@ export const AgentStepSchema = z.strictObject({
 
 export type ToolCall = z.infer<typeof ToolCallSchema>;
 
-// ----- ModelStateChange (carries everything commit() needs; sent in `state` only) -----
+// ----- Legacy: removed in workspace-v2 Task 8 -----
+// The browser still speaks the single-model contract until Task 8 moves it to the
+// workspace contract below. These exports keep their old content; only the names changed.
 
-export const ModelStateChangeSchema = z.strictObject({
+export const LegacyModelStateChangeSchema = z.strictObject({
   kind: z.enum(['generated', 'edited']),
   model: ModelSpecSchema,
   source: z.string().min(1).max(100),
   providerModel: z.string().min(1).max(100),
 });
 
-export type ModelStateChange = z.infer<typeof ModelStateChangeSchema>;
+export type LegacyModelStateChange = z.infer<typeof LegacyModelStateChangeSchema>;
+
+/** What a tool changed. Sent whole in the `state` event; the `result` event nulls `model`. */
+export const LegacyStateChangeSchema = z.strictObject({
+  model: LegacyModelStateChangeSchema.nullable(),
+  selection: z.array(partId).max(64).nullable(),
+  explode: z.number().min(0).max(1).nullable(),
+  tryOn: z.boolean().nullable(),
+});
+export type LegacyStateChange = z.infer<typeof LegacyStateChangeSchema>;
+
+export const LegacyToolResultSchema = z.strictObject({
+  tool: z.string().trim().min(1).max(64),
+  ok: z.boolean(),
+  summary: z.string().trim().min(1).max(1000),
+  detail: z.unknown().nullable(),
+  stateChange: LegacyStateChangeSchema.nullable(),
+});
+
+export type LegacyToolResult = z.infer<typeof LegacyToolResultSchema>;
+
+export const LegacyToolEventSchema = z.strictObject({ tool: z.string().min(1).max(64), argsJson: z.string() });
 
 // ----- ToolResult -----
 
-/** What a tool changed. Sent whole in the `state` event; the `result` event nulls `model`. */
+/**
+ * What a tool changed: a workspace change plus the try-on flag. Sent whole in
+ * the `state` event; the `result` event nulls an `add` or `model` object change.
+ */
 export const StateChangeSchema = z.strictObject({
-  model: ModelStateChangeSchema.nullable(),
-  selection: z.array(partId).max(64).nullable(),
-  explode: z.number().min(0).max(1).nullable(),
+  ...WorkspaceChangeSchema.shape,
   tryOn: z.boolean().nullable(),
 });
 export type StateChange = z.infer<typeof StateChangeSchema>;
@@ -76,10 +104,12 @@ export const GenerateDesignDetailSchema = z.strictObject({
   source: z.string().min(1).max(100),
   providerModel: z.string().min(1).max(100),
   status: z.enum(['ready', 'approximation', 'unsupported']),
+  objectId: ObjectIdSchema.nullable(), // set when the object was added
 });
 export type GenerateDesignDetail = z.infer<typeof GenerateDesignDetailSchema>;
 
 export const EditDesignDetailSchema = z.strictObject({
+  objectId: ObjectIdSchema,
   changes: z.strictObject({
     added: z.array(partId).max(64),
     updated: z.array(partId).max(64),
@@ -97,16 +127,46 @@ const PartSummarySchema = z.strictObject({
   parentId: partId.nullable(),
 });
 
-export const GetProjectStateDetailSchema = z.strictObject({
-  parts: z.array(PartSummarySchema).max(64),
+export const SelectPartsDetailSchema = z.strictObject({
+  objectId: ObjectIdSchema,
   selection: z.array(partId).max(64),
-  explode: z.number().min(0).max(1),
+});
+export type SelectPartsDetail = z.infer<typeof SelectPartsDetailSchema>;
+
+export const ObjectSummarySchema = z.strictObject({
+  id: ObjectIdSchema,
+  name: text,
+  partCount: z.number().int().nonnegative(),
+  position: ObjectTransformSchema.shape.position,
+  rotation: ObjectTransformSchema.shape.rotation,
+  active: z.boolean(),
+});
+export type ObjectSummary = z.infer<typeof ObjectSummarySchema>;
+
+export const GetProjectStateDetailSchema = z.strictObject({
+  objects: z.array(ObjectSummarySchema).max(8),
+  activeObjectId: ObjectIdSchema.nullable(),
+  // The object the read describes: the given or the active one. Null on an empty workspace.
+  target: z.strictObject({
+    objectId: ObjectIdSchema,
+    parts: z.array(PartSummarySchema).max(64),
+    selection: z.array(partId).max(64),
+    explode: z.number().min(0).max(1),
+  }).nullable(),
   tryOn: z.boolean(),
 });
 export type GetProjectStateDetail = z.infer<typeof GetProjectStateDetailSchema>;
 
-export const ExplodeViewDetailSchema = z.strictObject({ amount: z.number().min(0).max(1) });
+export const ExplodeViewDetailSchema = z.strictObject({ objectId: ObjectIdSchema, amount: z.number().min(0).max(1) });
 export type ExplodeViewDetail = z.infer<typeof ExplodeViewDetailSchema>;
+
+/** For `set_active_object`, `set_transform` and `remove_object` (Task 7). */
+export const ObjectToolDetailSchema = z.strictObject({
+  objectId: ObjectIdSchema,
+  activeObjectId: ObjectIdSchema.nullable(),
+  transform: ObjectTransformSchema.nullable(),
+});
+export type ObjectToolDetail = z.infer<typeof ObjectToolDetailSchema>;
 
 export const WearOnArmDetailSchema = z.strictObject({
   tryOn: z.boolean(),
@@ -149,6 +209,52 @@ export type AgentTurn = z.infer<typeof AgentTurnSchema>;
 export const AgentRequestSchema = z.strictObject({
   instruction: z.string().trim().min(1).max(4000),
   requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
+  // A missing key or an explicit `undefined` is a structural error (INVALID_REQUEST).
+  // Any other value is checked by `validateWorkspace` in `validateAgentRequest`.
+  workspace: z.unknown().refine(value => value !== undefined, { message: 'workspace 為必填。' }),
+  tryOn: z.boolean(),
+  cameraOn: z.boolean(),
+  history: z.array(AgentTurnSchema).max(10),
+});
+
+/** Distinguishes request-validation failures so the route can map them to HTTP codes. */
+export class AgentRequestError extends Error {
+  constructor(public code: 'INVALID_WORKSPACE', message: string) {
+    super(message);
+    this.name = 'AgentRequestError';
+  }
+}
+
+export interface AgentRequest {
+  instruction: string;
+  requestId: string;
+  workspace: Workspace;
+  tryOn: boolean;
+  cameraOn: boolean;
+  history: AgentTurn[];
+}
+
+/**
+ * Parses the request, then validates the workspace with `validateWorkspace`.
+ * A workspace failure throws `AgentRequestError('INVALID_WORKSPACE')` with a
+ * fixed message (no ids, no schema text); Zod throws for structural failures.
+ */
+export function validateAgentRequest(input: unknown): AgentRequest {
+  const raw = AgentRequestSchema.parse(input);
+  let workspace: Workspace;
+  try { workspace = validateWorkspace(raw.workspace); }
+  catch (error) {
+    if (error instanceof WorkspaceError) throw new AgentRequestError('INVALID_WORKSPACE', '目前工作區資料無效，無法處理這次請求。');
+    throw error;
+  }
+  return { ...raw, workspace };
+}
+
+// ----- Legacy: removed in workspace-v2 Task 8 -----
+
+export const LegacyAgentRequestSchema = z.strictObject({
+  instruction: z.string().trim().min(1).max(4000),
+  requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
   // A missing key or an explicit `undefined` is a structural error (INVALID_REQUEST);
   // only an explicit `null` means "no model". Any non-null value is validated later.
   model: z.union([
@@ -161,50 +267,6 @@ export const AgentRequestSchema = z.strictObject({
   cameraOn: z.boolean(),
   history: z.array(AgentTurnSchema).max(10),
 });
-
-/** Distinguishes request-validation failures so the route can map them to HTTP codes. */
-export class AgentRequestError extends Error {
-  constructor(public code: 'INVALID_MODEL' | 'INVALID_SELECTION', message: string) {
-    super(message);
-    this.name = 'AgentRequestError';
-  }
-}
-
-export interface AgentRequest {
-  instruction: string;
-  requestId: string;
-  model: ModelSpec | null;
-  selectedPartIds: string[];
-  explode: number;
-  tryOn: boolean;
-  cameraOn: boolean;
-  history: AgentTurn[];
-}
-
-/**
- * Parses the request and runs semantic checks: a null model must come with an
- * empty selection; a non-null model must be a valid `ModelSpec` whose parts
- * contain every selected id. Throws `AgentRequestError` for model/selection
- * failures and lets Zod throw for structural ones.
- */
-export function validateAgentRequest(input: unknown): AgentRequest {
-  const raw = AgentRequestSchema.parse(input);
-  if (raw.model === null) {
-    if (raw.selectedPartIds.length) throw new AgentRequestError('INVALID_SELECTION', '沒有模型時不可選取零件。');
-    return { ...raw, model: null };
-  }
-  let model: ModelSpec;
-  try { model = validateModel(raw.model); }
-  catch {
-    // Fixed sanitized message — never leak the Zod/semantic error detail.
-    throw new AgentRequestError('INVALID_MODEL', '目前模型資料無效，無法處理這次請求。');
-  }
-  const ids = new Set(model.parts.map(part => part.id));
-  for (const id of raw.selectedPartIds) {
-    if (!ids.has(id)) throw new AgentRequestError('INVALID_SELECTION', `選取的零件不在目前模型中：${id}`);
-  }
-  return { ...raw, model };
-}
 
 // ----- AgentStep validation -----
 
@@ -251,7 +313,8 @@ export const AGENT_EVENTS = ['status', 'tool', 'result', 'state', 'final', 'erro
 // Payloads of the simple events, so the client parses them with the same authority.
 // `result` uses ToolResultSchema and `state` uses StateChangeSchema.
 export const StatusEventSchema = z.strictObject({ note: z.string().nullable() });
-export const ToolEventSchema = z.strictObject({ tool: z.string().min(1).max(64), argsJson: z.string() });
+export const UNKNOWN_TOOL_LABEL = '其他步驟';
+export const ToolEventSchema = z.strictObject({ tool: z.string().min(1).max(64), label: z.string().min(1).max(40), argsJson: z.string() });
 export const FinalEventSchema = z.strictObject({ reply: z.string().min(1) });
 export const ErrorEventSchema = z.strictObject({ message: z.string().min(1) });
 export type AgentEventName = (typeof AGENT_EVENTS)[number];

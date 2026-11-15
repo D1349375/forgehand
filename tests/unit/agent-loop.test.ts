@@ -1,8 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
-import { runAgent, stripModel, AGENT_INSTRUCTIONS } from '../../server/agent';
+import { runAgent, stripModels, AGENT_INSTRUCTIONS } from '../../server/agent';
 import { GenerationError, type ModelProvider, type ModelTask } from '../../server/provider';
-import { validateAgentStep, type AgentRequest, type AgentEventName, type AgentStep } from '../../shared/agent';
+import {
+  validateAgentStep, ToolEventSchema, ToolResultSchema, StateChangeSchema, UNKNOWN_TOOL_LABEL,
+  type AgentRequest, type AgentEventName, type AgentStep, type ToolResult,
+} from '../../shared/agent';
+import { demoModel } from '../../shared/demo';
 import { type ModelSpec } from '../../shared/model';
+import { emptyWorkspace, SceneObjectSchema, type ObjectChange, type Workspace } from '../../shared/workspace';
+import { CREATED_AT, idCounter, sceneObject, workspaceOf } from './agent-fixtures';
 
 /**
  * Task 4 acceptance test: the server/agent.ts loop — multi-round, max-rounds
@@ -14,9 +20,7 @@ import { type ModelSpec } from '../../shared/model';
 function makeTestRequest(overrides: Partial<AgentRequest> = {}): AgentRequest {
   return {
     requestId: 'test-req',
-    model: null,
-    selectedPartIds: [],
-    explode: 0,
+    workspace: emptyWorkspace(),
     tryOn: false,
     cameraOn: false,
     history: [],
@@ -261,15 +265,15 @@ describe('server/agent.ts runAgent loop', () => {
       .rejects.toMatchObject({ name: 'GenerationError', code: 'INVALID_MODEL' });
   });
 
-  it('emits the tool event as { tool, argsJson } and records argsJson in the next round input', async () => {
+  it('emits the tool event as { tool, label, argsJson } and records argsJson in the next round input', async () => {
     const argsJson = '{"partIds":[]}';
     script
       .mockResolvedValueOnce({ type: 'tool_calls', note: 'x', reply: null, calls: [{ tool: 'select_parts', argsJson, reason: null }] })
       .mockResolvedValueOnce({ type: 'final', reply: 'ok', note: null, calls: null });
 
-    await runAgent(fakeProvider, makeTestRequest(), { maxRounds: 5, totalTimeoutMs: 60000 }, emit, abortController.signal);
+    await runAgent(fakeProvider, makeTestRequest({ workspace: workspaceOf(sceneObject('obj-1')) }), { maxRounds: 5, totalTimeoutMs: 60000 }, emit, abortController.signal);
 
-    expect(events.find(e => e.name === 'tool')!.data).toEqual({ tool: 'select_parts', argsJson });
+    expect(events.find(e => e.name === 'tool')!.data).toEqual({ tool: 'select_parts', label: '選取零件', argsJson });
     const round2 = vi.mocked(fakeProvider.run!).mock.calls[1]![0] as ModelTask<AgentStep>;
     expect(round2.input).toContain(`select_parts(${argsJson})`);
     expect(round2.input).not.toContain('undefined');
@@ -299,6 +303,117 @@ describe('server/agent.ts runAgent loop', () => {
     expect(round2.input).toContain('failed');
   });
 
+  it('labels every tool event with the tool label, and an unknown tool with 其他步驟', async () => {
+    const names = ['generate_design', 'edit_design', 'select_parts', 'get_project_state', 'explode_view', 'wear_on_arm', 'no_such_tool'];
+    script
+      .mockResolvedValueOnce({
+        type: 'tool_calls', note: null, reply: null,
+        calls: names.slice(0, 4).map(tool => ({ tool, argsJson: '{', reason: null })),
+      })
+      .mockResolvedValueOnce({
+        type: 'tool_calls', note: null, reply: null,
+        calls: names.slice(4).map(tool => ({ tool, argsJson: '{', reason: null })),
+      })
+      .mockResolvedValueOnce({ type: 'final', reply: 'ok', note: null, calls: null });
+
+    await runAgent(fakeProvider, makeTestRequest(), { maxRounds: 5, totalTimeoutMs: 60000 }, emit, abortController.signal);
+
+    const toolEvents = events.filter(e => e.name === 'tool').map(e => ToolEventSchema.parse(e.data));
+    expect(toolEvents.map(e => [e.tool, e.label])).toEqual([
+      ['generate_design', '生成設計'], ['edit_design', '修改設計'], ['select_parts', '選取零件'],
+      ['get_project_state', '檢視目前狀態'], ['explode_view', '爆炸圖'], ['wear_on_arm', '護臂試戴'],
+      ['no_such_tool', UNKNOWN_TOOL_LABEL],
+    ]);
+    expect(UNKNOWN_TOOL_LABEL).toBe('其他步驟');
+  });
+
+  describe('on a workspace', () => {
+    const readyDesign = () => ({ status: 'ready', explanation: '測試模型。', model: structuredClone(demoModel) });
+    const generate = { type: 'tool_calls', note: null, reply: null, calls: [{ tool: 'generate_design', argsJson: '{"prompt":"第二個"}', reason: null }] };
+    const final = { type: 'final', reply: '完成', note: null, calls: null };
+    const run = (workspace: Workspace) => runAgent(
+      fakeProvider, makeTestRequest({ workspace }),
+      { maxRounds: 5, totalTimeoutMs: 60000, newObjectId: idCounter('gen'), now: () => CREATED_AT },
+      emit, abortController.signal,
+    );
+    const inputOf = (call: number) => (vi.mocked(fakeProvider.run!).mock.calls[call]![0] as ModelTask<AgentStep>).input;
+    const twoObjects = () => workspaceOf(sceneObject('obj-1'), sceneObject('obj-2', { ...demoModel, name: '手環' }, 1));
+
+    it('sends the complete SceneObject once in the state event; the result event carries none', async () => {
+      script.mockResolvedValueOnce(generate).mockResolvedValueOnce(readyDesign()).mockResolvedValueOnce(final);
+
+      await run(workspaceOf(sceneObject('obj-1')));
+
+      const state = StateChangeSchema.parse(events.find(e => e.name === 'state')!.data);
+      if (state.object?.op !== 'add') throw new Error('expected an add change');
+      expect(SceneObjectSchema.parse(state.object.object)).toMatchObject({ id: 'gen-1', createdAt: CREATED_AT, edited: false });
+      expect(state.object.object.model).toEqual(demoModel);
+      const result = ToolResultSchema.parse(events.find(e => e.name === 'result')!.data);
+      expect(result.stateChange).toMatchObject({ object: null, activeObjectId: null });
+      expect(result.detail).toMatchObject({ objectId: 'gen-1', status: 'ready' });
+      expect(JSON.stringify(events.find(e => e.name === 'result')!.data)).not.toContain('"parts"');
+      expect(events.map(e => e.name)).toEqual(['status', 'tool', 'result', 'state', 'final', 'done']);
+    });
+
+    it('keeps the generated object in the working copy for the next round', async () => {
+      script.mockResolvedValueOnce(generate).mockResolvedValueOnce(readyDesign()).mockResolvedValueOnce(final);
+
+      await run(workspaceOf(sceneObject('obj-1')));
+
+      // Calls: agent round 1, the design task, agent round 2.
+      expect(inputOf(0)).toContain('工作區共 1 個物件（上限 8）：');
+      expect(inputOf(2)).toContain('工作區共 2 個物件（上限 8）：');
+      expect(inputOf(2)).toMatch(/- gen-1「.*」\d+ 個零件，位置 \([^)]*\) m，角度 \(0, 0, 0\)°【目前物件】/);
+      expect(inputOf(2)).not.toMatch(/- obj-1「[^\n]*【目前物件】/);
+    });
+
+    it('the snapshot lists every object and the parts of the active object only', async () => {
+      script.mockResolvedValueOnce(final);
+
+      await run(twoObjects());
+
+      const input = inputOf(0);
+      expect(input).toContain('- obj-1「' + demoModel.name + '」' + demoModel.parts.length + ' 個零件，位置 (0, 0, 0) m，角度 (0, 0, 0)°【目前物件】');
+      expect(input).toContain('- obj-2「手環」' + demoModel.parts.length + ' 個零件，位置 (1, 0, 0) m，角度 (0, 0, 0)°\n');
+      expect(input).toContain('目前物件「' + demoModel.name + '」的零件：');
+      expect(input).not.toContain('目前物件「手環」');
+      // The part list appears once: only the active object's parts.
+      expect(input.split('(housing, ').length).toBe(2);
+    });
+
+    it('applies a state change to the working copy so a later call in the round sees it', async () => {
+      script
+        .mockResolvedValueOnce({
+          type: 'tool_calls', note: null, reply: null,
+          calls: [
+            { tool: 'select_parts', argsJson: '{"partIds":["housing"]}', reason: null },
+            { tool: 'explode_view', argsJson: '{"amount":0.5}', reason: null },
+            { tool: 'get_project_state', argsJson: '{}', reason: null },
+          ],
+        })
+        .mockResolvedValueOnce(final);
+
+      await run(workspaceOf(sceneObject('obj-1')));
+
+      const results = events.filter(e => e.name === 'result').map(e => ToolResultSchema.parse(e.data));
+      expect(results[2]!.detail).toMatchObject({ target: { selection: ['housing'], explode: 0.5 } });
+      expect(inputOf(1)).toContain('已選取：housing。爆炸圖程度：50%。');
+      expect(events.filter(e => e.name === 'state')).toHaveLength(2);
+    });
+
+    it('reports OBJECT_LIMIT from generate_design at the limit without a design call', async () => {
+      const full = workspaceOf(...Array.from({ length: 8 }, (_, at) => sceneObject(`o${at}`, demoModel, at)));
+      script.mockResolvedValueOnce(generate).mockResolvedValueOnce(final);
+
+      await run(full);
+
+      expect(fakeProvider.run).toHaveBeenCalledTimes(2); // two agent rounds, no design task
+      const result = ToolResultSchema.parse(events.find(e => e.name === 'result')!.data);
+      expect(result).toMatchObject({ ok: false, detail: { code: 'OBJECT_LIMIT' }, stateChange: null });
+      expect(events.some(e => e.name === 'state')).toBe(false);
+    });
+  });
+
   it('fabrication guard: all tool results are real (from runTool)', async () => {
     // The loop calls runTool for every tool in step.calls; this test verifies
     // that the result event reflects the actual runTool return, not a fabricated
@@ -326,56 +441,38 @@ describe('server/agent.ts runAgent loop', () => {
     // ok:false (e.g. NO_MODEL), the event should reflect that too.
   });
 
-  it('stripModel removes model payload from stateChange', () => {
-    const model: ModelSpec = {
-      schemaVersion: '1.0',
-      name: 'Test',
-      summary: 'Test',
-      units: 'm',
-      assumptions: [],
-      parts: [{
-        id: 'p1',
-        name: 'Part1',
-        primitive: 'box',
-        position: { x: 0, y: 0, z: 0 },
-        rotation: { x: 0, y: 0, z: 0 },
-        dimensions: { x: 1, y: 1, z: 1 },
-        color: '#ff0000',
-        parentId: null,
-        role: 'exterior',
-        tubeRatio: 0.3,
-      }],
-    };
-    const result = {
-      tool: 'generate_design' as const,
-      ok: true,
-      summary: 'success',
-      detail: { message: 'ok' },
-      stateChange: { model: { kind: 'generated' as const, model, source: 'test', providerModel: 'test' }, selection: null, explode: null, tryOn: null },
-    };
+  describe('stripModels', () => {
+    const change = (object: ObjectChange | null): ToolResult => ({
+      tool: 'generate_design', ok: true, summary: 'success', detail: { message: 'ok' },
+      stateChange: { activeObjectId: null, object, selection: null, explode: null, tryOn: null },
+    });
 
-    const stripped = stripModel(result);
+    it.each([
+      ['add', { op: 'add' as const, object: sceneObject('x') }],
+      ['model', { op: 'model' as const, objectId: 'x', model: demoModel, source: 'test', providerModel: 'test' }],
+    ])('replaces a %s object change with null and keeps the rest', (_op, object) => {
+      const stripped = stripModels(change(object));
+      expect(stripped.stateChange!.object).toBeNull();
+      expect(stripped.stateChange).toMatchObject({ activeObjectId: null, selection: null, explode: null, tryOn: null });
+      expect(stripped.ok).toBe(true);
+      expect(stripped.summary).toBe('success');
+      expect(JSON.stringify(stripped)).not.toContain('"parts"');
+    });
 
-    expect(stripped.stateChange!.model).toBeNull();
-    expect(stripped.stateChange!.selection).toBeNull();
-    expect(stripped.ok).toBe(true);
-    expect(stripped.summary).toBe('success');
+    it.each([
+      ['transform', { op: 'transform' as const, objectId: 'x', transform: sceneObject('x').transform }],
+      ['remove', { op: 'remove' as const, objectId: 'x' }],
+      ['no object change', null],
+    ])('keeps a %s change as it is', (_op, object) => {
+      const result = change(object);
+      expect(stripModels(result)).toBe(result);
+    });
+
+    it('returns a result without a stateChange unchanged', () => {
+      const result = { tool: 'get_project_state', ok: false, summary: 'no model', detail: { error: 'NO_MODEL' }, stateChange: null };
+      expect(stripModels(result)).toEqual(result);
+    });
   });
-
-  it('stripModel returns unchanged result when no stateChange.model', () => {
-    const result = {
-      tool: 'get_project_state' as const,
-      ok: false,
-      summary: 'no model',
-      detail: { error: 'NO_MODEL' },
-      stateChange: null,
-    };
-
-    const stripped = stripModel(result);
-
-    expect(stripped).toEqual(result);
-  });
-
   it('AGENT_INSTRUCTIONS contains geometry rules and tool descriptions', () => {
     expect(AGENT_INSTRUCTIONS).toContain('generate_design');
     expect(AGENT_INSTRUCTIONS).toContain('edit_design');
@@ -388,13 +485,13 @@ describe('server/agent.ts runAgent loop', () => {
     expect(AGENT_INSTRUCTIONS).toContain('Each part has a stable');
     expect(AGENT_INSTRUCTIONS).toContain('Use realistic scale');
     expect(AGENT_INSTRUCTIONS).toContain('Traditional Chinese');
+    expect(AGENT_INSTRUCTIONS).toContain('- If the workspace is empty, only generate_design and get_project_state work; other tools return NO_MODEL.');
+    expect(AGENT_INSTRUCTIONS).not.toContain('If the scene is empty');
   });
 
-  it('agentTask includes history, rounds, and current state snapshot', async () => {
-    // This test is indirect: we verify that the task passed to provider.run
-    // contains the expected structure by inspecting the mock call args.
-    const rawStep = { type: 'final', reply: 'Done', note: null, calls: null };
-    script.mockResolvedValueOnce(rawStep);
+  it('agentTask includes history, rounds, and the workspace snapshot', async () => {
+    // Indirect: inspect the task passed to provider.run.
+    script.mockResolvedValueOnce({ type: 'final', reply: 'Done', note: null, calls: null });
 
     const model: ModelSpec = {
       schemaVersion: '1.0',
@@ -415,11 +512,9 @@ describe('server/agent.ts runAgent loop', () => {
         tubeRatio: 0.3,
       }],
     };
-
+    const workspace = workspaceOf(sceneObject('obj-1', model));
     const req = makeTestRequest({
-      model,
-      selectedPartIds: ['p1'],
-      explode: 0.5,
+      workspace: { ...workspace, selection: { objectId: 'obj-1', partIds: ['p1'] }, display: { explode: 0.5 } },
       tryOn: true,
       cameraOn: true,
       history: [{ instruction: '之前的指示', reply: '之前的回覆' }],
@@ -434,27 +529,23 @@ describe('server/agent.ts runAgent loop', () => {
     expect(taskArg.input).toContain('先前對話');
     expect(taskArg.input).toContain('之前的指示');
     expect(taskArg.input).toContain('之前的回覆');
-    expect(taskArg.input).toContain('目前狀態');
-    expect(taskArg.input).toContain('TestModel');
-    expect(taskArg.input).toContain('1 個零件');
+    expect(taskArg.input).toContain('目前狀態：工作區共 1 個物件（上限 8）：');
+    expect(taskArg.input).toContain('- obj-1「TestModel」1 個零件，位置 (0, 0, 0) m，角度 (0, 0, 0)°【目前物件】');
+    expect(taskArg.input).toContain('目前物件「TestModel」的零件：Part1(p1, box, #ff0000)');
     expect(taskArg.input).toContain('已選取：p1');
     expect(taskArg.input).toContain('爆炸圖程度：50%');
     expect(taskArg.input).toContain('試戴：已開啟');
     expect(taskArg.input).toContain('使用者指示：現在的指示');
   });
 
-  it('agentTask with no model shows "目前沒有模型" in snapshot', async () => {
-    const rawStep = { type: 'final', reply: 'Done', note: null, calls: null };
-    script.mockResolvedValueOnce(rawStep);
+  it('the snapshot of an empty workspace says so', async () => {
+    script.mockResolvedValueOnce({ type: 'final', reply: 'Done', note: null, calls: null });
 
-    const req = makeTestRequest({ instruction: 'test' });
-
-    await runAgent(fakeProvider, req, { maxRounds: 5, totalTimeoutMs: 60000 }, emit, abortController.signal);
+    await runAgent(fakeProvider, makeTestRequest({ instruction: 'test' }), { maxRounds: 5, totalTimeoutMs: 60000 }, emit, abortController.signal);
 
     const taskArg = vi.mocked(fakeProvider.run!).mock.calls[0][0] as ModelTask<AgentStep>;
-    expect(taskArg.input).toContain('目前沒有模型');
+    expect(taskArg.input).toContain('目前狀態：工作區沒有物件。');
   });
-
   it('state updates propagate across tool calls in one round', async () => {
     // This test verifies that the loop processes multiple tool calls in one round.
     // Since runTool is real and tools have complex dependencies, we use simple

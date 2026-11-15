@@ -1,6 +1,6 @@
 import {
-  ErrorEventSchema, FinalEventSchema, StatusEventSchema, ToolEventSchema, ToolResultSchema,
-  type ToolResult,
+  ErrorEventSchema, FinalEventSchema, StatusEventSchema, LegacyToolEventSchema, LegacyToolResultSchema,
+  type LegacyToolResult,
 } from '../../shared/agent';
 import type { SseFrame } from './sse';
 
@@ -12,7 +12,7 @@ import type { SseFrame } from './sse';
 export type AgentEvent =
   | { type: 'status'; note: string | null }
   | { type: 'tool'; tool: string }
-  | { type: 'result'; result: ToolResult }
+  | { type: 'result'; result: LegacyToolResult }
   | { type: 'state'; payload: unknown }
   | { type: 'final'; reply: string }
   | { type: 'error'; message: string }
@@ -30,11 +30,11 @@ export function parseAgentEvent(frame: SseFrame): AgentEvent | null {
       return parsed.success ? { type: 'status', note: parsed.data.note } : null;
     }
     case 'tool': {
-      const parsed = ToolEventSchema.safeParse(payload);
+      const parsed = LegacyToolEventSchema.safeParse(payload);
       return parsed.success ? { type: 'tool', tool: parsed.data.tool } : null;
     }
     case 'result': {
-      const parsed = ToolResultSchema.safeParse(payload);
+      const parsed = LegacyToolResultSchema.safeParse(payload);
       return parsed.success ? { type: 'result', result: parsed.data } : null;
     }
     case 'state':
