@@ -45,7 +45,7 @@ The e2e suite has twice tested an unrelated app listening on port 5173. Give it 
 
 ## Task 2 — `shared/bounds.ts` and `shared/workspace.ts` part 1: data, validation, placement
 
-`[ ]`
+`[x]`
 
 The workspace data model, its validation, and where a new object goes. Pure code in `shared/`, no UI.
 

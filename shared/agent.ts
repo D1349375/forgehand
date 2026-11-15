@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ModelSpecSchema, validateModel, type ModelSpec } from './model';
+import { ModelSpecSchema, PartIdSchema, validateModel, type ModelSpec } from './model';
 
 /**
  * Agent contract — the Zod authority shared by server and client, mirroring
@@ -12,9 +12,9 @@ import { ModelSpecSchema, validateModel, type ModelSpec } from './model';
  */
 
 const text = z.string().trim().min(1).max(500);
-const partId = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/);
+const partId = PartIdSchema;
 /** Part id format, shared with the tools that take part ids as arguments. */
-export const PartIdSchema = partId;
+export { PartIdSchema };
 const primitive = z.enum(['box', 'sphere', 'cylinder', 'cone', 'torus', 'tube']);
 
 // ----- AgentStep (model-facing) -----
