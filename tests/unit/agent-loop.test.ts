@@ -367,7 +367,35 @@ describe('server/agent.ts runAgent loop', () => {
       expect(inputOf(2)).not.toMatch(/- obj-1「[^\n]*【目前物件】/);
     });
 
-    it('the snapshot lists every object and the parts of the active object only', async () => {
+    it('generates an object, then edits it by the id from the result', async () => {
+      const design = { status: 'ready', explanation: '測試模型。', model: { ...structuredClone(demoModel), name: '新裝置' } };
+      const blue = { ...structuredClone(demoModel.parts.find(part => part.id === 'battery')!), color: '#2563eb' };
+      const edit = { type: 'tool_calls', note: null, reply: null, calls: [{ tool: 'edit_design', argsJson: '{"instruction":"電池改藍色","objectId":"gen-1"}', reason: null }] };
+      const plan = { status: 'applied', explanation: '電池已改成藍色。', operations: [{ op: 'upsert', partId: 'battery', part: blue }], name: null, summary: null, assumptions: null };
+      // Calls: agent round 1, the design task, agent round 2, the edit task, agent round 3.
+      script.mockResolvedValueOnce(generate).mockResolvedValueOnce(design).mockResolvedValueOnce(edit).mockResolvedValueOnce(plan).mockResolvedValueOnce(final);
+      await run(workspaceOf(sceneObject('obj-1')));
+      // The second round's snapshot lists the new id, so the model can name it.
+      expect(inputOf(2)).toMatch(/- gen-1「新裝置」\d+ 個零件/);
+      expect(inputOf(2)).toContain('已產生「新裝置」（物件 id：gen-1）。');
+      // The edit task got the new object's model, not obj-1's.
+      expect(inputOf(3)).toContain('"name":"新裝置"');
+      const results = events.filter(e => e.name === 'result').map(e => ToolResultSchema.parse(e.data));
+      expect(results.map(result => [result.tool, result.ok])).toEqual([['generate_design', true], ['edit_design', true]]);
+      expect(results[1]!.detail).toMatchObject({ objectId: 'gen-1' });
+      const states = events.filter(e => e.name === 'state').map(e => StateChangeSchema.parse(e.data));
+      expect(states).toHaveLength(2);
+      expect(states[1]).toMatchObject({ activeObjectId: null, object: { op: 'model', objectId: 'gen-1' }, selection: { objectId: 'gen-1', partIds: ['battery'] } });
+      expect(events.map(e => e.name).slice(-2)).toEqual(['final', 'done']);
+    });
+    it('switches the active object with set_active_object and the next snapshot shows it', async () => {
+      const switchStep = { type: 'tool_calls', note: null, reply: null, calls: [{ tool: 'set_active_object', argsJson: '{"objectId":"obj-2"}', reason: null }] };
+      script.mockResolvedValueOnce(switchStep).mockResolvedValueOnce(final);
+      await run(twoObjects());
+      expect(inputOf(1)).toMatch(/- obj-2「手環」[^\n]*【目前物件】/);
+      expect(inputOf(1)).toContain('目前物件「手環」的零件：');
+      expect(inputOf(1)).not.toMatch(/- obj-1「[^\n]*【目前物件】/);
+    });    it('the snapshot lists every object and the parts of the active object only', async () => {
       script.mockResolvedValueOnce(final);
 
       await run(twoObjects());
@@ -487,6 +515,17 @@ describe('server/agent.ts runAgent loop', () => {
     expect(AGENT_INSTRUCTIONS).toContain('Traditional Chinese');
     expect(AGENT_INSTRUCTIONS).toContain('- If the workspace is empty, only generate_design and get_project_state work; other tools return NO_MODEL.');
     expect(AGENT_INSTRUCTIONS).not.toContain('If the scene is empty');
+    // Task 7 rules (design 7.3), each line in full.
+    for (const line of [
+      "- The workspace holds up to 8 objects. generate_design adds a new object beside the others and makes it active; it never replaces an existing object. Its result gives the new object's id.",
+      '- Refer to objects by id. Tools that change the scene take an optional objectId (default: the active object) and make that object active first. get_project_state(objectId) reads any object without changing the active one.',
+      '- If it is unclear which object the user means, ask in your final reply instead of guessing.',
+      '- Call remove_object only when the user asks to remove an object.',
+      '- set_transform moves or rotates a whole object (position in metres, rotation in degrees). It never changes size; change sizes with edit_design.',
+    ]) expect(AGENT_INSTRUCTIONS).toContain(line);
+    // Every existing rule stays.
+    expect(AGENT_INSTRUCTIONS).toContain('- Prefer local tools (select_parts, explode_view, get_project_state) when they suffice.');
+    for (const name of ['set_active_object', 'set_transform', 'remove_object']) expect(AGENT_INSTRUCTIONS).toContain('- ' + name + '(');
   });
 
   it('agentTask includes history, rounds, and the workspace snapshot', async () => {

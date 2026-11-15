@@ -249,7 +249,7 @@ The agent request carries the workspace, `state` events carry workspace changes,
 
 ## Task 7 — Agent tools: `objectId` and three object tools
 
-`[ ]`
+`[x]`
 
 The agent can target any object by id, switch the active object, move objects and remove them.
 

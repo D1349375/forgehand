@@ -233,6 +233,11 @@ Rules:
 - All user-facing text (notes, final replies, and any Traditional-Chinese content) must be in Traditional Chinese (繁體中文).
 - If a tool returns ok:false, read its summary to understand why, and either try a different approach or ask the user for clarification in your final reply.
 - If the workspace is empty, only generate_design and get_project_state work; other tools return NO_MODEL.
+- The workspace holds up to 8 objects. generate_design adds a new object beside the others and makes it active; it never replaces an existing object. Its result gives the new object's id.
+- Refer to objects by id. Tools that change the scene take an optional objectId (default: the active object) and make that object active first. get_project_state(objectId) reads any object without changing the active one.
+- If it is unclear which object the user means, ask in your final reply instead of guessing.
+- Call remove_object only when the user asks to remove an object.
+- set_transform moves or rotates a whole object (position in metres, rotation in degrees). It never changes size; change sizes with edit_design.
 
 ${GEOMETRY_RULES}
 

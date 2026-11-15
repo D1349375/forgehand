@@ -207,7 +207,7 @@ describe('agent local tools', () => {
     it('explains the failure in Traditional Chinese with the expected shape, never a Zod dump', async () => {
       const missing = await runTool(call('explode_view', {}), withModel(), provider, signal);
       expect(missing.summary).toContain('缺少參數 amount');
-      expect(missing.summary).toContain('explode_view(amount: number)');
+      expect(missing.summary).toContain('explode_view(amount: number, objectId?: string | null)');
 
       const wrongType = await runTool(call('explode_view', { amount: 'lots' }), withModel(), provider, signal);
       expect(wrongType.summary).toContain('參數 amount 的值不正確');
@@ -216,7 +216,7 @@ describe('agent local tools', () => {
 
       const badJson = await runTool(rawCall('select_parts', '{oops'), withModel(), provider, signal);
       expect(badJson.summary).toContain('不是有效的 JSON');
-      expect(badJson.summary).toContain('select_parts(partIds: string[])');
+      expect(badJson.summary).toContain('select_parts(partIds: string[], objectId?: string | null)');
     });
   });
 
