@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { demoModel } from '../shared/demo';
 import { applyEditPlan, describeChanges, editConflicts, EditError, EditResultSchema, validateEditPlan, type EditPlan, type EditResult } from '../shared/edit';
 import { validateGenerationResult, validateModel, type GenerationResult, type ModelSpec, type Part } from '../shared/model';
-import { ZERO_TRANSFORM } from '../shared/workspace';
+import {
+  MAX_OBJECTS, WorkspaceError, activeObject, addObject, createObject, emptyWorkspace, findObject, replaceModel, selectParts,
+  setExplode as setWorkspaceExplode, type SceneObject, type Workspace,
+} from '../shared/workspace';
 import { SceneViewport, type SceneHandle, type TransformMode, type Vector } from './scene/SceneViewport';
 import { useArmTracking, type ArmTrackingStatus } from './try-on/useArmTracking';
 import type { AgentTurn } from '../shared/agent';
@@ -10,14 +13,15 @@ import { AgentPanel } from './agent/AgentPanel';
 import { HISTORY_TURN_LIMIT } from './agent/request';
 import type { DisplayModel } from './agent/types';
 import { useAgentRun } from './agent/useAgentRun';
+import { canApplyEdit, pickPart } from './workspace/app-rules';
+import { useWorkspace } from './workspace/useWorkspace';
 
 type ServiceStatus = { configured: boolean; provider: string; model: string; reason?: string };
 const providerLabel = (provider?: string) => provider === 'codex' ? 'Codex CLI' : provider === 'claude' ? 'Claude Code CLI' : 'OpenAI API';
 type Pending = { result: GenerationResult; startedAt: number };
-/** `lineage` is the object the AI answer was made for; undo/redo may leave it while the dialog is open. */
-type Conflict = { result: EditResult; parts: Part[]; startedAt: number; lineage: string };
+/** `objectId` is the object the AI answer was made for; undo/redo may leave it while the dialog is open. */
+type Conflict = { result: EditResult; parts: Part[]; startedAt: number; objectId: string };
 type Busy = null | 'generate' | 'edit';
-const HISTORY_LIMIT = 50;
 const MM = 1000;
 const armStatusText: Record<ArmTrackingStatus, string> = {
   off: '正在開啟攝影機。',
@@ -27,6 +31,12 @@ const armStatusText: Record<ArmTrackingStatus, string> = {
   'load-error': '無法載入手部追蹤模型。請確認網路連線，結束後重新開啟試戴。',
   'track-error': '視訊追蹤已中斷。請結束後重新開啟試戴。',
 };
+
+/** TEMPORARY (workspace-v2 Task 8): the active object as the single `DisplayModel` the agent client still expects. */
+const toDisplayModel = (object: SceneObject): DisplayModel => ({
+  model: object.model, source: object.source, providerModel: object.providerModel,
+  requestId: 'workspace', startedAt: null, lineage: object.id, edited: object.edited,
+});
 
 declare global { interface Window { __forgehandScene?: SceneHandle | null } }
 
@@ -55,12 +65,14 @@ export default function App() {
   const [instruction, setInstruction] = useState('');
   const [mode, setMode] = useState<'edit' | 'create'>('create');
   const [service, setService] = useState<ServiceStatus | null>(null);
-  const [display, setDisplay] = useState<DisplayModel | null>(null);
-  const [history, setHistory] = useState<{ past: DisplayModel[]; future: DisplayModel[] }>({ past: [], future: [] });
-  const [selected, setSelected] = useState<string[]>([]);
+  const store = useWorkspace();
+  const { workspace } = store;
+  const active = activeObject(workspace);
+  const selected = workspace.selection.partIds;
+  /** Exploded-view amount (0–1). Display state only: part of the workspace, never an undo step. */
+  const explode = workspace.display.explode;
+  const atLimit = workspace.objects.length >= MAX_OBJECTS;
   const [transformMode, setTransformMode] = useState<TransformMode>(null);
-  /** Exploded-view amount (0–1). Display state only: never part of the model or undo history. */
-  const [explode, setExplode] = useState(0);
   const [pending, setPending] = useState<Pending | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
@@ -87,18 +99,23 @@ export default function App() {
   const latest = useRef(0);
   const requestStarted = useRef(0);
   const controller = useRef<AbortController | null>(null);
-  const currentDisplay = useRef(display);
-  const lastRendered = useRef<DisplayModel | null>(null);
-  currentDisplay.current = display;
+  /** The workspace as of the last completed render; the fallback when a later build fails. */
+  const lastRendered = useRef<Workspace | null>(null);
+  /** When the request behind the latest generate, edit or agent commit started, for the active object's render time. */
+  const timingRef = useRef<{ objectId: string; startedAt: number } | null>(null);
   const lastFailed = useRef<'generate' | 'edit'>('generate');
   /** The latest completed agent turns, newest last, sent as history so follow-ups have context. */
   const agentTurns = useRef<AgentTurn[]>([]);
   const agent = useAgentRun({
     commit: commitFromAgent,
-    setSelected,
+    setSelected: selectInActive,
     setExplode: setExplodeAmount,
     setTryingOn,
-    getSnapshot: () => ({ display: currentDisplay.current, selectedPartIds: selected, explode, tryOn: tryingOn, cameraOn: camera === 'on' }),
+    getSnapshot: () => {
+      const now = store.current();
+      const object = activeObject(now);
+      return { display: object ? toDisplayModel(object) : null, selectedPartIds: now.selection.partIds, explode: now.display.explode, tryOn: tryingOn, cameraOn: camera === 'on' };
+    },
     getTurns: () => agentTurns.current,
     pushTurn: turn => { agentTurns.current = [...agentTurns.current, turn].slice(-HISTORY_TURN_LIMIT); },
   });
@@ -129,39 +146,50 @@ export default function App() {
   // Exposed only to automated browsers so tests can click a specific part.
   useEffect(() => { if (navigator.webdriver) window.__forgehandScene = sceneRef.current; return () => { if (navigator.webdriver) window.__forgehandScene = null; }; }, []);
 
-  /** Every change to the displayed model goes through here so it can be undone. */
-  function commit(next: DisplayModel) {
-    const previous = currentDisplay.current;
-    if (previous) setHistory(state => ({ past: [...state.past, previous].slice(-HISTORY_LIMIT), future: [] }));
-    if (!previous || previous.lineage !== next.lineage) { setSelected([]); setTransformMode(null); setExplode(0); }
-    currentDisplay.current = next;
-    setDisplay(next);
+  // Another object becoming active ends any drag mode that belonged to the old one.
+  useEffect(() => { setTransformMode(null); }, [workspace.activeObjectId]);
+
+  /** Adds a new object and makes it active. An undo step, except the very first object. Returns false (with a notice) when it cannot be added. */
+  function addNewObject(input: { id?: string; model: unknown; source: string; providerModel: string; startedAt: number | null }): boolean {
+    const before = store.current();
+    try {
+      const object = createObject(before, { id: input.id ?? crypto.randomUUID(), model: input.model, source: input.source, providerModel: input.providerModel, createdAt: new Date().toISOString() });
+      store.dispatch({ type: 'commit', next: addObject(before, object) });
+      timingRef.current = input.startedAt === null ? null : { objectId: object.id, startedAt: input.startedAt };
+      return true;
+    } catch (cause) {
+      setError(cause instanceof WorkspaceError ? cause.message : '無法加入這個物件，目前工作區未變更。');
+      setMessage('目前工作區未新增物件，現有物件仍可操作。');
+      return false;
+    }
   }
-  function restore(target: DisplayModel, label: string) {
-    const sameObject = currentDisplay.current?.lineage === target.lineage;
-    const available = new Set(target.model.parts.map(part => part.id));
-    const kept = sameObject ? selected.filter(id => available.has(id)) : [];
-    setSelected(kept);
-    if (kept.length !== selected.length) setTransformMode(null);
-    currentDisplay.current = target;
-    setDisplay(target); setTiming(null); setAdjustError(''); setEditSummary(null);
+  /** After undo or redo: drop notices about the change that was just reverted. */
+  function afterRestore(before: Workspace, after: Workspace, label: string) {
+    if (after.selection.partIds.length !== before.selection.partIds.length) setTransformMode(null);
+    timingRef.current = null;
+    setTiming(null); setAdjustError(''); setEditSummary(null);
     setMessage(label);
   }
   function undo() {
     if (agentActive) return;
-    const current = currentDisplay.current;
-    const previous = history.past.at(-1);
-    if (!current || !previous) return;
-    setHistory(state => ({ past: state.past.slice(0, -1), future: [current, ...state.future].slice(0, HISTORY_LIMIT) }));
-    restore(previous, '已復原上一步。');
+    const before = store.current();
+    const after = store.dispatch({ type: 'undo' });
+    if (after !== before) afterRestore(before, after, '已復原上一步。');
   }
   function redo() {
     if (agentActive) return;
-    const current = currentDisplay.current;
-    const next = history.future[0];
-    if (!current || !next) return;
-    setHistory(state => ({ past: [...state.past, current].slice(-HISTORY_LIMIT), future: state.future.slice(1) }));
-    restore(next, '已重做。');
+    const before = store.current();
+    const after = store.dispatch({ type: 'redo' });
+    if (after !== before) afterRestore(before, after, '已重做。');
+  }
+  /** Selection is not an undo step. Selects `ids` in the active object; unknown ids are ignored. */
+  function selectInActive(ids: string[]) {
+    const before = store.current();
+    const object = activeObject(before);
+    if (!object) return;
+    const known = new Set(object.model.parts.map(part => part.id));
+    const next = selectParts(before, object.id, [...new Set(ids)].filter(id => known.has(id)));
+    store.dispatch({ type: 'replace', next });
   }
 
   async function startCamera(facingMode: 'environment' | 'user' = 'environment') {
@@ -215,7 +243,7 @@ export default function App() {
   function applyResult(result: GenerationResult, startedAt: number) {
     if (!result.design.model) return;
     setRenderError(''); setTiming(null); setEditSummary(null); setClarify('');
-    commit({ model: result.design.model, source: result.source, providerModel: result.model, requestId: result.requestId, startedAt, lineage: crypto.randomUUID(), edited: false });
+    if (!addNewObject({ model: result.design.model, source: result.source, providerModel: result.model, startedAt })) return;
     setMode('edit');
     setMessage('資料驗證完成，正在建立 3D 草案。');
   }
@@ -243,12 +271,13 @@ export default function App() {
       accept(body, requestId, startedAt);
     } catch (cause) {
       if (id !== latest.current) return;
-      const retained = currentDisplay.current ? (kind === 'edit' ? '目前模型未變更。' : '已保留上一個成功模型。') : '目前尚未建立模型。';
+      const hasObjects = store.current().objects.length > 0;
+      const retained = hasObjects ? (kind === 'edit' ? '目前模型未變更。' : '已保留上一個成功模型。') : '目前尚未建立模型。';
       setError(abort.signal.aborted ? `這次${kind === 'edit' ? '修改' : '生成'}已逾時，${retained}可重試或簡化描述。`
         : cause instanceof SyntaxError ? `模型服務回覆資料無法讀取，${retained}請重試。`
         : cause instanceof TypeError ? `無法連線到本機模型服務，${retained}請確認工作台仍在執行後重試。`
         : cause instanceof Error ? cause.message : '請求失敗，請重試。');
-      setMessage(currentDisplay.current ? `${kind === 'edit' ? '修改' : '生成'}未完成，目前模型仍可操作。` : '生成未完成，目前尚未建立模型。');
+      setMessage(hasObjects ? `${kind === 'edit' ? '修改' : '生成'}未完成，目前模型仍可操作。` : '生成未完成，目前尚未建立模型。');
     } finally { window.clearTimeout(timeout); if (id === latest.current) { setBusy(null); controller.current = null; } }
   }
 
@@ -267,20 +296,22 @@ export default function App() {
     });
   }
 
-  function applyEdit(plan: EditPlan, result: EditResult, startedAt: number, lineage: string) {
-    const target = currentDisplay.current;
-    if (!target) return;
-    if (target.lineage !== lineage) {
+  function applyEdit(plan: EditPlan, result: EditResult, startedAt: number, objectId: string) {
+    const before = store.current();
+    const check = canApplyEdit(before, objectId, 'conflict');
+    const target = check.ok ? findObject(before, objectId) : null;
+    if (!check.ok || !target) {
       setConflict(null);
-      setError('目前顯示的已是另一個物件，這次 AI 修改沒有套用。');
+      setError(check.ok ? '' : check.message);
       setMessage('修改未套用，目前模型仍可操作。');
       return;
     }
     try {
       const { model, changes } = applyEditPlan(target.model, plan);
       setRenderError(''); setTiming(null); setConflict(null);
-      commit({ ...target, model, source: result.source, providerModel: result.model, requestId: result.requestId, startedAt, edited: true });
-      setSelected([...changes.added, ...changes.updated]);
+      const edited = replaceModel(before, target.id, model, { source: result.source, providerModel: result.model });
+      store.dispatch({ type: 'commit', next: selectParts(edited, target.id, [...changes.added, ...changes.updated]), before });
+      timingRef.current = { objectId: target.id, startedAt };
       setEditSummary({ changes: describeChanges(target.model, model, changes), explanation: plan.explanation });
       setInstruction('');
       setMessage('修改已套用，可按「復原」回到上一步。');
@@ -293,10 +324,10 @@ export default function App() {
 
   async function edit() {
     if (agentActive) return;
-    const base = currentDisplay.current;
+    const base = activeObject(store.current());
     if (!base) { setError('請先生成或載入一個模型。'); return; }
     if (!instruction.trim()) { setError('請輸入想怎麼修改目前模型。'); return; }
-    const selection = selected.filter(id => base.model.parts.some(part => part.id === id));
+    const selection = store.current().selection.partIds.filter(id => base.model.parts.some(part => part.id === id));
     await callModel('edit', '/api/edit', { instruction: instruction.trim(), model: base.model, selectedPartIds: selection }, (body, requestId, startedAt) => {
       let result: EditResult;
       try { result = EditResultSchema.parse(body) as EditResult; result.plan = validateEditPlan(result.plan); }
@@ -306,71 +337,94 @@ export default function App() {
       const { plan } = result;
       if (plan.status === 'clarify') { setClarify(plan.explanation); setMessage('需要你補充一點資訊，目前模型未變更。'); return; }
       if (plan.status === 'unsupported') { setError(plan.explanation); setMessage('這次修改無法處理，目前模型未變更。'); return; }
-      const current = currentDisplay.current;
-      if (!current || current.lineage !== base.lineage) {
-        setError('等待期間已換成另一個模型，這次修改沒有套用。'); setMessage('修改未套用，目前模型仍可操作。'); return;
+      const check = canApplyEdit(store.current(), base.id, 'answer');
+      const current = check.ok ? findObject(store.current(), base.id) : null;
+      if (!check.ok || !current) {
+        setError(check.ok ? '' : check.message); setMessage('修改未套用，目前模型仍可操作。'); return;
       }
       const parts = editConflicts(base.model, current.model, plan);
-      if (parts.length) { setConflict({ result, parts, startedAt, lineage: base.lineage }); setMessage('AI 修改與你剛才的手動調整有衝突，請選擇要保留哪一個。'); return; }
-      applyEdit(plan, result, startedAt, base.lineage);
+      if (parts.length) { setConflict({ result, parts, startedAt, objectId: base.id }); setMessage('AI 修改與你剛才的手動調整有衝突，請選擇要保留哪一個。'); return; }
+      applyEdit(plan, result, startedAt, base.id);
     });
   }
 
   function loadDemo() {
     if (agentActive) return;
     invalidateRequest(); setError(''); setRenderError(''); setTiming(null); setEditSummary(null); setClarify('');
-    commit({ model: demoModel, source: 'demo', providerModel: '本機示範資料', requestId: 'demo', startedAt: null, lineage: crypto.randomUUID(), edited: false });
+    if (!addNewObject({ model: demoModel, source: 'demo', providerModel: '本機示範資料', startedAt: null })) return;
     setMode('edit');
     setMessage('已載入預先建立的示範模型，這不是 AI 生成結果。');
   }
 
-  /** A model committed by the agent: drop dialogs and notices that belonged to the old model, like applyResult/applyEdit. */
+  /**
+   * TEMPORARY (workspace-v2 Task 8): the agent client still speaks of one `DisplayModel`.
+   * A model committed by the agent: drop dialogs and notices that belonged to the old model, like applyResult/applyEdit.
+   * A lineage that is not the active object's id adds a new object (id = lineage); the active one has its model replaced.
+   */
   function commitFromAgent(next: DisplayModel) {
     setPending(null); setConflict(null); setEditSummary(null); setClarify('');
     setTiming(null); setRenderError('');
-    commit(next);
+    const before = store.current();
+    if (next.lineage !== before.activeObjectId) {
+      if (!addNewObject({ id: next.lineage, model: next.model, source: next.source, providerModel: next.providerModel, startedAt: next.startedAt })) return;
+    } else {
+      try {
+        store.dispatch({ type: 'commit', next: replaceModel(before, next.lineage, next.model, { source: next.source, providerModel: next.providerModel }) });
+        timingRef.current = next.startedAt === null ? null : { objectId: next.lineage, startedAt: next.startedAt };
+      } catch {
+        setError('代理的修改無法套用，目前模型未變更。');
+        return;
+      }
+    }
     if (!next.edited) setMode('edit');
     setMessage(next.edited ? '代理已修改模型，可按「復原」回到上一步。' : '代理已建立新模型，可按「復原」回到上一步。');
   }
 
   /** Local, immediate change; validated exactly like AI output before display. */
-  function adjust(next: ModelSpec, label: string) {
-    const current = currentDisplay.current;
-    if (!current) return;
+  function adjust(next: ModelSpec, label: string): boolean {
+    const before = store.current();
+    const current = activeObject(before);
+    if (!current) return false;
     try {
       const model = validateModel(next);
+      const after = replaceModel(before, current.id, model);
       setAdjustError(''); setEditSummary(null); setTiming(null); setRenderError('');
-      commit({ ...current, model, requestId: 'manual', startedAt: null, edited: true });
+      timingRef.current = null;
+      store.dispatch({ type: 'commit', next: after });
       setMessage(label);
+      return true;
     } catch (cause) {
       setAdjustError(`這個調整未通過資料驗證，未套用。${cause instanceof Error ? cause.message.slice(0, 120) : ''}`);
+      return false;
     }
   }
   function updatePart(id: string, patch: Partial<Part>, label = '已調整零件，可按「復原」回到上一步。') {
     if (agentActive) return;
-    const current = currentDisplay.current;
+    const current = activeObject(store.current());
     if (!current) return;
     adjust({ ...current.model, parts: current.model.parts.map(part => part.id === id ? { ...part, ...patch } : part) }, label);
   }
   function removeSelected() {
     if (agentActive) return;
-    const current = currentDisplay.current;
+    const current = activeObject(store.current());
     if (!current || !selected.length) return;
     const removing = new Set(selected);
     const child = current.model.parts.find(part => part.parentId && removing.has(part.parentId) && !removing.has(part.id));
     if (child) { setAdjustError(`「${child.name}」仍依附在要刪除的零件上，請先刪除或調整子零件。`); return; }
     if (removing.size >= current.model.parts.length) { setAdjustError('模型至少需要保留一個零件。'); return; }
-    adjust({ ...current.model, parts: current.model.parts.filter(part => !removing.has(part.id)) }, `已刪除 ${selected.length} 個零件，可按「復原」回到上一步。`);
-    setSelected([]); setTransformMode(null);
+    // replaceModel drops the removed parts from the selection.
+    if (adjust({ ...current.model, parts: current.model.parts.filter(part => !removing.has(part.id)) }, `已刪除 ${selected.length} 個零件，可按「復原」回到上一步。`)) setTransformMode(null);
   }
-  function pick(_objectId: string | null, id: string | null, additive: boolean) {
+  function pick(objectId: string | null, id: string | null, additive: boolean) {
     if (agentActive) return;
     setAdjustError('');
-    if (!id) { if (!additive) setSelected([]); return; }
-    setSelected(ids => additive ? (ids.includes(id) ? ids.filter(entry => entry !== id) : [...ids, id]) : (ids.length === 1 && ids[0] === id ? ids : [id]));
+    const before = store.current();
+    const next = pickPart(before, objectId, id, additive);
+    if (next !== before) store.dispatch({ type: 'replace', next });
   }
   function setExplodeAmount(amount: number) {
-    setExplode(amount);
+    const before = store.current();
+    if (before.objects.length > 0) store.dispatch({ type: 'replace', next: setWorkspaceExplode(before, amount) });
     if (amount > 0) setTransformMode(null);
   }
   function onTransform(_objectId: string, id: string, position: Vector, rotation: Vector) {
@@ -387,20 +441,18 @@ export default function App() {
       const key = event.key.toLowerCase();
       if ((event.ctrlKey || event.metaKey) && key === 'z') { event.preventDefault(); if (event.shiftKey) redo(); else undo(); }
       else if ((event.ctrlKey || event.metaKey) && key === 'y') { event.preventDefault(); redo(); }
-      else if (event.key === 'Escape') { setSelected([]); setTransformMode(null); }
+      else if (event.key === 'Escape') { selectInActive([]); setTransformMode(null); }
       else if (event.key === 'Delete' && selected.length) { event.preventDefault(); removeSelected(); }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   });
 
-  // One object for now; the scene only re-syncs when the displayed model changes.
-  const sceneObjects = useMemo(() => display ? [{ id: display.lineage, model: display.model, transform: ZERO_TRANSFORM }] : [], [display]);
-  const editing = mode === 'edit' && Boolean(display);
-  const selectedParts = display ? selected.map(id => display.model.parts.find(part => part.id === id)).filter((part): part is Part => Boolean(part)) : [];
+  const editing = mode === 'edit' && Boolean(active);
+  const selectedParts = active ? selected.map(id => active.model.parts.find(part => part.id === id)).filter((part): part is Part => Boolean(part)) : [];
   const single = selectedParts.length === 1 ? selectedParts[0]! : null;
-  const sourceBase = display?.source === 'demo' ? '示範資料 · 非 AI 生成' : `${providerLabel(display?.source)} 生成`;
-  const sourceLabel = display?.edited ? `${sourceBase} · 已修改` : sourceBase;
+  const sourceBase = active?.source === 'demo' ? '示範資料 · 非 AI 生成' : `${providerLabel(active?.source)} 生成`;
+  const sourceLabel = active?.edited ? `${sourceBase} · 已修改` : sourceBase;
   const busyText = busy ? `${message}（${elapsed.toFixed(1)} 秒）` : message;
   const vector = (label: string, value: Vector, key: 'dimensions' | 'position' | 'rotation') => {
     const config = key === 'rotation' ? { scale: 1, min: -360, max: 360, digits: 1, unit: '°' }
@@ -419,20 +471,27 @@ export default function App() {
         <div className={`viewport ${contrast ? 'high-contrast' : ''}`} data-testid="viewport">
           <video ref={videoRef} muted playsInline autoPlay className={`camera-video ${camera === 'on' ? 'visible' : ''} ${mirrored ? 'mirrored' : ''}`} data-mirrored={mirrored} aria-label="即時攝影機背景" />
           <div className="viewport-shade" />
-          <SceneViewport ref={sceneRef} objects={sceneObjects} activeObjectId={display?.lineage ?? null} selectedIds={selected} transformMode={agentActive ? null : transformMode} explode={explode}
+          <SceneViewport ref={sceneRef} objects={workspace.objects} activeObjectId={workspace.activeObjectId} selectedIds={selected} transformMode={agentActive ? null : transformMode} explode={explode}
             tryOn={tryOnActive ? armTracking.sample : undefined}
             onPick={pick} onTransform={onTransform}
-            onError={message => { setRenderError(message); setMessage('3D 顯示未完成，已保留上一個成功模型。'); if (lastRendered.current !== currentDisplay.current) setDisplay(lastRendered.current); }} onReady={() => {
-            const item = currentDisplay.current;
+            onError={message => {
+              setRenderError(message); setMessage('3D 顯示未完成，已保留上一個成功模型。');
+              // Fall back to the last workspace that rendered (an empty one if nothing did yet).
+              const fallback = lastRendered.current ?? (store.current().objects.length ? emptyWorkspace() : null);
+              if (fallback && fallback !== store.current()) store.dispatch({ type: 'replace', next: fallback });
+            }} onReady={() => {
+            const now = store.current();
+            const item = activeObject(now);
             if (!item) return;
-            const first = lastRendered.current?.lineage !== item.lineage;
-            lastRendered.current = item;
-            if (item.startedAt !== null) setTiming(performance.now() - item.startedAt);
+            const first = lastRendered.current?.activeObjectId !== item.id;
+            lastRendered.current = now;
+            const timed = timingRef.current;
+            if (timed && timed.objectId === item.id) { setTiming(performance.now() - timed.startedAt); timingRef.current = null; }
             if (first) setMessage(item.source === 'demo' ? '示範模型已就緒。可拖曳旋轉、滾輪縮放，點擊零件即可選取。' : '3D 草案已建立。請旋轉檢查主要結構與分件，點擊零件即可選取。');
           }} />
           <div className="stage-label"><span className="tiny-cross">＋</span>{tryingOn ? '護臂試戴' : '虛擬展示位置'}<span>{tryingOn ? '' : 'CONCEPT / 01'}</span></div>
-          {!display && !tryingOn && <div className="empty-scene"><div className="reticle"><span /><i /></div><h2>讓第一個想法成形</h2><p>描述物件的外形、顏色與組成，<br />在這裡旋轉檢視立體概念。</p><button className="button ghost" onClick={loadDemo} disabled={agentActive}>載入示範模型</button></div>}
-          {display && <div className="model-caption"><span className="eyebrow">{sourceLabel}</span><h2 data-testid="model-name">{display.model.name}</h2><span>{display.model.parts.length} 個實際零件 · 概念草案{single ? ` · 已選取 ${single.name}` : selectedParts.length > 1 ? ` · 已選取 ${selectedParts.length} 個零件` : ''}</span></div>}
+          {!active && !tryingOn && <div className="empty-scene"><div className="reticle"><span /><i /></div><h2>讓第一個想法成形</h2><p>描述物件的外形、顏色與組成，<br />在這裡旋轉檢視立體概念。</p><button className="button ghost" onClick={loadDemo} disabled={agentActive || atLimit}>載入示範模型</button></div>}
+          {active && <div className="model-caption"><span className="eyebrow">{sourceLabel}</span><h2 data-testid="model-name">{active.model.name}</h2><span>{active.model.parts.length} 個實際零件 · 概念草案{single ? ` · 已選取 ${single.name}` : selectedParts.length > 1 ? ` · 已選取 ${selectedParts.length} 個零件` : ''}{workspace.objects.length > 1 ? ` · 工作區 ${workspace.objects.length} 個物件` : ''}</span></div>}
           <div className="orientation" aria-hidden="true"><span>Y</span><i />X <b>Z</b></div>
           <div className="stage-footer"><span>拖曳旋轉 · 滾輪縮放 · 點擊選取（Shift 加選）</span><span>未固定於真實桌面</span></div>
         </div>
@@ -444,11 +503,11 @@ export default function App() {
             </button>
             <label className="contrast-toggle"><input type="checkbox" checked={contrast} onChange={e => setContrast(e.target.checked)} />提高背景對比</label>
           </div>
-          <div className="button-group"><button className="button" onClick={undo} disabled={!history.past.length || agentActive} title="Ctrl+Z">復原</button><button className="button" onClick={redo} disabled={!history.future.length || agentActive} title="Ctrl+Shift+Z">重做</button><button className="icon-button" onClick={() => sceneRef.current?.zoomOut()} aria-label="縮小" disabled={!display}>−</button><button className="icon-button" onClick={() => sceneRef.current?.zoomIn()} aria-label="放大" disabled={!display}>＋</button><button className="button" onClick={() => sceneRef.current?.reset()} disabled={!display}>重設視角</button></div>
+          <div className="button-group"><button className="button" onClick={undo} disabled={!store.canUndo || agentActive} title="Ctrl+Z">復原</button><button className="button" onClick={redo} disabled={!store.canRedo || agentActive} title="Ctrl+Shift+Z">重做</button><button className="icon-button" onClick={() => sceneRef.current?.zoomOut()} aria-label="縮小" disabled={!active}>−</button><button className="icon-button" onClick={() => sceneRef.current?.zoomIn()} aria-label="放大" disabled={!active}>＋</button><button className="button" onClick={() => sceneRef.current?.reset()} disabled={!active}>重設視角</button></div>
         </div>
         {tryingOn && <p className={`notice ${armTracking.status.endsWith('-error') ? 'warning' : ''}`} role="status" data-testid="try-on-status" data-state={armTracking.status}>{armStatusText[armTracking.status]}
           {armTracking.stats && <span className="small-muted" data-testid="try-on-stats"> · {armTracking.stats.delegate} · 每秒 {armTracking.stats.fps.toFixed(0)} 幀 · 辨識 {armTracking.stats.inferenceMs.toFixed(0)} ms · 偵測到手 {armTracking.stats.handFps.toFixed(0)}／對齊 {armTracking.stats.armFps.toFixed(0)} 次每秒{armTracking.stats.source && ` · 前臂依${armTracking.stats.source === 'elbow' ? '手肘' : '手部方向'}`}</span>}</p>}
-        {display && <div className="explode-toolbar"><button type="button" className={`button ${explode > 0 ? 'active' : ''}`} aria-pressed={explode > 0} disabled={agentActive} onClick={() => setExplodeAmount(explode > 0 ? 0 : 1)}>{explode > 0 ? '收回爆炸圖' : '爆炸圖'}</button>
+        {active && <div className="explode-toolbar"><button type="button" className={`button ${explode > 0 ? 'active' : ''}`} aria-pressed={explode > 0} disabled={agentActive} onClick={() => setExplodeAmount(explode > 0 ? 0 : 1)}>{explode > 0 ? '收回爆炸圖' : '爆炸圖'}</button>
           <label className="explode-slider"><span>拆開程度</span><input type="range" min={0} max={100} step={1} value={Math.round(explode * 100)} aria-label="拆開程度" disabled={agentActive} onChange={event => setExplodeAmount(Number(event.target.value) / 100)} /><output>{Math.round(explode * 100)}%</output></label>
           <span className="small-muted">依零件階層在本機計算，不改模型資料、不呼叫 AI；拆開時停用拖曳把手。</span></div>}
         {cameraError && <p className="notice warning" role="alert">{cameraError}</p>}
@@ -458,7 +517,7 @@ export default function App() {
       <aside className="control-column">
         <AgentPanel agent={agent} disabled={Boolean(busy)} />
         <section className="panel prompt-panel">
-          {display && <div className="mode-switch" role="tablist" aria-label="文字用途"><button role="tab" aria-selected={editing} className={editing ? 'active' : ''} onClick={() => setMode('edit')}>修改目前模型</button><button role="tab" aria-selected={!editing} className={!editing ? 'active' : ''} onClick={() => setMode('create')}>生成新物件</button></div>}
+          {active && <div className="mode-switch" role="tablist" aria-label="文字用途"><button role="tab" aria-selected={editing} className={editing ? 'active' : ''} onClick={() => setMode('edit')}>修改目前模型</button><button role="tab" aria-selected={!editing} className={!editing ? 'active' : ''} onClick={() => setMode('create')}>生成新物件</button></div>}
           {editing ? <>
             <span className="eyebrow">EDIT THIS CONCEPT</span><h2>想怎麼修改？</h2><p className="muted">只會變更需要改的零件；說「這個」代表已選取的零件。</p>
             <form onSubmit={e => { e.preventDefault(); void edit(); }}><label htmlFor="instruction">修改指示</label><textarea id="instruction" value={instruction} maxLength={4000} disabled={agentActive} onChange={e => setInstruction(e.target.value)} rows={4} placeholder="例如：四條桌腳加長到 50 公分，桌面跟著升高" />
@@ -466,22 +525,23 @@ export default function App() {
               <button className="button primary" type="submit" disabled={!instruction.trim() || agentActive}>套用修改 <span aria-hidden="true">↗</span></button></form>
           </> : <>
             <span className="eyebrow">CREATE A CONCEPT</span><h2>你想建立什麼？</h2><p className="muted">用自己的話描述，不需要固定指令。</p>
-            <form onSubmit={e => { e.preventDefault(); void generate(); }}><label htmlFor="prompt">物件描述</label><textarea id="prompt" value={prompt} maxLength={4000} disabled={agentActive} onChange={e => setPrompt(e.target.value)} rows={5} placeholder="例如：一個帶兩個鏡頭、右側裝橘色電池的手持裝置" /><div className="input-meta"><span>形狀 · 色彩 · 件數 · 配置</span><span>{prompt.length}/4000</span></div><button className="button primary" type="submit" disabled={!prompt.trim() || agentActive}>生成 3D 草案 <span aria-hidden="true">↗</span></button></form>
+            <form onSubmit={e => { e.preventDefault(); void generate(); }}><label htmlFor="prompt">物件描述</label><textarea id="prompt" value={prompt} maxLength={4000} disabled={agentActive} onChange={e => setPrompt(e.target.value)} rows={5} placeholder="例如：一個帶兩個鏡頭、右側裝橘色電池的手持裝置" /><div className="input-meta"><span>形狀 · 色彩 · 件數 · 配置</span><span>{prompt.length}/4000</span></div><button className="button primary" type="submit" disabled={!prompt.trim() || agentActive || atLimit}>生成 3D 草案 <span aria-hidden="true">↗</span></button></form>
+            {atLimit && <p className="notice warning" data-testid="object-limit">工作區最多 {MAX_OBJECTS} 個物件，請先刪除一個物件。</p>}
           </>}
           <div className="generation-status" aria-live="polite" role="status"><span className={`status-dot ${busy ? 'pulsing' : ''}`} /><span>{busyText}</span></div>
           {busy && <button className="text-button" onClick={() => { invalidateRequest(); setMessage('已取消等待，目前模型仍可操作。'); }}>{busy === 'edit' ? '取消這次修改' : '取消這次生成'}</button>}
           {error && <div className="notice warning" role="alert"><p>{error}</p><button className="text-button" disabled={agentActive} onClick={() => void (lastFailed.current === 'edit' ? edit() : generate())}>{lastFailed.current === 'edit' ? '重試修改' : '重試生成'}</button></div>}
           {clarify && <div className="notice clarify" data-testid="clarify"><strong>需要確認</strong><p>{clarify}</p><span className="small-muted">補充後再按「套用修改」，目前模型未變更。</span></div>}
           {editSummary && <div className="notice success" data-testid="edit-summary"><strong>已修改：{editSummary.changes}</strong><p>{editSummary.explanation}</p></div>}
-          {conflict && <div className="approximation" data-testid="edit-conflict"><h3>修改衝突</h3><p>你在等待期間手動調整了：{conflict.parts.map(part => part.name).join('、')}。AI 的修改是根據調整前的模型產生的。</p><button className="button primary" disabled={agentActive} onClick={() => applyEdit(conflict.result.plan, conflict.result, conflict.startedAt, conflict.lineage)}>套用 AI 修改</button><button className="text-button" disabled={agentActive} onClick={() => { setConflict(null); setMessage('已保留你的手動調整，未套用這次 AI 修改。'); }}>保留手動調整</button></div>}
-          {pending && <div className="approximation"><h3>近似方案待確認</h3><p>{pending.result.design.explanation}</p><ul>{pending.result.design.model?.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul><button className="button primary" disabled={agentActive} onClick={() => { applyResult(pending.result, pending.startedAt); setPending(null); }}>接受近似並建立</button><button className="text-button" disabled={agentActive} onClick={() => { setPending(null); setMessage('已取消近似方案，上一個成功模型仍可操作。'); }}>取消近似</button></div>}
-          <div className="service-status"><span className={`status-dot ${service?.configured ? 'connected' : 'unavailable'}`} /><div><strong>{service ? providerLabel(service.provider) : '本機服務未連線'}</strong><span>{service?.configured ? service.model : service?.reason || '尚未設定，請依 README 準備登入或金鑰。'}</span></div><button className="text-button" onClick={() => void refreshService()}>重新檢查</button></div><button className="text-button demo-link" onClick={loadDemo} disabled={agentActive}>載入示範模型 <span>非 AI 生成</span></button>
+          {conflict && <div className="approximation" data-testid="edit-conflict"><h3>修改衝突</h3><p>你在等待期間手動調整了：{conflict.parts.map(part => part.name).join('、')}。AI 的修改是根據調整前的模型產生的。</p><button className="button primary" disabled={agentActive} onClick={() => applyEdit(conflict.result.plan, conflict.result, conflict.startedAt, conflict.objectId)}>套用 AI 修改</button><button className="text-button" disabled={agentActive} onClick={() => { setConflict(null); setMessage('已保留你的手動調整，未套用這次 AI 修改。'); }}>保留手動調整</button></div>}
+          {pending && <div className="approximation"><h3>近似方案待確認</h3><p>{pending.result.design.explanation}</p><ul>{pending.result.design.model?.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul><button className="button primary" disabled={agentActive || atLimit} onClick={() => { applyResult(pending.result, pending.startedAt); setPending(null); }}>接受近似並建立</button><button className="text-button" disabled={agentActive} onClick={() => { setPending(null); setMessage('已取消近似方案，上一個成功模型仍可操作。'); }}>取消近似</button></div>}
+          <div className="service-status"><span className={`status-dot ${service?.configured ? 'connected' : 'unavailable'}`} /><div><strong>{service ? providerLabel(service.provider) : '本機服務未連線'}</strong><span>{service?.configured ? service.model : service?.reason || '尚未設定，請依 README 準備登入或金鑰。'}</span></div><button className="text-button" onClick={() => void refreshService()}>重新檢查</button></div><button className="text-button demo-link" onClick={loadDemo} disabled={agentActive || atLimit}>載入示範模型 <span>非 AI 生成</span></button>
         </section>
-        {display && <section className="panel parts-panel" aria-label="零件選取與調整">
-          <div className="panel-heading"><span className="eyebrow">SELECT & ADJUST</span><span className="tag">{display.model.parts.length} 件</span></div>
+        {active && <section className="panel parts-panel" aria-label="零件選取與調整">
+          <div className="panel-heading"><span className="eyebrow">SELECT & ADJUST</span><span className="tag">{active.model.parts.length} 件</span></div>
           <h2>零件</h2>
-          <ul className="part-picker" aria-label="零件清單">{display.model.parts.map(part => <li key={part.id}><button type="button" aria-pressed={selected.includes(part.id)} disabled={agentActive} className={selected.includes(part.id) ? 'selected' : ''} onClick={event => pick(display.lineage, part.id, event.shiftKey)}>
-            <span className="color-chip" style={{ background: part.color }} /><span>{part.name}<small>{part.id}{part.parentId ? ` · 屬於 ${display.model.parts.find(p => p.id === part.parentId)?.name ?? part.parentId}` : ''}</small></span></button></li>)}</ul>
+          <ul className="part-picker" aria-label="零件清單">{active.model.parts.map(part => <li key={part.id}><button type="button" aria-pressed={selected.includes(part.id)} disabled={agentActive} className={selected.includes(part.id) ? 'selected' : ''} onClick={event => pick(active.id, part.id, event.shiftKey)}>
+            <span className="color-chip" style={{ background: part.color }} /><span>{part.name}<small>{part.id}{part.parentId ? ` · 屬於 ${active.model.parts.find(p => p.id === part.parentId)?.name ?? part.parentId}` : ''}</small></span></button></li>)}</ul>
           {!selectedParts.length && <p className="small-muted">點選畫面中的零件或上方清單即可選取；Shift 可多選，Esc 取消選取。</p>}
           {adjustError && <p className="notice warning" role="alert">{adjustError}</p>}
           {single && <div className="part-editor" data-testid="part-editor">
@@ -496,9 +556,9 @@ export default function App() {
             <div className="button-group editor-actions"><button type="button" disabled={explode > 0 || agentActive} className={`button ${transformMode === 'translate' ? 'active' : ''}`} aria-pressed={transformMode === 'translate'} onClick={() => setTransformMode(mode => mode === 'translate' ? null : 'translate')}>拖曳移動</button><button type="button" disabled={explode > 0 || agentActive} className={`button ${transformMode === 'rotate' ? 'active' : ''}`} aria-pressed={transformMode === 'rotate'} onClick={() => setTransformMode(mode => mode === 'rotate' ? null : 'rotate')}>拖曳旋轉</button></div>
             {explode > 0 && <p className="small-muted">爆炸圖開啟中，拖曳把手已停用；收回後即可拖曳。數值欄仍可修改。</p>}
           </div>}
-          {selectedParts.length > 0 && <div className="button-group editor-actions"><button type="button" className="button danger" disabled={agentActive} onClick={removeSelected}>刪除{selectedParts.length > 1 ? ` ${selectedParts.length} 個` : ''}零件</button><button type="button" className="text-button" disabled={agentActive} onClick={() => { setSelected([]); setTransformMode(null); }}>取消選取</button></div>}
+          {selectedParts.length > 0 && <div className="button-group editor-actions"><button type="button" className="button danger" disabled={agentActive} onClick={removeSelected}>刪除{selectedParts.length > 1 ? ` ${selectedParts.length} 個` : ''}零件</button><button type="button" className="text-button" disabled={agentActive} onClick={() => { selectInActive([]); setTransformMode(null); }}>取消選取</button></div>}
         </section>}
-        <section className="panel details-panel"><div className="panel-heading"><span className="eyebrow">MODEL DETAILS</span><span className="tag">概念階段</span></div><h2>模型與假設</h2>{display ? <><p className="model-summary">{display.model.summary}</p><dl className="model-meta"><div><dt>來源</dt><dd>{sourceLabel}</dd></div><div><dt>生成模型</dt><dd>{display.providerModel}</dd></div><div><dt>資料版本 / 單位</dt><dd>{display.model.schemaVersion} / m（公尺）</dd></div>{timing !== null && <div><dt>送出至繪製提交</dt><dd>{(timing / 1000).toFixed(2)} 秒</dd></div>}</dl>{timing !== null && <p className="small-muted">本機觀測時間，含生成與繪製提交；尚非辨識品質或 GPU 完成量測。</p>}<h3>暫定假設</h3><ul className="assumptions">{display.model.assumptions.length ? display.model.assumptions.map((a, i) => <li key={i}>{a}</li>) : <li>未另列假設；概念尺寸仍需核對。</li>}</ul><details><summary>已建立零件（{display.model.parts.length}）</summary><ul className="parts-list">{display.model.parts.map(part => <li key={part.id}><span className="color-chip" style={{ background: part.color }} /><span>{part.name}<small>{part.id} · {part.role === 'interior' ? '內部概念件' : '外部件'}<br />{[part.dimensions.x, part.dimensions.y, part.dimensions.z].map(v => Number((v * 1000).toFixed(2))).join(' × ')} mm</small></span></li>)}</ul></details></> : <p className="empty-details">生成後會在這裡列出來源、實際零件與尺寸假設。<br />細節不足時，模型會清楚標示暫定配置。</p>}</section>
+        <section className="panel details-panel"><div className="panel-heading"><span className="eyebrow">MODEL DETAILS</span><span className="tag">概念階段</span></div><h2>模型與假設</h2>{active ? <><p className="model-summary">{active.model.summary}</p><dl className="model-meta"><div><dt>來源</dt><dd>{sourceLabel}</dd></div><div><dt>生成模型</dt><dd>{active.providerModel}</dd></div><div><dt>資料版本 / 單位</dt><dd>{active.model.schemaVersion} / m（公尺）</dd></div>{timing !== null && <div><dt>送出至繪製提交</dt><dd>{(timing / 1000).toFixed(2)} 秒</dd></div>}</dl>{timing !== null && <p className="small-muted">本機觀測時間，含生成與繪製提交；尚非辨識品質或 GPU 完成量測。</p>}<h3>暫定假設</h3><ul className="assumptions">{active.model.assumptions.length ? active.model.assumptions.map((a, i) => <li key={i}>{a}</li>) : <li>未另列假設；概念尺寸仍需核對。</li>}</ul><details><summary>已建立零件（{active.model.parts.length}）</summary><ul className="parts-list">{active.model.parts.map(part => <li key={part.id}><span className="color-chip" style={{ background: part.color }} /><span>{part.name}<small>{part.id} · {part.role === 'interior' ? '內部概念件' : '外部件'}<br />{[part.dimensions.x, part.dimensions.y, part.dimensions.z].map(v => Number((v * 1000).toFixed(2))).join(' × ')} mm</small></span></li>)}</ul></details></> : <p className="empty-details">生成後會在這裡列出來源、實際零件與尺寸假設。<br />細節不足時，模型會清楚標示暫定配置。</p>}</section>
       </aside>
     </main>
     <footer className="app-footer"><span>FORGEHAND</span><span>概念視覺化 · 非工程量測或製造驗證</span></footer>

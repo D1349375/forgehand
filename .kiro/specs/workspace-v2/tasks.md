@@ -157,7 +157,7 @@ All the rules for changing a workspace and undoing changes, as pure functions wi
 
 ## Task 5 — App on the workspace
 
-`[ ]`
+`[x]`
 
 `App.tsx` stops holding one `DisplayModel` and uses the workspace store. Generating adds an object, editing acts on the active object, undo covers the workspace. The agent client still speaks the old contract through a temporary adapter.
 
