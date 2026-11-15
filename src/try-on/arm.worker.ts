@@ -61,7 +61,7 @@ async function initialize() {
   let body: readonly NormalizedLandmark[] = [];
   let lastPose = -Infinity;
   scope.onmessage = (event: MessageEvent<ArmWorkerFrame>) => {
-    const { bitmap, width, height, timestamp } = event.data;
+    const { bitmap, width, height, timestamp, pose: wantPose } = event.data;
     try {
       const started = performance.now();
       const result = hand.detectForVideo(bitmap, timestamp);
@@ -71,6 +71,10 @@ async function initialize() {
         return { points, world: result.worldLandmarks[index], side };
       });
       if (!hands.length) {
+        body = [];
+        lastPose = -Infinity;
+      } else if (wantPose === false) {
+        // Hand control only: skip pose, and run it at once on the next try-on frame.
         body = [];
         lastPose = -Infinity;
       } else if (timestamp - lastPose >= POSE_INTERVAL_MS) {

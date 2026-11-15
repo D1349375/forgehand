@@ -28,6 +28,8 @@ export interface ArmWorkerFrame {
   width: number;
   height: number;
   timestamp: number;
+  /** Run the pose model for this frame. Absent or true: yes. False: hands only. */
+  pose?: boolean;
 }
 
 export type TrackingDelegate = 'GPU' | 'CPU';

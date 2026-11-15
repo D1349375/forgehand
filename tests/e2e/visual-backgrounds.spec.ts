@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { demoModel } from '../../shared/demo';
+import { installFakeHands } from './fake-hands';
 
 // These are synthetic video streams, not recordings from a physical camera.
 // Camera controls, media attachment, Three.js geometry, and WebGL rendering run normally.
 for (const background of ['bright', 'dark', 'cluttered'] as const) {
-  test(`合成 ${background} 視訊：預設與提高背景對比`, async ({ page }, testInfo) => {
+  test(`合成 ${background} 視訊：預設與提高背景對比`, async ({ context, page }, testInfo) => {
+    await installFakeHands(context);
     await page.addInitScript((variant: string) => {
       navigator.mediaDevices.getUserMedia = async () => {
         const cameraCanvas = document.createElement('canvas');

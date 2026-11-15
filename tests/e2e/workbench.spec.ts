@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { demoModel } from '../../shared/demo';
+import { installFakeHands } from './fake-hands';
 import type { ModelSpec } from '../../shared/model';
 
 const generationButton = (page: Page) => page.getByRole('button', { name: '生成 3D 草案', exact: true });
@@ -32,7 +33,8 @@ async function submit(page: Page, prompt: string) {
   await generationButton(page).click();
 }
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ context, page }) => {
+  await installFakeHands(context);
   await page.route('**/api/status', route => route.fulfill({ json: { configured: true, provider: 'codex', model: 'test-double-not-a-real-model' } }));
 });
 
