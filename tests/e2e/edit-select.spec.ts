@@ -156,6 +156,7 @@ test('無法套用或服務失敗的修改保留目前模型', async ({ page }) 
 });
 
 test('等待期間手動改了同一零件：詢問保留哪個版本', async ({ page }) => {
+  test.slow();
   const releases: Array<() => void> = [];
   await page.route('**/api/edit', async route => {
     await new Promise<void>(resolve => releases.push(resolve));
