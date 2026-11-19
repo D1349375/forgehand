@@ -49,3 +49,7 @@ export const BADGE_NAME_MAX = 12;
 export const TRACKED_HANDS = 2;
 /** Two detections whose palm centres are closer than this many pixels are one hand. */
 export const DUPLICATE_HAND_PX = 40;
+/** A hand that moved farther than this many pixels from a tracked slot is a new hand. */
+export const HAND_MATCH_PX = 160;
+/** A two-hand gesture reads the angle between the hands only while they are at least this far apart (pixels). */
+export const TWO_HAND_MIN_SPAN_PX = 60;
