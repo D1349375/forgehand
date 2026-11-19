@@ -95,7 +95,7 @@ The pure input code (mapping, cursor filter, pinch state machine, picking and se
 
 ## Task 3 — Both hands, the hidden camera image and the status line
 
-`[ ]`
+`[x]`
 
 The worker tracks two hands and both skeletons are drawn; a 隱藏鏡頭畫面 button hides the camera image while tracking continues; the hand-control gates, the hand status line and the `?hands=debug` panel (tracking numbers) appear. No gesture acts yet. This task changes code from Tasks 1–2 (design §15).
 

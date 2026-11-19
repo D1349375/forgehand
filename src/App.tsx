@@ -9,6 +9,8 @@ import {
 import { SceneViewport, type SceneHandle, type TransformMode, type Vector } from './scene/SceneViewport';
 import { useArmTracking, type ArmTrackingStatus } from './try-on/useArmTracking';
 import { HandOverlay, type HandOverlayHandle } from './hands/HandOverlay';
+import { handGate, initialSpeedState, parseMinFps, speedStep, type SpeedState } from './hands/gate';
+import { HandDebugPanel, handDebugRequested } from './hands/HandDebugPanel';
 import { useHandControl } from './hands/useHandControl';
 import { useHandTracking } from './hands/useHandTracking';
 import type { AgentTurn } from '../shared/agent';
@@ -76,11 +78,23 @@ export default function App() {
   const tryOnActive = tryingOn && camera === 'on';
   /** 手勢: hand control is on by default whenever the camera is on. */
   const [handsOn, setHandsOn] = useState(true);
-  const tracking = useHandTracking(videoRef, { running: camera === 'on', needed: handsOn || tryOnActive, wantPose: tryOnActive, mirrored });
+  /** 隱藏鏡頭畫面: the video keeps playing and tracking continues, only the image is not shown. Session state. */
+  const [cameraHidden, setCameraHidden] = useState(false);
+  /** Hand tracking too slow for gestures (requirement 40), from the measured rate. */
+  const [slow, setSlow] = useState(false);
+  const speed = useRef<SpeedState>(initialSpeedState());
+  /** Speed threshold: MIN_CONTROL_FPS, or ?hands-min-fps=<number> for slow machines. Read once at load. */
+  const [minFps] = useState(() => parseMinFps(window.location.search));
+  const tracking = useHandTracking(videoRef, {
+    running: camera === 'on', needed: handsOn || tryOnActive, wantPose: tryOnActive, mirrored,
+    onRate: (fps, now) => {
+      speed.current = speedStep(speed.current, fps, now, minFps);
+      setSlow(speed.current.slow);
+    },
+  });
   const armTracking = useArmTracking(tracking.source, tracking.status, tryOnActive);
   const overlayRef = useRef<HandOverlayHandle>(null);
   const handControlOn = camera === 'on' && handsOn;
-  useHandControl({ source: tracking.source, enabled: handControlOn, videoRef, overlayRef });
   const sceneRef = useRef<SceneHandle>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cameraRequest = useRef(0);
@@ -103,6 +117,9 @@ export default function App() {
   });
   /** While an agent run is active the user can only watch or cancel: manual changes would race its edits. */
   const agentActive = agent.active;
+  const gate = handGate({ tryOn: tryOnActive, slow, agentActive, exploded: explode > 0 });
+  const handControl = useHandControl({ source: tracking.source, tracker: tracking.status, enabled: handControlOn, gate, videoRef, overlayRef });
+  const handDebug = handDebugRequested(window.location.search);
 
   async function refreshService() {
     try {
@@ -204,6 +221,7 @@ export default function App() {
       setCamera('off');
       setTryingOn(false);
       setHandsOn(true);
+      resetCameraSession();
       const name = cause instanceof DOMException ? cause.name : '';
       setCameraError(name === 'NotAllowedError' || name === 'SecurityError'
         ? '攝影機授權遭拒。請在瀏覽器網址列允許攝影機後，重新開啟。你仍可操作 3D 模型。'
@@ -219,6 +237,13 @@ export default function App() {
     setCamera('off');
     setTryingOn(false);
     setHandsOn(true);
+    resetCameraSession();
+  }
+  /** Session state that only lives while the camera is on. */
+  function resetCameraSession() {
+    setCameraHidden(false);
+    speed.current = initialSpeedState();
+    setSlow(false);
   }
   function toggleTryOn() {
     if (agentActive) return;
@@ -491,7 +516,7 @@ export default function App() {
       <section className="stage-column" aria-label="3D 與視訊展示">
         <div className="section-heading"><div><span className="eyebrow">LIVE WORKSPACE</span><h1>把想法，放進視野。</h1></div><span className={`camera-badge ${camera === 'on' ? 'active' : ''}`}><span className="status-dot" />{camera === 'on' ? '攝影機已開啟' : camera === 'starting' ? '連接攝影機中' : '攝影機未開啟'}</span></div>
         <div className={`viewport ${contrast ? 'high-contrast' : ''}`} data-testid="viewport">
-          <video ref={videoRef} muted playsInline autoPlay className={`camera-video ${camera === 'on' ? 'visible' : ''} ${mirrored ? 'mirrored' : ''}`} data-mirrored={mirrored} aria-label="即時攝影機背景" />
+          <video ref={videoRef} muted playsInline autoPlay className={`camera-video ${camera === 'on' && !cameraHidden ? 'visible' : ''} ${mirrored ? 'mirrored' : ''}`} data-mirrored={mirrored} data-image-hidden={cameraHidden} aria-label="即時攝影機背景" />
           <div className="viewport-shade" />
           <SceneViewport ref={sceneRef} objects={workspace.objects} activeObjectId={workspace.activeObjectId} selectedIds={selected} transformMode={agentActive ? null : transformMode} explode={explode}
             tryOn={tryOnActive ? armTracking.sample : undefined}
@@ -525,10 +550,13 @@ export default function App() {
               {tryingOn ? '結束護臂試戴' : '護臂試戴'}
             </button>
             {camera === 'on' && <button className={`button ${handsOn ? 'active' : ''}`} type="button" aria-pressed={handsOn} onClick={() => setHandsOn(on => !on)}>手勢</button>}
+            {camera === 'on' && <button className={`button ${cameraHidden ? 'active' : ''}`} type="button" aria-pressed={cameraHidden} onClick={() => setCameraHidden(hidden => !hidden)}>隱藏鏡頭畫面</button>}
             <label className="contrast-toggle"><input type="checkbox" checked={contrast} onChange={e => setContrast(e.target.checked)} />提高背景對比</label>
           </div>
           <div className="button-group"><button className="button" onClick={undo} disabled={!store.canUndo || agentActive} title="Ctrl+Z">復原</button><button className="button" onClick={redo} disabled={!store.canRedo || agentActive} title="Ctrl+Shift+Z">重做</button><button className="icon-button" onClick={() => sceneRef.current?.zoomOut()} aria-label="縮小" disabled={!active}>−</button><button className="icon-button" onClick={() => sceneRef.current?.zoomIn()} aria-label="放大" disabled={!active}>＋</button><button className="button" onClick={() => sceneRef.current?.reset()} disabled={!active}>重設視角</button></div>
         </div>
+        {handControlOn && handControl.status.state !== 'hidden' && <p className={`notice hand-status ${['error', 'slow'].includes(handControl.status.state) ? 'warning' : ''}`} role="status" data-testid="hand-status" data-state={handControl.status.state}>{handControl.status.text}</p>}
+        {handControlOn && handDebug && <HandDebugPanel source={tracking.source} debug={handControl.debug} minFps={minFps} />}
         {tryingOn && <p className={`notice ${armTracking.status.endsWith('-error') ? 'warning' : ''}`} role="status" data-testid="try-on-status" data-state={armTracking.status}>{armStatusText[armTracking.status]}
           {armTracking.stats && <span className="small-muted" data-testid="try-on-stats"> · {armTracking.stats.delegate} · 每秒 {armTracking.stats.fps.toFixed(0)} 幀 · 辨識 {armTracking.stats.inferenceMs.toFixed(0)} ms · 偵測到手 {armTracking.stats.handFps.toFixed(0)}／對齊 {armTracking.stats.armFps.toFixed(0)} 次每秒{armTracking.stats.source && ` · 前臂依${armTracking.stats.source === 'elbow' ? '手肘' : '手部方向'}`}</span>}</p>}
         {active && <div className="explode-toolbar"><button type="button" className={`button ${explode > 0 ? 'active' : ''}`} aria-pressed={explode > 0} disabled={agentActive} onClick={() => setExplodeAmount(explode > 0 ? 0 : 1)}>{explode > 0 ? '收回爆炸圖' : '爆炸圖'}</button>

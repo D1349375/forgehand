@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { fakeHandsLog, hideHand, installFakeHands, showHand } from './fake-hands';
+import { fakeHandsLog, hideHand, installFakeHands, showHand, showHands, handsUrl } from './fake-hands';
 
 // Hand control is tested against a scripted worker (fake-hands.ts); the camera
 // stream, the capture loop and the app are real.
@@ -8,7 +8,8 @@ test.beforeEach(async ({ context, page }) => {
   test.setTimeout(150_000);
   await installFakeHands(context);
   await page.route('**/api/status', route => route.fulfill({ json: { configured: true, provider: 'codex', model: 'test-double-not-a-real-model' } }));
-  await page.goto('/');
+  // The speed gate is off here (?hands-min-fps=0); the speed test below opens the app with the default threshold.
+  await page.goto(handsUrl());
 });
 
 const openCamera = (page: Page) => page.getByRole('button', { name: '開啟攝影機', exact: true }).click();
@@ -116,7 +117,6 @@ test.describe('T2 hand overlay', () => {
     const corner = { x: box.x + 40, y: box.y + 40 };
     await showHand(page, hand, 0.1);
     await expect(overlay).toHaveAttribute('data-hand-state', 'tracked');
-    await expect(overlay).toHaveAttribute('data-hand-mode', 'translate');
     await expect(overlay).toHaveAttribute('data-hand-target', '');
     // Poll: under load a slow frame can leave the overlay cleared for a moment (HAND_LOST_MS) before the next draw.
     await expect.poll(() => overlayInk(page, hand, 90), { timeout: 45_000, intervals: [50, 100, 200] }).toBeGreaterThan(100);
@@ -135,5 +135,109 @@ test.describe('T2 hand overlay', () => {
 
     await page.getByRole('button', { name: '關閉攝影機', exact: true }).click();
     await expect(overlay).toHaveCount(0);
+  });
+});
+
+const hideImageButton = (page: Page) => page.getByRole('button', { name: '隱藏鏡頭畫面', exact: true });
+const handStatus = (page: Page) => page.getByTestId('hand-status');
+async function viewportCentre(page: Page) {
+  const box = (await page.getByTestId('viewport').boundingBox())!;
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+test.describe('T3 both hands, the hidden camera image and the status line', () => {
+  test('two hands are drawn, one hidden leaves one, and the hint follows the 手勢 switch', async ({ page }) => {
+    await openCamera(page);
+    // Before the first hand: the hint, and nothing at all with 手勢 off.
+    await page.waitForFunction(text => {
+      const line = document.querySelector('[data-testid="hand-status"]');
+      return line?.getAttribute('data-state') === 'hint' && line.textContent === text;
+    }, '把手舉到鏡頭前：捏住零件可移動，捏住空白處可轉動視角。', { timeout: 45_000 });
+    await handsButton(page).click();
+    await expect(handStatus(page)).toHaveCount(0);
+    await handsButton(page).click();
+    await expect(handStatus(page)).toHaveAttribute('data-state', 'hint');
+    const centre = await viewportCentre(page);
+    const left = { x: centre.x - 300, y: centre.y };
+    const right = { x: centre.x + 300, y: centre.y };
+    const overlay = page.getByTestId('hand-overlay');
+    await showHands(page, [{ at: left, pinchM: 0.1 }, { at: right, pinchM: 0.1 }]);
+    await expect(overlay).toHaveAttribute('data-hand-count', '2');
+    await expect(overlay).toHaveAttribute('data-hand-state', 'tracked');
+    await expect(overlay).toHaveAttribute('data-hand2-state', 'tracked');
+    await expect(overlay).toHaveAttribute('data-gesture', 'none');
+    await expect.poll(async () => Math.min(await overlayInk(page, left, 90), await overlayInk(page, right, 90)), { timeout: 45_000, intervals: [50, 100, 200] }).toBeGreaterThan(100);
+    // Once a hand has been seen, the hint is gone.
+    await expect(page.locator('[data-testid="hand-status"][data-state="hint"]')).toHaveCount(0);
+    await showHands(page, [{ at: right, pinchM: 0.1 }]);
+    await expect(overlay).toHaveAttribute('data-hand-count', '1');
+    await expect(overlay).toHaveAttribute('data-hand2-state', 'none');
+    await hideHand(page);
+    await expect(overlay).toHaveAttribute('data-hand-count', '0');
+    await expect(overlay).toHaveAttribute('data-hand-state', 'none');
+  });
+
+  test('the camera image can be hidden while the video, the tracking and the skeleton go on', async ({ page }) => {
+    await expect(hideImageButton(page)).toHaveCount(0);
+    await openCamera(page);
+    await framesAbove(page, 0);
+    const video = page.getByLabel('即時攝影機背景');
+    await expect(hideImageButton(page)).toHaveAttribute('aria-pressed', 'false');
+    await expect(video).toHaveCSS('opacity', '1');
+    await hideImageButton(page).click();
+    await expect(hideImageButton(page)).toHaveAttribute('aria-pressed', 'true');
+    await expect(video).toHaveAttribute('data-image-hidden', 'true');
+    await expect(video).toHaveCSS('opacity', '0');
+    const playback = () => video.evaluate((element: HTMLVideoElement) => ({ paused: element.paused, time: element.currentTime, attached: element.srcObject !== null }));
+    const before = await playback();
+    expect(before).toMatchObject({ paused: false, attached: true });
+    await expect.poll(async () => (await playback()).time, { timeout: 30_000 }).toBeGreaterThan(before.time);
+    // Tracking keeps going: frames keep growing and the skeleton is still drawn on the hand.
+    const counted = await frames(page);
+    await framesAbove(page, counted);
+    const hand = await viewportCentre(page);
+    await showHand(page, hand, 0.1);
+    await expect.poll(() => overlayInk(page, hand, 90), { timeout: 45_000, intervals: [50, 100, 200] }).toBeGreaterThan(100);
+    // Try-on still tracks with the image hidden.
+    await page.getByRole('button', { name: '護臂試戴', exact: true }).click();
+    await expect(page.getByTestId('try-on-status')).toHaveAttribute('data-state', 'tracking', { timeout: 45_000 });
+    await expect(video).toHaveCSS('opacity', '0');
+    // Camera off and on: the image is shown again and the button is not pressed.
+    await page.getByRole('button', { name: '關閉攝影機', exact: true }).click();
+    await expect(hideImageButton(page)).toHaveCount(0);
+    await openCamera(page);
+    await expect(hideImageButton(page)).toHaveAttribute('aria-pressed', 'false');
+    await expect(video).toHaveAttribute('data-image-hidden', 'false');
+    await expect(video).toHaveCSS('opacity', '1');
+  });
+});
+
+test.describe('T3 tracking speed', () => {
+  test('a slow tracker locks hand control with the 太慢 line and locked skeletons', async ({ context, page }) => {
+    // Registered after the default fake, so this one answers the worker URL.
+    await installFakeHands(context, { replyDelayMs: 150 });
+    await page.goto(handsUrl({ minFps: null }));
+    await openCamera(page);
+    const hand = await viewportCentre(page);
+    await expect.poll(async () => { try { await showHand(page, hand, 0.1); return true; } catch { return false; } }, { timeout: 45_000 }).toBe(true);
+    await expect(handStatus(page)).toHaveAttribute('data-state', 'slow', { timeout: 60_000 });
+    await expect(handStatus(page)).toContainText('太慢');
+    await expect(page.getByTestId('hand-overlay')).toHaveAttribute('data-hand-state', 'locked');
+  });
+
+  test('a CPU tracker at a good rate gives no 太慢 line, and ?hands=debug shows the delegate, the hand count and the threshold', async ({ context, page }) => {
+    await installFakeHands(context, { delegate: 'CPU' });
+    await page.goto(handsUrl({ debug: true }));
+    await expect(page.getByTestId('hand-debug')).toHaveCount(0);
+    await openCamera(page);
+    await expect(page.getByTestId('hand-debug')).toBeVisible();
+    const hand = await viewportCentre(page);
+    await expect.poll(async () => { try { await showHand(page, hand, 0.1); return true; } catch { return false; } }, { timeout: 45_000 }).toBe(true);
+    await expect(page.getByTestId('hand-debug')).toContainText('CPU', { timeout: 45_000 });
+    await expect(page.getByTestId('hand-debug')).toContainText('1 隻手', { timeout: 45_000 });
+    await expect(page.getByTestId('hand-debug')).toContainText('速度門檻 0 幀');
+    // The delegate is not a gate input: a CPU tracker with the speed gate off stays tracked and is never called too slow.
+    await expect(page.getByTestId('hand-overlay')).toHaveAttribute('data-hand-state', 'tracked');
+    await expect(page.locator('[data-testid="hand-status"][data-state="slow"]')).toHaveCount(0);
   });
 });

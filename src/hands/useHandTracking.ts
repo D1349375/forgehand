@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { ArmWorkerFrame, ArmWorkerResult, LandmarkFrame, TrackingDelegate } from '../try-on/arm-pose';
-import { RateWindow, trackingPlan } from './tracking-plan';
+import { frameClockStep, RateWindow, trackingPlan, VIDEO_FRAME_STALL_MS, type FrameClock } from './tracking-plan';
 
 export type TrackerStatus = 'off' | 'loading' | 'ready' | 'load-error' | 'track-error';
 
@@ -116,7 +116,10 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
     let lastCaptureAt = 0;
     let lastPose = false;
     const rateWindow = new RateWindow();
-    const usesVideoFrameCallback = typeof video.requestVideoFrameCallback === 'function';
+    // Video-frame callbacks while the browser keeps calling them; animation frames after a stall (hidden camera image) or without support.
+    let clock: FrameClock = typeof video.requestVideoFrameCallback === 'function' ? 'video-frame' : 'animation-frame';
+    let lastCallbackAt: number | null = null;
+    let stallTimer = 0;
     const loadTimeout = window.setTimeout(() => fail('load-error'), LOAD_TIMEOUT_MS);
 
     function setTrackerStatus(next: TrackerStatus) {
@@ -129,8 +132,8 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
       if (stopped) return;
       stopped = true;
       clearTimeout(loadTimeout);
-      if (usesVideoFrameCallback) video!.cancelVideoFrameCallback(frameHandle);
-      else cancelAnimationFrame(frameHandle);
+      clearInterval(stallTimer);
+      cancelFrame();
       worker.terminate();
       store.clear();
     }
@@ -139,11 +142,25 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
       stop();
       setTrackerStatus(next);
     }
+    function cancelFrame() {
+      if (clock === 'video-frame') video!.cancelVideoFrameCallback(frameHandle);
+      else cancelAnimationFrame(frameHandle);
+    }
     function scheduleFrame() {
-      frameHandle = usesVideoFrameCallback ? video!.requestVideoFrameCallback(captureFrame) : requestAnimationFrame(captureFrame);
+      frameHandle = clock === 'video-frame' ? video!.requestVideoFrameCallback(captureFrame) : requestAnimationFrame(captureFrame);
+    }
+    /** Moves the loop to animation frames when the browser stops calling video-frame callbacks. */
+    function checkClock() {
+      if (stopped) return;
+      const next = frameClockStep({ clock, lastCallbackAt, now: performance.now(), playing: !video!.paused && video!.readyState >= 2 });
+      if (next === clock) return;
+      cancelFrame();
+      clock = next;
+      scheduleFrame();
     }
     function captureFrame(now: number) {
       if (stopped) return;
+      if (clock === 'video-frame') lastCallbackAt = now;
       scheduleFrame();
       store.tick(now);
       if (pending && now - lastFrameAt > FRAME_WATCHDOG_MS) {
@@ -151,6 +168,8 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
         fail('track-error');
         return;
       }
+      // While nothing needs frames the rate is not measured; a window that spans the pause would report a false low rate.
+      if (!sendFrames.current && !pending) rateWindow.reset();
       if (!sendFrames.current || pending || now - lastFrameAt < FRAME_INTERVAL_MS || video!.readyState < 2 || video!.currentTime === lastVideoTime) return;
       const { videoWidth: width, videoHeight: height } = video!;
       if (!width || !height) return;
@@ -190,7 +209,9 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
         clearTimeout(loadTimeout);
         store.setDelegate(message.delegate);
         setTrackerStatus('ready');
+        lastCallbackAt = performance.now();
         scheduleFrame();
+        stallTimer = window.setInterval(checkClock, VIDEO_FRAME_STALL_MS);
         return;
       }
       pending = false;
