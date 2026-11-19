@@ -3,6 +3,7 @@
 import { HandLandmarker, PoseLandmarker, type NormalizedLandmark } from '@mediapipe/tasks-vision';
 import wasmLoader from '@mediapipe/tasks-vision/vision_wasm_module_internal.js?url';
 import wasmBinary from '@mediapipe/tasks-vision/vision_wasm_module_internal.wasm?url';
+import { TRACKED_HANDS } from '../hands/constants';
 import type { ArmSide, ArmWorkerFrame, ArmWorkerResult, TrackingDelegate } from './arm-pose';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
@@ -30,7 +31,7 @@ async function initialize() {
   const create = async (delegate: TrackingDelegate) => {
     const canvas = delegate === 'GPU' ? { canvas: new OffscreenCanvas(1, 1) } : {};
     const hand = await HandLandmarker.createFromOptions(wasmFiles('hand'), {
-      baseOptions: { modelAssetPath: handModel, delegate }, runningMode: 'VIDEO', numHands: 1, ...canvas,
+      baseOptions: { modelAssetPath: handModel, delegate }, runningMode: 'VIDEO', numHands: TRACKED_HANDS, ...canvas,
     });
     try {
       const pose = await PoseLandmarker.createFromOptions(wasmFiles('pose'), {

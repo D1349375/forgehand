@@ -39,3 +39,19 @@ export class RateWindow {
     this.frames = 0;
   }
 }
+/** How long a playing video may go without a video-frame callback before the capture loop switches clocks. Not a tuning constant. */
+export const VIDEO_FRAME_STALL_MS = 500;
+export type FrameClock = 'video-frame' | 'animation-frame';
+/**
+ * Which clock drives the capture loop. Chromium may stop calling
+ * requestVideoFrameCallback for a video it does not paint (a hidden camera
+ * image), so a playing video without a callback for VIDEO_FRAME_STALL_MS moves the loop to
+ * animation frames. It never moves back. A null lastCallbackAt (no baseline
+ * yet) keeps the clock.
+ */
+export function frameClockStep({ clock, lastCallbackAt, now, playing }:
+  { clock: FrameClock; lastCallbackAt: number | null; now: number; playing: boolean }): FrameClock {
+  if (clock === 'animation-frame') return clock;
+  if (!playing || lastCallbackAt === null) return clock;
+  return now - lastCallbackAt >= VIDEO_FRAME_STALL_MS ? 'animation-frame' : clock;
+}

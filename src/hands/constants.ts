@@ -1,7 +1,6 @@
 /**
  * Every tuning constant of hand control lives here, so tuning on a real webcam
- * touches one file. ROTATE_DEG_PER_PX, DOUBLE_TAP_MS and DOUBLE_TAP_PX are added
- * by the P1 tasks (rotate mode, double-pinch zoom).
+ * touches one file. The P1 tasks add their own constants (zoom, fist, explode, rotate).
  */
 
 /** Which hand point drives the cursor: the midpoint of thumb tip and index tip (landmarks 4 and 8), or the index knuckle (landmark 5). */
@@ -46,3 +45,7 @@ export const SPEED_HOLD_MS = 2000;
 export const CANCEL_NOTICE_MS = 4000;
 /** Longest part name shown in the badge. */
 export const BADGE_NAME_MAX = 12;
+/** Hands the worker tracks per frame. 1 restores the one-hand tracking cost; two-hand gestures then never start. */
+export const TRACKED_HANDS = 2;
+/** Two detections whose palm centres are closer than this many pixels are one hand. */
+export const DUPLICATE_HAND_PX = 40;

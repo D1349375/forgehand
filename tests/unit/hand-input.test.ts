@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import * as constants from '../../src/hands/constants';
-import { HAND_LOST_MS, HOVER_SETTLE_MS, TRACKING_LOSS_MS } from '../../src/hands/constants';
+import { DUPLICATE_HAND_PX, HAND_LOST_MS, HOVER_SETTLE_MS, TRACKING_LOSS_MS } from '../../src/hands/constants';
 import { handSample, landmarkToClient } from '../../src/hands/mapping';
 import { OneEuroFilter2D } from '../../src/hands/one-euro';
 import { initialPinchState, pinchStep, type PinchEvent, type PinchInput, type PinchState } from '../../src/hands/pinch';
 import { HAND_CONNECTIONS } from '../../src/hands/skeleton';
-import { LOCKED_COLOUR, MODE_COLOURS, overlayStyle } from '../../src/hands/style';
+import { dedupeHands } from '../../src/hands/slots';
+import { HAND_COLOUR, LINK_COLOUR, LOCKED_COLOUR, overlayStyle } from '../../src/hands/style';
 import { initialSettleState, pickTarget, settleStep } from '../../src/hands/targets';
 import { targetKey, type HandState, type Point, type ScreenTarget, type Target } from '../../src/hands/types';
 import { HOLOGRAM, SELECTION } from '../../src/scene/style';
@@ -22,6 +23,7 @@ describe('constants', () => {
       PINCH_ENGAGE_M: 0.03, PINCH_ENGAGE_FRAMES: 2, PINCH_RELEASE_M: 0.05, PINCH_RELEASE_FRAMES: 3,
       HOVER_SETTLE_MS: 150, HAND_LOST_MS: 300, DRAG_DEAD_ZONE_PX: 8, DRAG_GAIN: 1.5, ORBIT_DEG_PER_PX: 0.4,
       TRACKING_LOSS_MS: 300, ON_TRACKING_LOSS: 'cancel', MIN_CONTROL_FPS: 10, SPEED_HOLD_MS: 2000, CANCEL_NOTICE_MS: 4000, BADGE_NAME_MAX: 12,
+      TRACKED_HANDS: 2, DUPLICATE_HAND_PX: 40,
     });
   });
 });
@@ -77,6 +79,16 @@ describe('handSample', () => {
     expect(sample.points).toHaveLength(21);
   });
 
+  it('gives the palm as the mean of the wrist and the four knuckles', () => {
+    const sample = handSample(hand, wideView, video)!;
+    const palm = [0, 5, 9, 13, 17].map(index => sample.points[index]!);
+    expect(sample.palm.x).toBeCloseTo(palm.reduce((sum, p) => sum + p.x, 0) / 5, 9);
+    expect(sample.palm.y).toBeCloseTo(palm.reduce((sum, p) => sum + p.y, 0) / 5, 9);
+    // The fingers curling (pinch distance) does not move the palm.
+    const closed = handSample(syntheticHand({ cursor: { x: 0.5, y: 0.5 }, pinchM: 0.01 }), wideView, video)!;
+    expect(closed.palm.x).toBeCloseTo(sample.palm.x, 6);
+    expect(closed.palm.y).toBeCloseTo(sample.palm.y, 6);
+  });
   it('rejects a hand with fewer than 21 finite points', () => {
     expect(handSample({ ...hand, points: hand.points.slice(0, 20) }, wideView, video)).toBeNull();
     const broken = hand.points.map((point, index) => (index === 7 ? { ...point, x: Number.NaN } : point));
@@ -322,33 +334,26 @@ describe('pickTarget and settleStep', () => {
 });
 
 describe('overlayStyle and the skeleton', () => {
-  const states: HandState[] = ['none', 'tracked', 'hover', 'grab', 'orbit', 'locked'];
+  const states: HandState[] = ['none', 'tracked', 'hover', 'grab', 'orbit', 'locked', 'join', 'fist', 'hold'];
 
-  it('gives the two modes two different colours that differ from the edge cyan and the selection amber', () => {
-    const translate = overlayStyle({ state: 'tracked', mode: 'translate' });
-    const rotate = overlayStyle({ state: 'tracked', mode: 'rotate' });
-    expect(translate.colour).toBe(MODE_COLOURS.translate);
-    expect(rotate.colour).toBe(MODE_COLOURS.rotate);
-    expect(translate.colour).not.toBe(rotate.colour);
+  it('uses one hand colour for every state except locked, a different link colour, and none of the scene colours', () => {
     const taken = [HOLOGRAM.edgeColor, SELECTION.edgeColor].map(colour => colour.toLowerCase());
+    expect(LINK_COLOUR).not.toBe(HAND_COLOUR);
+    for (const colour of [HAND_COLOUR, LINK_COLOUR, LOCKED_COLOUR]) expect(taken).not.toContain(colour.toLowerCase());
     for (const state of states) {
-      for (const mode of ['translate', 'rotate'] as const) {
-        expect(taken).not.toContain(overlayStyle({ state, mode }).colour.toLowerCase());
-      }
+      const { colour } = overlayStyle({ state });
+      expect(colour).toBe(state === 'locked' ? LOCKED_COLOUR : HAND_COLOUR);
     }
   });
-
-  it('shows state by shape: rings, line width and grey dashes for locked', () => {
-    const style = (state: HandState) => overlayStyle({ state, mode: 'translate' });
-    expect(style('tracked')).toMatchObject({ dashed: false, lineWidth: 2, ring: 'none' });
-    expect(style('hover')).toMatchObject({ dashed: false, lineWidth: 2, ring: 'hollow' });
-    expect(style('grab')).toMatchObject({ dashed: false, lineWidth: 3.5, ring: 'filled' });
-    expect(style('orbit')).toMatchObject({ dashed: false, lineWidth: 3.5, ring: 'filled' });
-    expect(style('locked')).toMatchObject({ colour: LOCKED_COLOUR, dashed: true, ring: 'none' });
-    expect(overlayStyle({ state: 'locked', mode: 'rotate' }).colour).toBe(LOCKED_COLOUR);
-  });
-
-  it('has the 21 distinct MediaPipe hand connections between valid landmarks', () => {
+  it('shows state by shape: marks, line width and grey dashes for locked', () => {
+    const style = (state: HandState) => overlayStyle({ state });
+    expect(style('tracked')).toMatchObject({ dashed: false, lineWidth: 2, mark: 'none' });
+    expect(style('hover')).toMatchObject({ dashed: false, lineWidth: 2, mark: 'ring-hollow' });
+    expect(style('grab')).toMatchObject({ dashed: false, lineWidth: 3.5, mark: 'ring-filled' });
+    expect(style('orbit')).toMatchObject({ dashed: false, lineWidth: 3.5, mark: 'ring-filled' });
+    expect(style('join')).toMatchObject({ dashed: false, lineWidth: 3.5, mark: 'ring-filled' });
+    expect(style('locked')).toMatchObject({ colour: LOCKED_COLOUR, dashed: true, mark: 'none' });
+  });  it('has the 21 distinct MediaPipe hand connections between valid landmarks', () => {
     expect(HAND_CONNECTIONS).toHaveLength(21);
     expect(new Set(HAND_CONNECTIONS.map(([a, b]) => `${Math.min(a, b)}-${Math.max(a, b)}`)).size).toBe(21);
     for (const [a, b] of HAND_CONNECTIONS) {
@@ -357,5 +362,28 @@ describe('overlayStyle and the skeleton', () => {
     }
     // Every landmark is on at least one connection.
     expect(new Set(HAND_CONNECTIONS.flat()).size).toBe(21);
+  });
+});
+describe('dedupeHands', () => {
+  const sampleAt = (x: number, y: number) => handSample(syntheticHand({ cursor: { x, y }, pinchM: 0.06 }), { left: 0, top: 0, width: 1000, height: 1000 }, video)!;
+  it('keeps one of two detections whose palm centres are closer than the limit, the first', () => {
+    const first = sampleAt(0.5, 0.5);
+    const near = { ...sampleAt(0.5, 0.5), palm: { x: first.palm.x + DUPLICATE_HAND_PX - 1, y: first.palm.y } };
+    expect(dedupeHands([first, near])).toEqual([first]);
+    expect(dedupeHands([near, first])).toEqual([near]);
+  });
+  it('keeps two hands whose palm centres are farther apart', () => {
+    const first = sampleAt(0.3, 0.5);
+    const second = sampleAt(0.7, 0.5);
+    expect(dedupeHands([first, second])).toEqual([first, second]);
+    const edge = { ...first, palm: { x: first.palm.x + DUPLICATE_HAND_PX, y: first.palm.y } };
+    expect(dedupeHands([first, edge])).toHaveLength(2);
+  });
+  it('passes through none or one hand and honours a custom limit', () => {
+    expect(dedupeHands([])).toEqual([]);
+    const first = sampleAt(0.5, 0.5);
+    expect(dedupeHands([first])).toEqual([first]);
+    const near = { ...first, palm: { x: first.palm.x + 100, y: first.palm.y } };
+    expect(dedupeHands([first, near], 150)).toEqual([first]);
   });
 });

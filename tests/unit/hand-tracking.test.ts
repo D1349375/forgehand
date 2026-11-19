@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RateWindow, trackingPlan } from '../../src/hands/tracking-plan';
+import { frameClockStep, RateWindow, trackingPlan, VIDEO_FRAME_STALL_MS, type FrameClock } from '../../src/hands/tracking-plan';
 import { clientToNormalized, syntheticHand } from '../fixtures/synthetic-hand';
 
 describe('trackingPlan', () => {
@@ -103,5 +103,24 @@ describe('clientToNormalized', () => {
     const mid = clientToNormalized({ x: 500, y: 250 }, view, video);
     expect(mid.x).toBeCloseTo(0.5, 9);
     expect(mid.y).toBeCloseTo(0.5, 9);
+  });
+});
+describe('frameClockStep', () => {
+  const step = (clock: FrameClock, lastCallbackAt: number | null, now: number, playing = true) => frameClockStep({ clock, lastCallbackAt, now, playing });
+  it('keeps the video-frame clock while callbacks keep arriving', () => {
+    expect(step('video-frame', 1000, 1000 + VIDEO_FRAME_STALL_MS - 1)).toBe('video-frame');
+    expect(step('video-frame', 1000, 1000)).toBe('video-frame');
+  });
+  it('switches to animation frames once a playing video has had no callback for the stall time', () => {
+    expect(step('video-frame', 1000, 1000 + VIDEO_FRAME_STALL_MS)).toBe('animation-frame');
+    expect(step('video-frame', 1000, 9000)).toBe('animation-frame');
+  });
+  it('never switches while the video is paused or not ready, or before a first baseline', () => {
+    expect(step('video-frame', 1000, 9000, false)).toBe('video-frame');
+    expect(step('video-frame', null, 9000)).toBe('video-frame');
+  });
+  it('never switches back', () => {
+    expect(step('animation-frame', 9000, 9001)).toBe('animation-frame');
+    expect(step('animation-frame', null, 0, false)).toBe('animation-frame');
   });
 });

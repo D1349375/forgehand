@@ -9,6 +9,8 @@ const LANDMARKS = 21;
 const THUMB_TIP = 4;
 const INDEX_KNUCKLE = 5;
 const INDEX_TIP = 8;
+/** Wrist and the four knuckles: they stay still while the fingers curl. */
+const PALM_LANDMARKS: readonly number[] = [0, 5, 9, 13, 17];
 
 /**
  * Normalised landmark (display space) to client pixels. Landmarks are already
@@ -36,7 +38,7 @@ function pinchDistance(hand: HandLandmarks): number | null {
 }
 
 /**
- * One hand as screen points, cursor and pinch distance. Null for a hand with
+ * One hand as screen points, cursor, palm centre and pinch distance. Null for a hand with
  * fewer than 21 finite points or a view or video without a size.
  */
 export function handSample(hand: HandLandmarks, view: ViewBox, video: VideoSize, cursorPoint: CursorPoint = CURSOR_POINT): HandSample | null {
@@ -50,5 +52,9 @@ export function handSample(hand: HandLandmarks, view: ViewBox, video: VideoSize,
   const cursor = cursorPoint === 'index-knuckle'
     ? points[INDEX_KNUCKLE]!
     : { x: (points[THUMB_TIP]!.x + points[INDEX_TIP]!.x) / 2, y: (points[THUMB_TIP]!.y + points[INDEX_TIP]!.y) / 2 };
-  return { points, cursor: { x: cursor.x, y: cursor.y }, pinchM: pinchDistance(hand) };
+  const palm = {
+    x: PALM_LANDMARKS.reduce((sum, index) => sum + points[index]!.x, 0) / PALM_LANDMARKS.length,
+    y: PALM_LANDMARKS.reduce((sum, index) => sum + points[index]!.y, 0) / PALM_LANDMARKS.length,
+  };
+  return { points, cursor: { x: cursor.x, y: cursor.y }, palm, pinchM: pinchDistance(hand) };
 }
