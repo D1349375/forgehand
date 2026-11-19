@@ -45,7 +45,7 @@ test('示範資料明確標示，真實 WebGL 畫布可旋轉、縮放、重設'
   await page.getByRole('button', { name: '載入示範模型', exact: true }).click();
   await expect(modelName(page)).toHaveText(demoModel.name);
   await expect(page.getByText('這是預先建立的示範資料，並非 AI 生成。', { exact: true })).toBeVisible();
-  const canvas = page.getByTestId('viewport').locator('canvas');
+  const canvas = page.getByTestId('scene-canvas');
   await expect(canvas).toBeVisible();
   // Wait for OrbitControls damping to settle before comparing actual rendered pixels.
   await page.waitForTimeout(700);
@@ -86,7 +86,7 @@ test('模擬攝影機可開啟、關閉、重新開啟並保持 3D 疊圖', asyn
   await page.getByRole('button', { name: '開啟攝影機', exact: true }).click();
   const video = page.getByTestId('viewport').locator('video');
   await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.videoWidth)).toBeGreaterThan(0);
-  await expect(page.getByTestId('viewport').locator('canvas')).toBeVisible();
+  await expect(page.getByTestId('scene-canvas')).toBeVisible();
   // Retain references to the actual mock device tracks to verify release.
   await video.evaluate((element: HTMLVideoElement) => { (window as unknown as { testTracks: MediaStreamTrack[] }).testTracks = (element.srcObject as MediaStream).getTracks(); });
   await page.getByRole('button', { name: '關閉攝影機', exact: true }).click();
@@ -124,7 +124,7 @@ test('自由描述透過服務端請求，驗證成功後才替換模型', async
   await submit(page, prompt);
   await expect(modelName(page)).toHaveText('測試：未預編排的雙鏡頭與電池組件');
   expect(receivedPrompt).toBe(prompt);
-  await expect(page.getByTestId('viewport').locator('canvas')).toBeVisible();
+  await expect(page.getByTestId('scene-canvas')).toBeVisible();
 });
 
 test('模型服務失敗保留上一個成功模型，可重試', async ({ page }) => {
@@ -228,6 +228,6 @@ test('窄螢幕仍可操作文字與展示區', async ({ page }) => {
   await expect(page.getByLabel('物件描述', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '載入示範模型', exact: true }).click();
   await expect(modelName(page)).toHaveText(demoModel.name);
-  await expect(page.getByTestId('viewport').locator('canvas')).toBeVisible();
+  await expect(page.getByTestId('scene-canvas')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
