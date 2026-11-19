@@ -1,133 +1,147 @@
 # Hand manipulation — Design
 
-This design satisfies `requirements.md`. It follows the patterns of `agent-harness` and `workspace-v2`: pure modules unit-tested in Node (no DOM), thin React and Three.js wiring covered by Playwright, and one place for every rule. Requirement numbers (R…) refer to `requirements.md`.
+This design satisfies `requirements.md`. It follows the patterns of `agent-harness` and `workspace-v2`: pure modules unit-tested in Node (no DOM), thin React and Three.js wiring covered by Playwright, and one place for every rule. Requirement numbers (R…) refer to `requirements.md`; they are stable ids, so R73 and above were added on 2026-11-19.
+
+Tasks 1 and 2 (T1, T2) were built under the 2026-11-15 version of this design and are committed. Their sections below describe what was built; where the two-hand version changes their code, the change is marked with the later task that makes it (T3–T9). §15 lists all of those changes.
 
 ## 1. Approach
 
 The work splits into four layers, each depending only on the one above it:
 
 ```
-tracking     useHandTracking: one worker per camera session, frames out through a HandSource (R1–R7)
+tracking     useHandTracking: one worker per camera session, up to two hands per frame,
+             frames out through a HandSource (R1–R7, R73, R74, R76)
                ├─ useArmTracking (try-on, unchanged behaviour) consumes the same frames
                └─ useHandControl (this spec) consumes them too
-input        pure: landmark → screen mapping, One Euro cursor, pinch state machine, picking, settling (R12, R19–R23)
-gestures     pure: gates, pinch decision, HandController with a port interface, drag/orbit/rotate maths (R24–R42)
-wiring       SceneViewport grab and orbit sessions, the overlay canvas, the status line, App state (R8–R18, R43–R46)
+input        pure, per hand: landmark → screen mapping, One Euro cursor, pinch state machine,
+             fist state machine (T7), picking and settling; hand slots (R12, R19–R23, R78, R79, R89, R90)
+gestures     pure: gates, decisions, the two-hand HandController with a port interface, the join rule,
+             pair geometry, drag/orbit/zoom/explode/rotate maths (R24–R42, R81–R87, R91–R98)
+wiring       SceneViewport sessions, the overlay canvas, the status line, the debug panel,
+             App state: camera image, gates, commits (R8–R18, R43–R46, R75–R77)
 ```
 
-The **HandController** is the heart of the design. It is a plain class that receives one hand sample per tracking frame and a tick per video frame, and talks to the outside only through a small `HandPort` interface (pick, select, begin a grab, begin an orbit, press). Unit tests drive it with synthetic landmark sequences and a fake port, so every gesture rule is tested without a browser. In the app, `useHandControl` implements the port with `SceneViewport`'s new imperative methods and App's existing `pick` callback.
+The **HandController** is the heart of the design. It is a plain class that receives every hand sample of a tracking frame and a tick per video frame. It keeps one **track** per hand slot (filter, pinch state, settled target, later fist state) and at most one **session**: the running gesture, its owner hand and an optional joining hand. It talks to the outside only through a small `HandPort` interface (pick, select, begin a grab, begin an orbit, press; with the fist also activate, begin a hold and the explode amount). Unit tests drive it with synthetic landmark sequences and a fake port, so every gesture rule, including the two-hand arbitration, is tested without a browser. In the app, `useHandControl` implements the port with `SceneViewport`'s imperative methods and App's callbacks.
 
-A hand drag is a **session** owned by `SceneViewport`: it moves the part's scene node as a preview, exactly as the gizmo moves it, and on release calls the same `onTransform` callback the gizmo calls. App commits it through `updatePart`, as one undo step. Nothing in `shared/` changes.
+A hand drag is a **scene session** owned by `SceneViewport`: it moves the part's (or, with a fist, the object's) scene node as a preview, exactly as the gizmo moves it, and on release calls the same callback the gizmo calls (`onTransform`), or for an object the 物件 panel's path. App commits it as one undo step. A two-hand gesture does not create a second scene session: it feeds a second input into the owner's session (zoom into the orbit session, rotation into the grab session, explode amount next to the hold session). Nothing in `shared/` changes except the optional state-change flag of T9.
 
-The tracking worker file stays where it is (`src/try-on/arm.worker.ts`) and its protocol only gains an optional field, so the existing try-on fake in `arm-try-on.spec.ts` keeps matching and working.
+The tracking worker file stays where it is (`src/try-on/arm.worker.ts`) and its protocol only gained an optional field (T1), so the existing try-on fake in `arm-try-on.spec.ts` keeps matching and working.
 
 ## 2. Module layout
 
 ```
-src/try-on/arm-pose.ts             EDIT  ArmWorkerFrame gains `pose?: boolean` (T1)
-src/try-on/arm.worker.ts           EDIT  runs pose only when the frame asks for it (T1)
-src/try-on/useArmTracking.ts       EDIT  consumes a HandSource; same return shape and texts (T1)
-src/hands/useHandTracking.ts       NEW   worker lifecycle, capture loop, watchdogs, HandSource, rate (T1)
-src/hands/tracking-plan.ts         NEW   trackingPlan, RateWindow, pure (T1)
-src/hands/constants.ts             NEW   every tuning constant (T2; T6 and T7 add theirs)
-src/hands/types.ts                 NEW   Point, HandSample, Target, ScreenTarget, HandMode (T2)
-src/hands/mapping.ts               NEW   landmarkToClient, handSample (T2)
-src/hands/one-euro.ts              NEW   OneEuroFilter2D (T2)
-src/hands/pinch.ts                 NEW   pinchStep state machine (T2; T7 adds double tap)
-src/hands/targets.ts               NEW   pickTarget, targetKey, settleStep (T2)
-src/hands/skeleton.ts              NEW   HAND_CONNECTIONS, drawHand (T2); drawRing, drawBadge (T5)
-src/hands/style.ts                 NEW   MODE_COLOURS, overlayStyle (T2; T3 completes)
-src/hands/HandOverlay.tsx          NEW   overlay <canvas> with an imperative draw handle (T2)
-src/hands/useHandControl.ts        NEW   T2: maps frames and draws the skeleton; T4: runs the controller
-src/hands/gate.ts                  NEW   handGate, speedStep (T3)
-src/hands/decide.ts                NEW   decidePinch (T3)
-src/hands/controller.ts            NEW   HandController, HandPort, GrabSession, OrbitSession (T3)
-src/hands/text.ts                  NEW   badgeText, shortenName, handStatus, debugLine (T3)
-src/hands/stats.ts                 NEW   HandStats accumulator (T3)
-src/hands/drag.ts                  NEW   dragPosition, orbitOffset (T3); rotateEuler (T6)
-src/hands/screen-targets.ts        NEW   ScreenTargets registry (T4, empty; T6 registers the mode buttons)
-src/hands/HandDebugPanel.tsx       NEW   ?hands=debug panel (T5)
-src/hands/HandModeButtons.tsx      NEW   手勢移動 / 手勢旋轉 in the camera view (T6)
-src/hands/keys.ts                  NEW   handModeKey, pure (T6)
-src/scene/hand-sessions.ts         NEW   createGrabSession, createOrbitSession (T4; T6 rotate; T7 frameBox)
-src/scene/SceneViewport.tsx        EDIT  hitTest, beginPartGrab, beginOrbit, cancel rules, onTransform kind (T4);
-                                         Home key (T6); frameTarget (T7)
-src/App.tsx                        EDIT  手勢 switch and tracking (T1); overlay (T2); controller, gates, status line (T4);
-                                         debug panel (T5); hand mode, buttons, keys (T6)
-src/styles.css                     EDIT  .hand-overlay, .hand-status, .hand-debug, .hand-modes rules only
-README.md                          EDIT  privacy line (T1); hand control section (T5; T6 and T7 add a line each)
-.kiro/steering/structure.md        EDIT  a `src/hands/` line (T1)
+src/try-on/arm-pose.ts             T1 ✓  ArmWorkerFrame gains `pose?: boolean`
+src/try-on/arm.worker.ts           T1 ✓  pose only when the frame asks for it
+                                   T3    numHands: TRACKED_HANDS
+src/try-on/useArmTracking.ts       T1 ✓  consumes a HandSource; same return shape and texts
+src/hands/useHandTracking.ts       T1 ✓  worker lifecycle, capture loop, watchdogs, HandSource, rate
+                                   T3    capture-loop fallback when video-frame callbacks stall
+src/hands/tracking-plan.ts         T1 ✓  trackingPlan, RateWindow;  T3 frameClockStep
+src/hands/constants.ts             T2 ✓  P0 constants;  T3, T4, T6–T8 add theirs
+src/hands/types.ts                 T2 ✓  Point, HandSample, Target, ScreenTarget, HandState
+                                   T3    HandSlot, HandView per hand, OverlayFrame, GestureKind, palm; no HandMode
+                                   T4    HandState 'join';  T7 'fist', 'hold', curl
+src/hands/mapping.ts               T2 ✓  landmarkToClient, handSample;  T3 palm;  T7 curl
+src/hands/one-euro.ts              T2 ✓  OneEuroFilter2D (one per hand, plus a palm filter per hand from T4)
+src/hands/pinch.ts                 T2 ✓  pinchStep (unchanged; one state per hand)
+src/hands/targets.ts               T2 ✓  pickTarget, settleStep (unchanged; one state per hand)
+src/hands/skeleton.ts              T2 ✓  HAND_CONNECTIONS, drawHand
+                                   T4    drawRing, drawBadge, badgeBox, drawLink;  T7 drawSquare;  T8 drawArc
+src/hands/style.ts                 T2 ✓  T3: HAND_COLOUR, LINK_COLOUR, overlayStyle({ state }) without a mode;  T7 fist marks
+src/hands/HandOverlay.tsx          T2 ✓  T3: draws up to two hands, per-hand attributes;  T5: marks, badges, link
+src/hands/useHandControl.ts        T2 ✓  part 1 (skeleton of hands[0])
+                                   T3    every hand, gate style, status line, debug numbers;  T5 the controller
+src/hands/slots.ts                 NEW   T3 dedupeHands;  T4 assignHands
+src/hands/gate.ts                  NEW   T3 handGate, speedStep
+src/hands/text.ts                  NEW   T3 handStatus, trackingDebugLine;  T4 shortenName, badgeText, debugLine
+src/hands/HandDebugPanel.tsx       NEW   T3 tracking numbers;  T5 gesture counters
+src/hands/decide.ts                NEW   T4 decidePinch;  T7 decideFist
+src/hands/pair.ts                  NEW   T4 pairSpan, pairAngle, angleDelta, beyondDeadZone
+src/hands/join.ts                  NEW   T4 joinGesture (no rows);  T6, T7, T8 add one row each
+src/hands/controller.ts            NEW   T4 HandController, HandPort, session interfaces
+src/hands/stats.ts                 NEW   T4 HandStats
+src/hands/drag.ts                  NEW   T4 dragPosition, orbitOffset;  T6 zoomRatio;  T7 explodeAmount;  T8 rotateAboutView
+src/hands/fist.ts                  NEW   T7 curlRatio, fistStep
+src/scene/hand-sessions.ts         NEW   T5 createGrabSession, createOrbitSession, grabStillValid;
+                                         T6 orbit zoom;  T7 createHoldSession;  T8 grab rotation
+src/scene/SceneViewport.tsx        EDIT  T5 hitTest, beginPartGrab, beginOrbit, busy and cancel rules, onTransform kind;
+                                         T6 data-camera-target;  T7 beginObjectHold, onObjectMove
+src/App.tsx                        EDIT  T1 ✓ 手勢 switch and tracking;  T2 ✓ overlay;
+                                         T3 camera image toggle, slow state, gate, status line, debug panel;
+                                         T5 controller wiring, onTransform kind, cancel notice;
+                                         T7 object move, activation and explode from hands;  T8 move-and-rotate notice;
+                                         T9 cameraHidden from agent events
+src/styles.css                     EDIT  .hand-overlay (T2 ✓); T3 .hand-status, .hand-debug only if needed
+src/agent/apply-state.ts, src/agent/useAgentRun.ts     EDIT  T9
+shared/agent.ts                    EDIT  T9 StateChangeSchema.cameraHidden (optional), SetCameraImageDetailSchema
+server/tools/set-camera-image.ts   NEW   T9
+server/tools/index.ts, server/tools/helpers.ts, server/agent.ts   EDIT  T9
+README.md                          EDIT  T1 ✓ privacy line;  T5 hand control section;  T6–T9 one line each
+.kiro/steering/structure.md        EDIT  T1 ✓ a `src/hands/` line
 
-tests/fixtures/synthetic-hand.ts   NEW   syntheticHand(): 21 image + 21 world landmarks with a given pinch (T1)
-tests/unit/hand-tracking.test.ts   NEW   trackingPlan, rate window (T1)
-tests/unit/hand-input.test.ts      NEW   mapping, One Euro, pinch, picking, settling (T2)
-tests/unit/hand-controller.test.ts NEW   gates, decision, controller with a fake port, texts, stats (T3)
-tests/unit/hand-drag.test.ts       NEW   drag and orbit maths (T3); rotate maths (T6); framing maths (T7)
-tests/unit/hand-sessions.test.ts   NEW   grab sessions on a Three.js node tree, grabStillValid (T4); rotate sessions (T6)
-tests/e2e/fake-hands.ts            NEW   installFakeHands, showHand, hideHand, fakeHandsLog (T1)
-tests/e2e/hand-control.spec.ts     NEW   grows task by task (T1–T7)
-tests/e2e/workbench.spec.ts        EDIT  installFakeHands only (T1)
-tests/e2e/visual-backgrounds.spec.ts EDIT installFakeHands only (T1)
+tests/fixtures/synthetic-hand.ts   T1 ✓  syntheticHand, clientToNormalized;  T7 fist option
+tests/unit/hand-tracking.test.ts   T1 ✓  trackingPlan, rate window;  T3 frameClockStep
+tests/unit/hand-input.test.ts      T2 ✓  mapping, One Euro, pinch, picking, settling;
+                                   T3    palm, dedupeHands, overlayStyle without a mode;  T4 assignHands
+tests/unit/hand-gate.test.ts       NEW   T3 gates, speed, handStatus, trackingDebugLine
+tests/unit/hand-controller.test.ts NEW   T4 decision, join rule, pair geometry, controller with a fake port,
+                                         texts, stats, badge boxes;  T6–T8 extend
+tests/unit/hand-drag.test.ts       NEW   T4 drag and orbit maths;  T6 zoom;  T7 object move and explode;  T8 rotate
+tests/unit/hand-sessions.test.ts   NEW   T5 grab and orbit sessions, grabStillValid;  T6–T8 extend
+tests/unit/hand-fist.test.ts       NEW   T7 curlRatio, fistStep
+tests/e2e/fake-hands.ts            T1 ✓  installFakeHands, showHand, hideHand, fakeHandsLog;  T3 showHands;  T7 fists
+tests/e2e/hand-control.spec.ts     T1 ✓, T2 ✓;  grows task by task (T3–T9)
+tests/e2e/workbench.spec.ts        T1 ✓  installFakeHands only
+tests/e2e/visual-backgrounds.spec.ts T1 ✓ installFakeHands only
 ```
 
-`src/hands/` never imports `server/`. Pure modules (`mapping`, `one-euro`, `pinch`, `targets`, `gate`, `decide`, `controller`, `text`, `stats`, `drag`, `style`) import only Three.js math classes and each other, so they run in Vitest under Node like `shared/bounds.ts`.
+`src/hands/` never imports `server/`. Pure modules (`mapping`, `one-euro`, `pinch`, `targets`, `slots`, `gate`, `decide`, `pair`, `join`, `controller`, `text`, `stats`, `drag`, `fist`, `style`, and `badgeBox` in `skeleton`) import only Three.js math classes and each other, so they run in Vitest under Node like `shared/bounds.ts`.
 
 ## 3. Shared tracking
 
 ### 3.1 Worker protocol (`arm-pose.ts`, `arm.worker.ts`)
 
-`ArmWorkerFrame` gains one optional field:
+`ArmWorkerFrame` gained one optional field (T1):
 
 ```ts
 export interface ArmWorkerFrame { bitmap: ImageBitmap; width: number; height: number; timestamp: number; pose?: boolean }
 ```
 
-The worker runs pose only when `pose !== false` and the existing `POSE_INTERVAL_MS` has passed; otherwise it sends `body: []` and resets `lastPose`, so the next try-on frame runs pose at once. A missing field keeps today's behaviour. The flag rides on the frame, not on a separate message, because the try-on fake in `arm-try-on.spec.ts` treats every message as a frame and would fail on a message without a bitmap (R5).
+The worker runs pose only when `pose !== false` and the existing `POSE_INTERVAL_MS` has passed; otherwise it sends `body: []` and resets `lastPose`, so the next try-on frame runs pose at once. A missing field keeps the old behaviour. The flag rides on the frame, not on a separate message, because the try-on fake in `arm-try-on.spec.ts` treats every message as a frame and would fail on a message without a bitmap (R5). The worker still loads and warms both models at start (R3); §14 lists lazy pose loading as a later improvement.
 
-The worker still loads and warms both models at start (R3). Loading pose lazily would make hand control ready about 4 s sooner, but the first try-on frame would then block on a download and a shader compile inside the frame handler and could hit the 10 s watchdog. Keeping today's start-up is the low-risk choice; §14 lists it as a later improvement.
+**Two hands (T3, R73).** `HandLandmarker.createFromOptions` gets `numHands: TRACKED_HANDS` (2, from `src/hands/constants.ts`) instead of 1. Nothing else in the worker changes: it already maps every detected hand into `hands`, and `ArmTracker` already ranks candidates over all hands of a frame, so try-on keeps working and its fake (one hand) is unaffected. The handedness label is still passed through for try-on, which uses it as a hint; hand control ignores it (R78), because frames are mirrored before tracking and MediaPipe documents that a mirrored image inverts the labels.
+
+**Expected cost (R74).** The imported prototype measured, on the user's 2-core laptop with Intel HD 620, a median of 34 ms per frame for one hand plus pose on the GPU, and 552 ms for two hands plus pose on the CPU (`docs/PRIOR_WORK.md`). With `numHands: 2`, MediaPipe's tracking re-runs palm detection while fewer hands are tracked than allowed (its `minHandPresenceConfidence` rule re-triggers detection), so with one hand in view palm detection probably runs on every frame instead of only after a loss, and a second hand adds a second landmark pass. Our estimate, not a measurement: about 1.5–2× the one-hand inference time on the GPU, roughly 50–70 ms, which with one frame in flight gives about 14–20 frames per second. That is above `MIN_CONTROL_FPS` (10) but leaves less margin. The speed gate stays unchanged (§5.1). The T3 report asks the reviewer to measure one and two hands on the real webcam with `?hands=debug`; if two hands are too slow, `TRACKED_HANDS = 1` restores the old cost and two-hand gestures simply never start.
 
 ### 3.2 `useHandTracking` (`src/hands/useHandTracking.ts`)
 
-The worker lifecycle, the capture loop, the load timeout and the per-frame watchdog move here from `useArmTracking` with their logic unchanged (frame interval 30 ms, longest edge 640 px, mirrored copy, one frame in flight).
+The worker lifecycle, the capture loop, the load timeout and the per-frame watchdog moved here from `useArmTracking` (T1) with their logic unchanged (frame interval 30 ms, longest edge 640 px, mirrored copy, one frame in flight).
 
 ```ts
 export type TrackerStatus = 'off' | 'loading' | 'ready' | 'load-error' | 'track-error';
 export interface TrackedFrame extends LandmarkFrame {
-  requestedAt: number;   // the video-frame callback time the frame was captured at
-  capturedAt: number;    // performance.now() at capture
-  receivedAt: number;
-  inferenceMs: number;
-  pose: boolean;         // pose was requested for this frame
+  requestedAt: number; capturedAt: number; receivedAt: number; inferenceMs: number; pose: boolean;
 }
 export interface HandSource {
   latest(): TrackedFrame | null;
   subscribe(listener: (frame: TrackedFrame) => void): () => void;
-  /** Called on every video frame while running, with or without a result; drives time-outs. */
   onTick(listener: (now: number) => void): () => void;
-  /** Frames returned per second over the last full second; updated once a second without a React render. */
   rate(): number | null;
   delegate(): TrackingDelegate | null;
 }
-export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, options: {
-  running: boolean;     // camera is on
-  needed: boolean;      // 手勢 is on or try-on is active
-  wantPose: boolean;    // try-on is active
-  mirrored: boolean;
-  onRate?: (fps: number, now: number) => void;  // once a second
-}): { source: HandSource; status: TrackerStatus };
+export function useHandTracking(videoRef, options: { running; needed; wantPose; mirrored; onRate? }): { source: HandSource; status: TrackerStatus };
 ```
 
-A pure helper in `src/hands/tracking-plan.ts` decides what the hook does, so it is unit-tested without React; the same file holds `RateWindow`, the once-a-second frame counter:
+`trackingPlan` (pure, `tracking-plan.ts`) decides the worker's life: start on first need, keep it while the camera stays on, send no frames while not needed, stop with the camera (R1, R2, R9, R66). Listeners run synchronously in the worker's `onmessage`; the hook calls `setState` only for status changes (R4, R64).
+
+**Capture-loop fallback (T3, R76).** Chromium may stop calling `requestVideoFrameCallback` for a video it does not paint, and whether an `opacity: 0` video counts as painted is not specified. The loop therefore checks its own clock. A pure helper in `tracking-plan.ts`:
 
 ```ts
-export function trackingPlan(input: { running: boolean; needed: boolean; started: boolean }):
-  { worker: 'start' | 'keep' | 'stop' | 'none'; sendFrames: boolean };
+export type FrameClock = 'video-frame' | 'animation-frame';
+export function frameClockStep(input: { clock: FrameClock; lastCallbackAt: number | null; now: number; playing: boolean }): FrameClock;
 ```
 
-- The worker starts the first time `running && needed` holds, and stops (terminated) when `running` turns false or on unmount (R1, R66).
-- While `running` stays true, the worker is kept even when `needed` turns false; frames are simply not sent (R9: no hand-only inference). Turning 手勢 or try-on back on resumes at once, without the 20–30 s reload (R2).
-- `wantPose` is read from a ref when each frame is captured and put into `ArmWorkerFrame.pose` (R3).
-- Listeners run synchronously in the worker's `onmessage`; the hook never calls `setState` per frame (R4, R64). `status` changes only on load, ready and error.
+returns `'animation-frame'` when the clock is `'video-frame'`, the video is playing (`readyState >= 2`, not paused) and no video-frame callback has arrived for `VIDEO_FRAME_STALL_MS` (500 ms, a local constant of the hook, not a tuning constant); otherwise it keeps the clock. A `setInterval` of `VIDEO_FRAME_STALL_MS` runs while the worker is ready and asks `frameClockStep`; on a switch it cancels the pending video-frame callback and schedules `captureFrame` with `requestAnimationFrame` for the rest of the camera session. The existing `video.currentTime === lastVideoTime` check already skips repeated video frames, so the rAF loop sends no duplicates; ticks and the watchdog are unchanged. The interval is cleared in `stop()` (R66). The code path is the one already used when `requestVideoFrameCallback` is missing, so the fallback is small.
 
 ### 3.3 `useArmTracking` as a consumer
 
@@ -136,143 +150,154 @@ export function useArmTracking(source: HandSource, tracker: TrackerStatus, enabl
   { sample: RefObject<ArmSample | null>; status: ArmTrackingStatus; stats: ArmTrackingStats | null };
 ```
 
-It subscribes while `enabled` (try-on active), runs `ArmTracker.update(frame, frame.capturedAt)`, and keeps today's `validUntil` rule, `searching`/`tracking` switching, once-a-second stats and the `ArmTrackingStatus` values: `off` when not enabled, `loading` while the tracker loads, `load-error`/`track-error` from the tracker, otherwise `searching` or `tracking`. The return shape is unchanged, so App's try-on line and `SceneViewport`'s `tryOn` prop do not change (R5). Stats count only frames received while try-on is on, as today.
+Unchanged since T1. It subscribes while try-on is active and runs `ArmTracker.update(frame, frame.capturedAt)` on every frame, with all of its hands (R5, R73).
 
 ### 3.4 App: the 手勢 switch and tracking (R8–R11)
 
+Built in T1: `handsOn` (default `true`, reset in `stopCamera` and on a failed start); `useHandTracking(videoRef, { running: camera === 'on', needed: handsOn || tryOnActive, wantPose: tryOnActive, mirrored, onRate })`; the 手勢 button after 護臂試戴 while the camera is on. T3 passes `onRate` (§5.1).
+
+### 3.5 The camera image (T3, R75–R77)
+
 ```ts
-const [handsOn, setHandsOn] = useState(true);          // reset to true in stopCamera and on a failed start
-const cameraOn = camera === 'on';
-const tracking = useHandTracking(videoRef, { running: cameraOn, needed: handsOn || tryOnActive, wantPose: tryOnActive, mirrored, onRate });
-const armTracking = useArmTracking(tracking.source, tracking.status, tryOnActive);
+const [cameraHidden, setCameraHidden] = useState(false);   // reset to false in stopCamera and on a failed start
 ```
 
-The 手勢 button sits in the first `.stage-toolbar` button group after 護臂試戴, rendered only while `camera === 'on'`: `<button type="button" aria-pressed={handsOn} className="button …active">手勢</button>`. It stays enabled during agent runs (switching it changes no data). When it turns off, the controller is reset (a running drag is cancelled, R39) and the overlay, status line and mode buttons unmount (R9).
+- **Button.** After 手勢 in the first `.stage-toolbar` group, only while `camera === 'on'`: `<button type="button" className={`button ${cameraHidden ? 'active' : ''}`} aria-pressed={cameraHidden}>隱藏鏡頭畫面</button>`. It is not disabled during agent runs (it changes no data). The name contains none of 開啟攝影機, 關閉攝影機, 取消開啟, 即時攝影機背景, 手勢, 護臂試戴, 提高背景對比 (R75); new tests use `exact: true`.
+- **Hiding.** The video's class becomes `camera-video ${camera === 'on' && !cameraHidden ? 'visible' : ''} ${mirrored ? 'mirrored' : ''}`. The existing rule `.camera-video { opacity: 0 }` without `visible` hides it, so the viewport's own background and grid, the same backdrop as with the camera off, show through. `srcObject`, `play()` and the element stay as they are; no `display: none`. The video gets `data-image-hidden="true|false"` for tests. The capture loop keeps running through §3.2's fallback if needed.
+- **Unchanged.** The 3D scene, the overlay, the try-on cuff, the status lines and `mirrored`.
+- **Agent (T9).** `useAgentRun` gets `setCameraHidden(hidden)`; App applies it only while `camera === 'on'` (§10).
 
 ## 4. Input pipeline (pure)
 
 ### 4.1 Constants (`constants.ts`, R47)
 
-| Constant | Default | Meaning |
-|---|---|---|
-| `CURSOR_POINT` | `'pinch-midpoint'` | `'pinch-midpoint'` (landmarks 4 and 8) or `'index-knuckle'` (landmark 5) |
-| `CURSOR_MIN_CUTOFF` | 1.0 Hz | One Euro minimum cutoff |
-| `CURSOR_BETA` | 0.01 (per px/s) | One Euro speed coefficient |
-| `CURSOR_D_CUTOFF` | 1.0 Hz | One Euro derivative cutoff |
-| `PINCH_ENGAGE_M` / `PINCH_ENGAGE_FRAMES` | 0.03 m / 2 | R20 |
-| `PINCH_RELEASE_M` / `PINCH_RELEASE_FRAMES` | 0.05 m / 3 | R20 |
-| `HOVER_SETTLE_MS` | 150 | R23 |
-| `HAND_LOST_MS` | 300 | overlay hides; cursor filter and an idle pinch reset |
-| `DRAG_DEAD_ZONE_PX` | 8 | R29 |
-| `DRAG_GAIN` | 1.5 | R30; 1 keeps the grabbed point under the cursor |
-| `ORBIT_DEG_PER_PX` | 0.4 | R35; about a mouse orbit's speed on a 1000 px tall view |
-| `TRACKING_LOSS_MS` | 300 | R37 |
-| `ON_TRACKING_LOSS` | `'cancel'` | R37, `'cancel' \| 'keep'` |
-| `MIN_CONTROL_FPS` / `SPEED_HOLD_MS` | 10 / 2000 | R40 |
-| `CANCEL_NOTICE_MS` | 4000 | R43 |
-| `BADGE_NAME_MAX` | 12 | R16 |
-| `ROTATE_DEG_PER_PX` (T6) | 0.5 | R57 |
-| `DOUBLE_TAP_MS` / `DOUBLE_TAP_PX` (T7) | 400 / 30 | R60 |
+| Constant | Default | Task | Meaning |
+|---|---|---|---|
+| `CURSOR_POINT` | `'pinch-midpoint'` | T2 ✓ | `'pinch-midpoint'` (landmarks 4 and 8) or `'index-knuckle'` (landmark 5) |
+| `CURSOR_MIN_CUTOFF` / `CURSOR_BETA` / `CURSOR_D_CUTOFF` | 1.0 Hz / 0.01 / 1.0 Hz | T2 ✓ | One Euro filter |
+| `PINCH_ENGAGE_M` / `PINCH_ENGAGE_FRAMES` | 0.03 m / 2 | T2 ✓ | R20 |
+| `PINCH_RELEASE_M` / `PINCH_RELEASE_FRAMES` | 0.05 m / 3 | T2 ✓ | R20 |
+| `HOVER_SETTLE_MS` | 150 | T2 ✓ | R23 |
+| `HAND_LOST_MS` | 300 | T2 ✓ | a hand's skeleton hides; its filter and an idle pinch reset |
+| `DRAG_DEAD_ZONE_PX` | 8 | T2 ✓ | R29, also the fist move (R92) |
+| `DRAG_GAIN` | 1.5 | T2 ✓ | R30, also the fist move |
+| `ORBIT_DEG_PER_PX` | 0.4 | T2 ✓ | R35 |
+| `TRACKING_LOSS_MS` | 300 | T2 ✓ | R37, R84 |
+| `ON_TRACKING_LOSS` | `'cancel'` | T2 ✓ | R37 |
+| `MIN_CONTROL_FPS` / `SPEED_HOLD_MS` | 10 / 2000 | T2 ✓ | R40 |
+| `CANCEL_NOTICE_MS` | 4000 | T2 ✓ | R43 |
+| `BADGE_NAME_MAX` | 12 | T2 ✓ | R16 |
+| `TRACKED_HANDS` | 2 | T3 | R73; 1 restores one-hand tracking |
+| `DUPLICATE_HAND_PX` | 40 | T3 | R78; palm centres closer than this are one hand |
+| `HAND_MATCH_PX` | 160 | T4 | R78; farther than this from a tracked slot is a new hand |
+| `TWO_HAND_MIN_SPAN_PX` | 60 | T4 | R83, R87, R96 |
+| `ZOOM_DEAD_ZONE_PX` | 12 | T6 | R87 |
+| `FIST_ENABLED` | `true` | T7 | R89 |
+| `FIST_ENGAGE_RATIO` / `FIST_ENGAGE_FRAMES` | 1.0 / 3 | T7 | R89 |
+| `FIST_RELEASE_RATIO` / `FIST_RELEASE_FRAMES` | 1.25 / 3 | T7 | R89 |
+| `EXPLODE_DEAD_ZONE_PX` | 12 | T7 | R93 |
+| `EXPLODE_FULL_FRACTION` | 0.5 | T7 | R93; spreading by half the view height goes from 0 to fully exploded |
+| `ROTATE_DEAD_ZONE_DEG` | 5 | T8 | R96 |
+
+T3 removes the header comment's mention of `ROTATE_DEG_PER_PX`, `DOUBLE_TAP_MS` and `DOUBLE_TAP_PX`, which are no longer added.
 
 ### 4.2 Types (`types.ts`)
 
+T2 built `Point`, `HandMode`, `HandState`, `HandSample`, `Target`, `ScreenTarget`, `HandView` and `targetKey`. T3 reshapes them for two hands:
+
 ```ts
-export interface Point { x: number; y: number }              // client (CSS) pixels
-export type HandMode = 'translate' | 'rotate';
+export interface Point { x: number; y: number }                  // client (CSS) pixels
+export type HandSlot = 0 | 1;
+export type HandState = 'none' | 'tracked' | 'hover' | 'grab' | 'orbit' | 'locked'
+  | 'join'                 // T4: the second hand of a two-hand gesture
+  | 'fist' | 'hold';       // T7
 export interface HandSample {
   points: Point[];          // the 21 landmarks in client pixels, for drawing
-  cursor: Point;            // unfiltered CURSOR_POINT in client pixels
+  cursor: Point;            // unfiltered CURSOR_POINT
+  palm: Point;              // T3: mean of landmarks 0, 5, 9, 13, 17; used for slots and the fist
   pinchM: number | null;    // world distance 4–8 in metres; null without world landmarks
+  curl?: number | null;     // T7: curl ratio (§9.1); null without world landmarks
 }
-export type Target =
-  | { kind: 'empty' }
-  | { kind: 'screen'; id: string; label: string }
-  | { kind: 'part'; objectId: string; partId: string; label: string; hit: Vector };  // hit = world point
+export type Target = { kind: 'empty' } | { kind: 'screen'; id: string; label: string }
+  | { kind: 'part'; objectId: string; partId: string; label: string; hit: { x: number; y: number; z: number } };
 export interface ScreenTarget { id: string; label: string; left: number; top: number; right: number; bottom: number }
+export type GestureKind = 'none' | 'grab' | 'orbit' | 'press' | 'zoom' | 'hold' | 'explode' | 'rotate';
+export interface HandView {
+  slot: HandSlot; state: HandState; targetKey: string;
+  points: readonly Point[]; cursor: Point; palm: Point;
+  badge: string | null;                       // drawn from T5
+}
+export interface OverlayFrame {
+  hands: readonly HandView[];                 // at most two, in slot order
+  gesture: GestureKind;
+  link: { from: Point; to: Point } | null;    // the line between the hands (R86)
+  arc: { centre: Point; fromDeg: number; toDeg: number } | null;   // T8
+}
 ```
 
-`targetKey(target)` gives `''`, `screen:{id}` or `{objectId}:{partId}`; it is what `data-hand-target` shows (R18) and what settling compares.
+`HandMode` and `HandView.mode` are removed (there is no hand mode). `targetKey` is unchanged.
 
 ### 4.3 Mapping (`mapping.ts`, R7, R12)
 
-Landmarks arrive in display space, because the frame is flipped before tracking when the video is mirrored (R7). The mapping therefore has no mirror branch; it only undoes `object-fit: cover`:
+Built in T2. Landmarks arrive in display space, because the frame is flipped before tracking when the video is mirrored (R7). The mapping only undoes `object-fit: cover`:
 
 ```ts
-export function landmarkToClient(point: { x: number; y: number }, view: { left: number; top: number; width: number; height: number },
-  video: { width: number; height: number }): Point {
-  const scale = Math.max(view.width / video.width, view.height / video.height);
-  const offsetX = (view.width - video.width * scale) / 2, offsetY = (view.height - video.height * scale) / 2;
-  return { x: view.left + offsetX + point.x * video.width * scale, y: view.top + offsetY + point.y * video.height * scale };
-}
+export function landmarkToClient(point, view, video): Point;
 export function handSample(hand: HandLandmarks, view, video, cursorPoint = CURSOR_POINT): HandSample | null;
 ```
 
-`view` is the video element's bounding rectangle, read once per tracking frame; `video` is the frame's `width`/`height` (the video's own size, as today). `handSample` returns `null` for a hand with fewer than 21 finite points. The overlay canvas and the scene canvas cover the same `.viewport` box as the video, so the same client points serve drawing and picking.
+T3 adds `palm` (the mean of the client points 0, 5, 9, 13 and 17: the wrist and the four knuckles, which stay still while the fingers curl). T7 adds `curl` (§9.1). `handSample` still returns `null` for a hand with fewer than 21 finite points.
 
 ### 4.4 One Euro filter (`one-euro.ts`, R19)
 
-`OneEuroFilter2D` (Casiez et al., CHI 2012) with `filter(point, timeMs)` and `reset()`, per axis: `alpha(cutoff, dt) = 1 / (1 + 1 / (2π · cutoff · dt))`, derivative smoothed with `CURSOR_D_CUTOFF`, `cutoff = minCutoff + beta · |speed|`. The first sample after a reset passes through unchanged. The controller resets it when the hand has been missing for `HAND_LOST_MS`.
+Built in T2: `OneEuroFilter2D` (Casiez et al., CHI 2012) with `filter(point, timeMs)` and `reset()`. From T4 each track owns two: one for the cursor and one for the palm centre (the slot matching and the fist use the palm). A track's filters reset when its hand has been missing for `HAND_LOST_MS`.
 
-### 4.5 Pinch state machine (`pinch.ts`, R20, R21, R29, R60)
+### 4.5 Pinch state machine (`pinch.ts`, R20, R21, R29)
 
-```ts
-export interface PinchState {
-  engaged: boolean;
-  streak: number;                 // consecutive frames beyond the threshold that would change `engaged`
-  handSeenAt: number | null;      // last frame with a hand
-  missing: boolean;               // hand currently missing
-  engagePoint: Point | null;      // filtered cursor at engage
-  moved: boolean;                 // left the dead zone since engage
-  lastTap: { at: number; point: Point } | null;   // T7
-}
-export type PinchInput = { kind: 'hand'; cursor: Point; pinchM: number | null } | { kind: 'none' } | { kind: 'tick' };
-export type PinchEvent =
-  | { type: 'found' } | { type: 'lost'; engaged: boolean }
-  | { type: 'engage'; point: Point } | { type: 'drag-start' }
-  | { type: 'release'; tap: boolean; point: Point }
-  | { type: 'double-tap'; point: Point };          // T7
-export function pinchStep(state: PinchState, input: PinchInput, now: number): { state: PinchState; events: PinchEvent[] };
-```
-
-Rules:
-- `hand` frames count toward the streak only when `pinchM` is a number: below `PINCH_ENGAGE_M` counts toward engaging, above `PINCH_RELEASE_M` toward releasing, anything between resets the streak (no change between thresholds, and a one-frame spike never reaches 2 or 3 frames). `pinchM === null` resets the streak and never engages (R20).
-- While engaged, a cursor farther than `DRAG_DEAD_ZONE_PX` from `engagePoint` sets `moved` once and emits `drag-start`. `release.tap` is `!moved` (R29).
-- `none` frames and `tick`s check time-outs: missing for `TRACKING_LOSS_MS` while engaged → `lost { engaged: true }` and the state disengages; missing for `HAND_LOST_MS` while not engaged → `lost { engaged: false }`. A hand that returns before the time-out continues the same pinch (R37).
-- `found` is emitted on the first hand frame after a `lost`.
-
-Only tracking frames (`hand`/`none`) count toward streaks, so the frame counts are tracking frames as R20 says; `tick`s only advance time.
+Built in T2 and unchanged: `pinchStep(state, input, now)` with the events `found`, `lost`, `engage`, `drag-start` and `release { tap }`. Thresholds count only tracking frames; `null` distance never engages; a hand back within the time-out continues the same pinch. Each track has its own `PinchState`. The double-tap event of the 2026-11-15 version is not added. T7 feeds `pinchM: null` for fist-like frames (§9.2), which the machine already treats as "no distance".
 
 ### 4.6 Picking and settling (`targets.ts`, R22, R23)
 
+Built in T2 and unchanged: `pickTarget(point, screen, scene)` checks on-screen targets first (the last registered rectangle that contains the point wins), then the scene; `settleStep` settles a new raw target after `HOVER_SETTLE_MS`. Each track has its own `SettleState`. This spec registers no on-screen targets, so the port passes an empty list; the `screen` kind and the `press` action stay for later specs (R22).
+
+### 4.7 Hand slots (`slots.ts`, R78)
+
 ```ts
-export function pickTarget(point: Point, screen: readonly ScreenTarget[], scene: (point: Point) => Target): Target;
-export interface SettleState { settled: Target; candidate: Target; since: number }
-export function settleStep(state: SettleState, raw: Target, now: number): SettleState;
+export function dedupeHands(samples: readonly HandSample[], minPx = DUPLICATE_HAND_PX): HandSample[];      // T3
+export function assignHands(slots: readonly (Point | null)[], samples: readonly HandSample[],
+  maxJumpPx = HAND_MATCH_PX): Array<number | null>;                                                         // T4
 ```
 
-`pickTarget` checks `screen` first (the last registered rectangle that contains the point wins, so a later, higher target wins), then calls `scene`. `settleStep` compares `targetKey`s: a new raw key becomes the candidate; the candidate becomes settled once it has held `HOVER_SETTLE_MS`. When raw and settled name the same part, the settled target takes the raw target's newer `hit`, so a grab uses a current hit point. Later specs add on-screen targets by registering more rectangles; nothing here changes (R22).
+- `dedupeHands` keeps the first of two samples whose palm centres are closer than `minPx` (MediaPipe sometimes reports one hand twice when `numHands` is above 1).
+- `assignHands` gets, per slot, the last filtered palm centre of a tracked hand (`null` for a free slot) and returns, per slot, the index of the sample it takes. With two samples and two tracked slots it takes the pairing with the smaller total palm movement. A tracked slot takes a sample only within `maxJumpPx`; a sample that no tracked slot takes goes to the lowest free slot; a sample left over when both slots are taken is dropped (the frame cannot hold more than `TRACKED_HANDS` hands after `dedupeHands`). A slot whose hand is missing gets `null` and keeps its state until its time-outs.
+- T3 has no identity yet: it draws the deduplicated hands in frame order. T4's controller owns slot assignment.
+
+Hands that cross each other may swap slots; two-hand gestures are short, and the owner's cursor is filtered, so a swap shows as a jump in the line between the hands. The manual check looks for it (§12).
 
 ## 5. Gestures (pure)
 
-### 5.1 Gates (`gate.ts`, R40–R42)
+### 5.1 Gates (`gate.ts`, T3, R40–R42)
 
 ```ts
 export type GateLevel = 'full' | 'view-only' | 'off';
 export type GateReason = 'try-on' | 'slow' | 'agent' | 'exploded';
-export function handGate(input: { tryOn: boolean; slow: boolean; agentActive: boolean; exploded: boolean }):
-  { level: GateLevel; reason: GateReason | null };
+export interface Gate { level: GateLevel; reason: GateReason | null }
+export function handGate(input: { tryOn: boolean; slow: boolean; agentActive: boolean; exploded: boolean }): Gate;
 export interface SpeedState { slow: boolean; since: number | null }
+export function initialSpeedState(): SpeedState;
 export function speedStep(state: SpeedState, fps: number, now: number): SpeedState;
 ```
 
-Priority: try-on, then slow (both `off`), then agent, then exploded (both `view-only`). The delegate is not an input: a CPU fallback with a good rate keeps full hand control, and only the measured rate decides (R40). The delegate still appears in the debug line (§5.5). `speedStep` is fed once a second from `onRate`; it flips to slow after `fps < MIN_CONTROL_FPS` has held for `SPEED_HOLD_MS`, and back after `fps ≥ MIN_CONTROL_FPS` has held as long. Before the first full second after `ready` the rate is unknown and counts as fast.
+Priority: try-on, then slow (both `off`), then agent, then exploded (both `view-only`). The delegate is not an input (R40). `speedStep` is fed once a second from `onRate`; it flips to slow after `fps < MIN_CONTROL_FPS` has held for `SPEED_HOLD_MS`, and back after `fps >= MIN_CONTROL_FPS` has held as long. Before the first full second after `ready` the rate is unknown and counts as fast. The fist needs the reason too: it is allowed at `full` and at `view-only` with reason `exploded` (R94).
 
-### 5.2 Pinch decision (`decide.ts`, R24–R28)
+### 5.2 Decisions (`decide.ts`)
 
 ```ts
 export type PinchAction = { kind: 'press'; id: string } | { kind: 'grab'; objectId: string; partId: string; hit: Vector }
   | { kind: 'orbit' } | { kind: 'none' };
-export function decidePinch(target: Target, context: { objectCount: number; gate: GateLevel }): PinchAction;
+export function decidePinch(target: Target, context: { objectCount: number; gate: Gate }): PinchAction;          // T4
+export type FistAction = { kind: 'hold'; objectId: string; hit: Vector } | { kind: 'none' };
+export function decideFist(target: Target, context: { objectCount: number; gate: Gate }): FistAction;            // T7
 ```
 
 | Gate | Screen target | Part | Empty space |
@@ -281,111 +306,180 @@ export function decidePinch(target: Target, context: { objectCount: number; gate
 | `view-only` | press (on tap) | orbit | orbit |
 | `off` | none | none | none |
 
-With `objectCount === 0`, parts and empty space give `none`. Whether the part belongs to the active object does not change the action; the controller's `select` call (App's `pick`) handles activation (R25).
+With `objectCount === 0`, parts and empty space give `none`. `decideFist` returns `hold` for a part target (its object) when the gate is `full`, or `view-only` with reason `exploded`, and `none` otherwise.
 
-### 5.3 The controller (`controller.ts`)
+### 5.3 Pair geometry (`pair.ts`, T4, R83)
+
+```ts
+export function pairSpan(a: Point, b: Point): number;                 // CSS px
+export function pairAngle(a: Point, b: Point): number;                // degrees, atan2(b.y − a.y, b.x − a.x); screen y grows down, so positive is clockwise
+export function angleDelta(fromDeg: number, toDeg: number): number;   // wrapped to (−180, 180]
+export function beyondDeadZone(delta: number, deadZone: number): number;   // sign(delta) · max(0, |delta| − deadZone)
+```
+
+Each two-hand gesture reads exactly one: zoom and explode `pairSpan`, rotate `pairAngle`. The rotate gesture accumulates `angleDelta` frame by frame (so a full turn does not wrap back to 0) and holds the angle still while `pairSpan < TWO_HAND_MIN_SPAN_PX`.
+
+### 5.4 The join rule (`join.ts`, R82)
+
+```ts
+export type OwnerGesture = 'press' | 'grab' | 'orbit' | 'hold';
+export interface JoinInput { kind: 'pinch' | 'fist'; target: Target }
+export type TwoHandGesture = 'zoom' | 'rotate' | 'explode';           // assembly-joints adds 'assemble'
+export type JoinRule = (owner: OwnerGesture, joiner: JoinInput, gate: Gate) => TwoHandGesture | null;
+export const joinGesture: JoinRule;
+```
+
+T4 ships `joinGesture` with no rows: it always returns `null`, so in P0 a second hand is always inert. Each P1 task adds one row:
+
+| Task | Owner | Joiner | Gate | Result |
+|---|---|---|---|---|
+| T6 | `orbit` | `pinch` | not `off` | `zoom` |
+| T7 | `hold` | `pinch` | `full`, or `view-only` with reason `exploded` | `explode` |
+| T8 | `grab` | `pinch` | `full` | `rotate` |
+
+The rule receives the joiner's target although no row of this spec reads it; `assembly-joints` adds `hold` + `fist` on another object → `assemble`. The controller takes the rule as a constructor option (default `joinGesture`), so T4's unit tests exercise joining, freezing, hand-off and re-basing with a test rule before any P1 row exists.
+
+### 5.5 The controller (`controller.ts`, T4)
 
 ```ts
 export interface HandPort {
-  pick(point: Point): Target;                       // pickTarget with the registered screen targets and SceneHandle.hitTest
-  select(objectId: string, partId: string): void;   // App.pick(objectId, partId, false)
-  beginGrab(objectId: string, partId: string, kind: HandMode, hit: Vector): GrabSession | null;
+  pick(point: Point): Target;                          // pickTarget([], point, SceneHandle.hitTest)
+  select(objectId: string, partId: string): void;      // App.pick(objectId, partId, false)
+  beginGrab(objectId: string, partId: string, hit: Vector): GrabSession | null;
   beginOrbit(): OrbitSession | null;
   press(id: string): void;
-  frame(target: Target): void;                      // T7
+  activate?(objectId: string): void;                   // T7: App.activateObject
+  beginHold?(objectId: string, hit: Vector): HoldSession | null;   // T7
+  explodeAmount?(): number;                            // T7: the active object's explode amount
+  setExplode?(amount: number): void;                   // T7: App.setExplodeAmount
 }
-export interface GrabSession { preview(offset: Point): boolean; commit(): void; cancel(): void }   // preview false = no longer valid
-export interface OrbitSession { preview(offset: Point): void; end(): void }
-export type HandState = 'none' | 'tracked' | 'hover' | 'grab' | 'orbit' | 'locked';
-export interface HandView { state: HandState; mode: HandMode; target: Target; cursor: Point | null; points: Point[] | null; gate: GateLevel; ringed: boolean }
+export interface GrabSession {
+  preview(offset: Point): boolean;   // false = no longer valid
+  rebase(): void;                    // the current preview becomes the start of the next offsets
+  rotate?(angleDeg: number): boolean;  // T8: rotation about the view axis since the joiner engaged
+  commit(): void; cancel(): void;
+}
+export interface OrbitSession { preview(offset: Point): void; rebase(): void; zoom?(ratio: number): void /* T6 */; end(): void }
+export interface HoldSession { preview(offset: Point): boolean; rebase(): void; commit(): void; cancel(): void }   // T7
 
 export class HandController {
-  constructor(port: HandPort);
-  setGate(gate: { level: GateLevel; reason: GateReason | null }): void;
-  setMode(mode: HandMode): void;                   // applies to the next grab (R58)
+  constructor(port: HandPort, options?: { join?: JoinRule });
+  setGate(gate: Gate): void;
   setObjectCount(count: number): void;
-  frame(sample: HandSample | null, now: number): HandView;
-  tick(now: number): HandView | null;              // null when nothing changed
-  reset(): void;                                   // cancel and forget: 手勢 off, camera off, page hidden
+  frame(samples: readonly HandSample[], now: number): OverlayFrame;
+  tick(now: number): OverlayFrame | null;    // null when nothing changed
+  reset(): void;                             // cancel and forget: 手勢 off, camera off, page hidden
   readonly stats: HandStats;
   onCancelled?: (reason: 'loss' | 'gate' | 'external') => void;
 }
 ```
 
-One `frame` call:
-1. With a sample: filter the cursor; unless a pinch is engaged, `pick` the raw target and `settleStep` it. Without one: feed `none`.
-2. `pinchStep` and handle its events:
-   - `engage` → `decidePinch(settled, …)`. `grab`: call `select`, then `beginGrab(objectId, partId, mode, hit)`; `null` (mouse busy, exploded) → the pinch does nothing until release. `orbit`: `beginOrbit()`. `press`: remember the id. `none`: nothing until release (R42).
-   - while engaged and moved: `grab.preview(cursor − engagePoint)` (a `false` return cancels: reason `external`), or `orbit.preview(…)`.
-   - `release` → grab: `moved ? commit() : cancel()` (a tap only selects, R29; `cancel` restores nothing because nothing moved); orbit: `end()`; press: `port.press(id)` if `tap`.
-   - `lost { engaged: true }` → grab: `ON_TRACKING_LOSS === 'cancel' ? cancel() : commit()`, `onCancelled('loss')` on cancel (R37); orbit: `end()` (R38).
-3. Compute the `HandView` (§8.1).
-
-`setGate` with a level that no longer allows the running gesture cancels it: a grab is cancelled when the level leaves `full`; an orbit ends when the level becomes `off` (R39). A pinch held across a gate change does nothing until it is released (R42). `setMode` never changes a running grab (R58).
-
-### 5.4 Stats (`stats.ts`, R45)
-
-`HandStats` holds plain counters the controller updates on events: `drags` (grabs that emitted `drag-start`), `commits`, `cancels`, `dragLosses` (hand missing at least one frame during a drag), `longestDragGapMs`, plus the latest `pinchM`, pinch state and settled target key. No timers, no logging (R46).
-
-### 5.5 Texts (`text.ts`, R16, R43)
+**State.** Two tracks, one per slot: `{ cursorFilter, palmFilter, pinch: PinchState, settle: SettleState, fist?: FistState, cursor, palm, points, seen }`. At most one session:
 
 ```ts
-export function shortenName(name: string, max = BADGE_NAME_MAX): string;   // first 12 characters + '…' when longer (by code points)
-export function badgeText(view: HandView): string;
-export type HandStatusState = 'hidden' | 'loading' | 'error' | 'slow' | 'agent' | 'exploded' | 'cancelled' | 'hint';
-export function handStatus(input: { tracker: TrackerStatus; gate: { level: GateLevel; reason: GateReason | null };
-  cancelledAt: number | null; now: number; handSeen: boolean }): { state: HandStatusState; text: string };
-export function debugLine(stats: HandStats, tracking: { delegate: TrackingDelegate | null; fps: number | null; inferenceMs: number | null }): string;
+type Session = {
+  owner: HandSlot;
+  kind: OwnerGesture;
+  scene: GrabSession | OrbitSession | HoldSession | null;    // null: the port refused; the pinch is inert until release
+  pressId?: string;
+  ref: Point;                       // the owner's point the offsets are measured from (engage point, or the point at the last re-base)
+  joiner: { slot: HandSlot; gesture: TwoHandGesture; startSpan: number; lastAngle: number; angle: number; startValue: number } | null;
+};
 ```
 
-All strings are the tables of R16 and R43, written once here. `handStatus` returns `hidden` for try-on (the try-on line already shows) and when nothing applies after a hand has been seen. The 「太慢」 line belongs to `slow` only. `debugLine` is Traditional Chinese too (for example 「GPU · 每秒 28 幀 · 辨識 31 ms · 捏合 24 mm · 已抓取 · 目標 housing · 拖曳 3／完成 2／取消 1／拖曳中遺失 1（最長 420 ms）」).
+plus a set of inert slots (pinches that may not act until released).
+
+**One `frame` call.**
+1. `dedupeHands`, then `assignHands` with each track's filtered palm; each slot gets its sample or "no hand".
+2. Per slot in order 0, 1: filter the cursor and the palm; unless that hand's pinch is engaged, `pick` the raw target at the cursor and `settleStep` it; `pinchStep`.
+3. Handle the events of slot 0, then slot 1:
+   - `engage` with no session: `decidePinch(settled)`. `grab` → `select`, then `beginGrab`; `orbit` → `beginOrbit`; `press` → remember the id; the hand owns the new session, `ref` = engage point. `none` → nothing until release; the hand owns nothing (R81).
+   - `engage` while the other hand owns a session without a joiner: `join(session.kind, { kind: 'pinch', target: settled }, gate)`. A result makes this hand the joiner: record `startSpan`, the angle, and `startValue` (the explode amount for `explode`); the owner's one-hand preview holds still. `null` → the hand is inert.
+   - `engage` while a joiner exists, or while this hand is inert: inert.
+   - Owner moves (after `drag-start`) with no joiner: `scene.preview(cursor − ref)`; a `false` return cancels (`external`).
+   - Joiner moves: zoom → `orbit.zoom(ratio)` (§6.3); explode → `port.setExplode(explodeAmount(…))` (§6.5); rotate → `grab.rotate(angle)` (§6.6).
+   - Owner `release`: grab → commit when it moved or rotated, else cancel (a tap only selects, R29); orbit → `end()`; press → `port.press(id)` on a tap; hold → commit when moved. A joiner still engaged becomes inert. The session ends.
+   - Joiner `release`, or joiner `lost`: the joiner leaves; its effect stays; `scene.rebase()` and `ref` = the owner's current point (R84).
+   - Owner `lost { engaged: true }`: grab or hold → `ON_TRACKING_LOSS === 'cancel' ? cancel() : commit()`, `onCancelled('loss')` on cancel (R37); orbit → `end()` (R38); a joiner becomes inert.
+   - Inert `release` or `lost`: the slot is free again.
+4. Build the `OverlayFrame` (§8.1): per hand its state and badge, `gesture`, and `link` from the owner's point to the joiner's cursor while a joiner exists.
+
+**Gates.** `setGate` cancels a grab when the level leaves `full`, ends an orbit (and its zoom) when it becomes `off`, and cancels a hold when the fist is no longer allowed (§5.1). A joiner whose row no longer allows its gesture leaves (as on release). A pinch held across a gate change does nothing until it is released (R42).
+
+**Why one session.** One running gesture keeps the arbitration a single `if`: the first hand to engage owns; the other hand can only join through the rule (R81). `assembly-joints` keeps this shape: its `assemble` row starts a second hold for the joiner inside the same session.
+
+### 5.6 Stats (`stats.ts`, T4, R45)
+
+`HandStats` holds plain counters the controller updates on events: `drags`, `commits`, `cancels`, `dragLosses` (owner missing at least one frame during a drag), `longestDragGapMs`, `twoHand` (joins, by gesture), `inert` (inert pinches), plus per hand the latest `pinchM`, pinch state, settled target key and (T7) curl and fist state. No timers, no logging (R46).
+
+### 5.7 Texts (`text.ts`, R16, R43, R45)
+
+```ts
+export type HandStatusState = 'hidden' | 'loading' | 'error' | 'slow' | 'agent' | 'exploded' | 'cancelled' | 'hint';
+export function handStatus(input: { tracker: TrackerStatus; gate: Gate; cancelledAt: number | null; now: number; handSeen: boolean;
+  fistEnabled?: boolean /* T7: the exploded line of R94 */ }): { state: HandStatusState; text: string };      // T3
+export function trackingDebugLine(input: { delegate; fps; inferenceMs; hands: number; pinchMm: (number | null)[] }): string;   // T3
+export function shortenName(name: string, max = BADGE_NAME_MAX): string;         // T4: by code points, '…' when cut
+export function badgeText(view: { state: HandState; target: Target; gesture: GestureKind; value: number | null; objectName?: string }): string;   // T4
+export function debugLine(stats: HandStats, tracking: …): string;                 // T4
+```
+
+All strings are the tables of R16 and R43, written once here; the P1 tasks add their rows (R88, R95, R98). T3 already writes every R43 state; `cancelled` only appears once T5 passes `cancelledAt`. `handStatus` returns `hidden` for try-on (the try-on line already shows) and when nothing applies after a hand has been seen. Debug lines are Traditional Chinese (for example 「GPU · 每秒 22 幀 · 辨識 48 ms · 2 隻手 · 捏合 24／61 mm · 手勢 grab · 拖曳 3／完成 2／取消 1／拖曳中遺失 1（最長 420 ms）· 雙手 1 · 無效捏合 2」).
 
 ## 6. Geometry (pure, `drag.ts`)
 
-### 6.1 Moving a part (R30, R31, R33)
+### 6.1 Moving a part (T4, R30, R31, R33)
 
 ```ts
 export function dragPosition(input: {
   camera: { matrixWorld: Matrix4; fovDeg: number }; viewportHeight: number;
-  parentWorld: Matrix4;           // the part node's parent.matrixWorld (parent part, or the object's model group)
-  start: Vector3;                 // the node's local position at engage
-  hit: Vector3;                   // the grabbed world point
-  offset: Point;                  // cursor offset since engage, CSS pixels
-  gain?: number;                  // DRAG_GAIN
-}): Vector;                       // new local position, rounded to 5 decimals and clamped to ±100 per axis
+  parentWorld: Matrix4; start: Vector3; hit: Vector3; offset: Point; gain?: number;
+}): Vector;     // new local position, rounded to 5 decimals and clamped to ±100 per axis
 ```
 
 1. Depth of the grabbed point along the camera's forward axis: `d = (hit − cameraPosition) · forward`.
-2. World size of one pixel at that depth: `k = 2 · d · tan(fov / 2) / viewportHeight`. This is where precision comes from: a closer camera means a smaller `d` and a finer move per pixel (R31).
-3. World offset in the camera plane: `Δ = right · (offset.x · gain · k) − up · (offset.y · gain · k)` (screen y grows downward).
-4. New local position: `parentWorld⁻¹ · (parentWorld · start + Δ)`. Parents never scale children, so `parentWorld` is rigid and the inverse is exact; the object root's transform is part of `parentWorld`, so rotated objects and rotated parents need no special case.
+2. World size of one pixel at that depth: `k = 2 · d · tan(fov / 2) / viewportHeight`. A closer camera gives a smaller `d` and a finer move per pixel (R31).
+3. World offset in the camera plane: `Δ = right · (offset.x · gain · k) − up · (offset.y · gain · k)`.
+4. New local position: `parentWorld⁻¹ · (parentWorld · start + Δ)`. Parents never scale children, so `parentWorld` is rigid and the inverse is exact.
 
-### 6.2 Turning the view (R35)
+### 6.2 Turning the view (T4, R35)
 
 ```ts
-export function orbitOffset(start: Vector3 /* camera − target at engage */, offset: Point, degPerPx: number,
+export function orbitOffset(start: Vector3, offset: Point, degPerPx: number,
   limits: { minPolar: number; maxPolar: number; minAzimuth: number; maxAzimuth: number }): Vector3;
 ```
 
-`Spherical.setFromVector3(start)`; `theta −= offset.x · degPerPx`, `phi −= offset.y · degPerPx` (radians), clamped to the limits and to `[ε, π − ε]` as OrbitControls does; returns the new camera − target vector. Moving the hand right turns the view the same way as dragging the mouse right.
+`Spherical.setFromVector3(start)`; `theta −= offset.x · degPerPx`, `phi −= offset.y · degPerPx` (radians), clamped to the limits and to `[ε, π − ε]` as OrbitControls does; returns the new camera − target vector.
 
-### 6.3 Rotating a part (T6, R57)
-
-```ts
-export function rotateEuler(input: { parentWorld: Matrix4; start: Euler /* local, radians, XYZ */; cameraWorld: Matrix4;
-  offset: Point; degPerPx: number }): Vector;   // degrees, rounded to 2 decimals
-```
-
-`q = yaw(worldUp, offset.x · degPerPx) · pitch(cameraRight, offset.y · degPerPx)`; world start `w = parentQ · startQ`; new local `parentQ⁻¹ · q · w`, converted to XYZ Euler degrees. Euler angles from a quaternion lie within ±180°, so the ±360° limit always holds. The part turns about its own origin; its position is untouched.
-
-### 6.4 Framing a part (T7, R61)
+### 6.3 Two-hand zoom (T6, R87)
 
 ```ts
-export function frameBox(box: Box3, camera: { position: Vector3; fovDeg: number; aspect: number }, target: Vector3):
-  { target: Vector3; position: Vector3; minDistance: number };
+export function zoomRatio(input: { startSpan: number; span: number; deadZonePx: number; minSpanPx: number }): number;
 ```
 
-Centre of the box becomes the orbit target; the camera keeps its viewing direction and moves to `radius / sin(min(vFov, hFov) / 2) · 1.4` from it; `minDistance = min(current, radius · 1.12)` so the mouse wheel can still reach it.
+`effective = startSpan + beyondDeadZone(span − startSpan, deadZonePx)`, and `ratio = max(startSpan, minSpanPx) / max(effective, minSpanPx)`. Spreading the hands (`span > startSpan`) gives `ratio < 1`, a nearer camera. The controller computes the ratio; the orbit session's `zoom(ratio)` (§7.3) sets `camera.position = target + offsetAtJoin.setLength(clamp(distanceAtJoin · ratio, controls.minDistance, controls.maxDistance))` and leaves the azimuth and polar angle alone.
+
+### 6.4 Moving an object (T7, R92)
+
+`dragPosition` with `parentWorld` = the scene's objects group `matrixWorld` (identity today), `start` = the object's stored `transform.position`, `hit` = the surface point under the palm centre at engage, and the palm centre's offset. The result is the object's new position (5 decimals, ±100 m, the `ObjectTransform` position limit).
+
+### 6.5 Explode amount (T7, R93)
+
+```ts
+export function explodeAmount(input: { start: number; startSpan: number; span: number; deadZonePx: number;
+  viewportHeight: number; fullFraction: number }): number;    // clamp to 0..1, rounded to 0.01
+```
+
+`start + beyondDeadZone(span − startSpan, deadZonePx) / (fullFraction · viewportHeight)`. The controller calls `port.setExplode` only when the rounded value changes (R64).
+
+### 6.6 Rotating a part about the view axis (T8, R96)
+
+```ts
+export function rotateAboutView(input: { parentWorld: Matrix4; start: Euler /* local, radians, XYZ */;
+  cameraWorld: Matrix4; angleDeg: number }): Vector;    // degrees, rounded to 2 decimals
+```
+
+The axis is the camera's forward direction in world space (its local −Z). `q = setFromAxisAngle(forward, angleDeg)`. Seen from the camera, a positive rotation about an axis that points away from the viewer turns clockwise, and `pairAngle` grows clockwise on screen (y down), so the same sign makes the part turn the way the hands turn; a unit test checks it by projecting a point of the part before and after. World start `w = parentQ · startQ`; new local `parentQ⁻¹ · q · w`, converted to XYZ Euler degrees, which lie within ±180°, so the ±360° limit always holds. The part turns about its own origin; its position is untouched.
 
 ## 7. Scene (`SceneViewport.tsx`, `hand-sessions.ts`)
 
@@ -395,74 +489,103 @@ Centre of the box becomes the orbit target; the camera keeps its viewing directi
 export interface SceneHandle {
   reset(): void; zoomIn(): void; zoomOut(): void;
   projectPart(id: string, objectId?: string): { x: number; y: number } | null;
-  /** Nearest part surface under a client point, over all objects; null for empty space or outside the canvas. */
-  hitTest(point: Point): { objectId: string; partId: string; name: string; hit: Vector } | null;
-  beginPartGrab(objectId: string, partId: string, kind: HandMode, hit: Vector): GrabSession | null;
-  beginOrbit(): OrbitSession | null;
-  frameTarget(objectId?: string, partId?: string): void;     // T7; no arguments = frame all objects
+  hitTest(point: Point): { objectId: string; partId: string; name: string; objectName: string; hit: Vector } | null;   // T5
+  beginPartGrab(objectId: string, partId: string, hit: Vector): GrabSession | null;     // T5
+  beginOrbit(): OrbitSession | null;                                                     // T5
+  beginObjectHold(objectId: string, hit: Vector): HoldSession | null;                    // T7
 }
 ```
 
-`hitTest` and the click handler share one `hitsAt(point)` helper (the surface list is rebuilt only in `sync`, not per call). `onTransform` gains a fifth parameter, `kind: 'translate' | 'rotate'`; the gizmo passes its own mode.
+`hitTest` and the click handler share one `hitsAt(point)` helper (the surface list is rebuilt only in `sync`). `onTransform` gains a fifth parameter `kind: 'translate' | 'rotate' | 'both'`; the gizmo passes its own mode (T5), and a hand grab passes what changed (T8 adds `both`). T7 adds the prop `onObjectMove(objectId, position)`. T6 writes `data-camera-target` (the orbit target, 4 decimals) next to `data-camera-position` in the render loop.
 
-### 7.2 Grab sessions
+### 7.2 Grab sessions (T5; rotation T8)
 
-`beginPartGrab` returns `null` when: the object or part is unknown; the exploded view is shown or animating (`explodeTarget > 0 || explodeShown > 0`, the same test the gizmo uses); the gizmo is dragging; or a mouse orbit is running (tracked between OrbitControls' `start` and `end` events) (R34, R41). Otherwise it:
-- calls `ensureExplosion(entry)` first when the object is not active yet. Explosion bases are captured from the node positions when first computed; computing them later, in the middle of the preview, would store the previewed position as the part's assembled position.
-- records the node's stored position and rotation (from the model, not the node, so a move commits the stored rotation unchanged and a rotate the stored position, R33);
+`beginPartGrab` returns `null` when: the object or part is unknown; the exploded view is shown or animating (`explodeTarget > 0 || explodeShown > 0`, the gizmo's test); the gizmo is dragging; or a mouse orbit is running (tracked between OrbitControls' `start` and `end` events) (R34, R41). Otherwise it:
+- calls `ensureExplosion(entry)` first when the object is not active yet (explosion bases are captured from the node positions when first computed; computing them later, during the preview, would store the previewed position as the assembled one);
+- records the part's stored position and rotation (from the model, so a move commits the stored rotation unchanged, R33);
 - sets `gizmo.enabled = false` until the session ends (R34);
-- returns a `createGrabSession(…)` whose `preview` computes `dragPosition` (or `rotateEuler`) from the node's live `parent.matrixWorld`, sets the node, and invalidates the render. Child parts follow because they are child nodes, as with the gizmo (R32).
+- returns `createGrabSession(…)`. `preview(offset)` sets the node's position from `dragPosition` with the node's live `parent.matrixWorld` and invalidates the render; child parts follow (R32). `rebase()` takes the current preview as the new start. T8: `rotate(angleDeg)` sets the node's rotation from `rotateAboutView` with the live parent and camera matrices; the position preview holds still meanwhile.
 
-`commit` compares the rounded result with the stored value; when equal it does nothing, otherwise it calls `onTransform(objectId, partId, position, rotation, kind)` once (R32). `cancel` puts the stored value back on the node (R37, R39).
+`commit` compares the rounded results with the stored values; when both are equal it does nothing, otherwise it calls `onTransform(objectId, partId, position, rotation, kind)` once, with `kind` = what changed (R32, R97). `cancel` puts the stored position and rotation back (R37, R39).
 
-**Cancel rules (R39).** A pure `grabStillValid(plan, nextActiveId, objectId)` in `hand-sessions.ts` decides it: `sync` marks a live session invalid when its plan builds, rebuilds, moves or removes any object, or when the new active id is not the session's object; the next `preview` returns `false` and the controller cancels. Activating the grabbed object (R25) changes only the active id to the session's own object and rebuilds nothing, so it does not cancel. Undo, redo, the 物件 panel, part fields and agent `state` events all change objects and therefore cancel. After `sync` and after `applyExplosionShown`, a valid session re-applies its last preview, because activation resets node positions to their explosion bases.
+**Cancel rules (R39).** A pure `grabStillValid(plan, nextActiveId, objectId)` in `hand-sessions.ts`: `sync` marks a live session invalid when its plan builds, rebuilds, moves or removes any object, or when the new active id is not the session's object; the next `preview` returns `false` and the controller cancels. Activating the grabbed object (R25) changes only the active id to the session's own object and does not cancel. After `sync` and after `applyExplosionShown`, a valid session re-applies its last preview, because activation resets node positions to their explosion bases.
 
-### 7.3 Orbit sessions
+### 7.3 Orbit sessions (T5; zoom T6)
 
-`beginOrbit` returns `null` while the mouse drags or the gizmo drags, or with no objects. It records `camera.position − controls.target` and sets `viewChanged = true` (R36). `preview` sets `camera.position = target + orbitOffset(…)`, calls `camera.lookAt(target)` and `controls.update()`, and invalidates. `end` does nothing else; the view stays (R38). The existing render loop keeps `data-camera-position` current.
+`beginOrbit` returns `null` while the mouse or the gizmo drags, or with no objects. It records `camera.position − controls.target` and sets `viewChanged = true` (R36). `preview` sets `camera.position = target + orbitOffset(…)`, calls `camera.lookAt(target)` and `controls.update()`, and invalidates. `rebase()` records the current offset as the new start. `end` does nothing else (R38). T6: `zoom(ratio)` as in §6.3, with `controls.minDistance` and `maxDistance`; `rebase()` after a zoom keeps the zoomed distance.
 
-### 7.4 App's commit path
+### 7.4 Hold sessions (T7, R91–R94)
+
+`beginObjectHold(objectId, hit)` returns `null` for an unknown object, while the gizmo drags or a mouse orbit runs. It is **not** refused in the exploded view or during the explode animation, because it moves only the object's root, which the explode animation never touches. It does not refuse because another hold session runs, so `assembly-joints` can hold two objects. It records the stored `transform`, sets `gizmo.enabled = false`, and returns `createHoldSession(…)`: `preview(offset)` sets `entry.root.position` from §6.4 and invalidates; `rebase()`; `commit` calls `onObjectMove(objectId, position)` once when the rounded position changed; `cancel` restores the root. The same `grabStillValid` decides cancellation. The controller calls `port.activate(objectId)` before `beginHold` for an inactive object (activation resets explode for another object, which the explode pull then starts from).
+
+### 7.5 App's commit paths
 
 ```ts
-function onTransform(objectId: string, id: string, position: Vector, rotation: Vector, kind: 'translate' | 'rotate') {
+const TRANSFORM_NOTICE = { translate: '已移動零件，可按「復原」回到上一步。', rotate: '已旋轉零件，可按「復原」回到上一步。',
+  both: '已移動並旋轉零件，可按「復原」回到上一步。' } as const;      // `both` from T8
+function onTransform(objectId: string, id: string, position: Vector, rotation: Vector, kind: keyof typeof TRANSFORM_NOTICE) {
   if (agentActive || objectId !== store.current().activeObjectId) return;
-  updatePart(id, { position, rotation }, kind === 'rotate' ? '已旋轉零件，可按「復原」回到上一步。' : '已移動零件，可按「復原」回到上一步。');
+  updatePart(id, { position, rotation }, TRANSFORM_NOTICE[kind]);
+}
+function onObjectMove(objectId: string, position: Vector) {          // T7
+  if (agentActive) return;
+  moveObject(objectId, { position });                               // the 物件 panel's path: setTransform, one undo step
 }
 ```
 
-The gizmo and the hand share this function, so a hand drag is one `commit` in the workspace store, one undo step, with today's notices (R32, R57).
+The gizmo and the hand share `onTransform`, so a hand drag is one `commit` in the workspace store, one undo step, with the existing notices (R32, R97). A fist move uses the 物件 panel's `moveObject` (R92).
 
 ## 8. Overlay, status line and debug panel
 
 ### 8.1 The view and its style (`style.ts`, R14, R15)
 
-`HandView.state` comes from the controller: `grab` and `orbit` while a session runs; `locked` when the gate is `off`, or `view-only` while not orbiting and not over an on-screen target; `hover` when the settled target is a part (gate `full`) or an on-screen target; `tracked` with a hand otherwise; `none` without one.
+The controller gives each hand its state: `grab`, `orbit` or `hold` for the owner while its session runs; `join` for the joiner; `locked` for an inert hand, when the gate is `off`, or at `view-only` while the hand is not turning the view, not over an on-screen target and (T7) not holding; `hover` when the settled target is a part (gate `full`) or an on-screen target; `fist` for a closed fist holding nothing (T7); `tracked` otherwise; `none` without a hand. Until T5, T3's hook sets `tracked` or `locked` from the gate alone.
 
 ```ts
-export const MODE_COLOURS = { translate: '#CC79A7', rotate: '#D55E00' } as const;   // Okabe–Ito reddish purple, vermillion
+export const HAND_COLOUR = '#CC79A7';   // Okabe–Ito reddish purple, both hands
+export const LINK_COLOUR = '#D55E00';   // Okabe–Ito vermillion, the line between the hands
 export const LOCKED_COLOUR = '#9AA3AD';
-export function overlayStyle(view: HandView): { colour: string; dashed: boolean; lineWidth: number; ring: 'none' | 'hollow' | 'filled' };
+export function overlayStyle(view: { state: HandState }): { colour: string; dashed: boolean; lineWidth: number;
+  mark: 'none' | 'ring-hollow' | 'ring-filled' | 'square-hollow' | 'square-filled' };
 ```
 
-The two Okabe–Ito colours stay distinguishable with the common colour-vision deficiencies and differ from the part-edge cyan `#69eaff` and the selection amber `#ffc53d`. Lines are 2 px for `tracked`/`hover`, 3.5 px for `grab`/`orbit`, with a 1 px dark outline so they read on skin and on bright video. `locked` uses grey dashes.
+| State | Lines | Mark |
+|---|---|---|
+| `tracked` | 2 px | none |
+| `hover` | 2 px | hollow ring at the cursor |
+| `grab`, `orbit`, `join` | 3.5 px | filled ring at the cursor |
+| `locked` | 2 px grey dashes | none |
+| `fist` (T7) | 2 px | hollow rounded square at the palm centre |
+| `hold` (T7) | 3.5 px | filled rounded square at the palm centre |
+
+The two Okabe–Ito colours stay distinguishable with the common colour-vision deficiencies and differ from the part-edge cyan `#69eaff` and the selection amber `#ffc53d`. Every line has a 1 px dark outline so it reads on skin, on bright video and on the backdrop.
 
 ### 8.2 `HandOverlay` and drawing (`HandOverlay.tsx`, `skeleton.ts`)
 
-A `<canvas className="hand-overlay" data-testid="hand-overlay" aria-hidden="true">` inside `.viewport`, above the scene canvas, `position:absolute; inset:0; pointer-events:none` (R17), not CSS-mirrored (the points are already in display space). Its handle `draw(view)` clears and redraws: the 21 points and the 21 standard MediaPipe hand connections (Task 2), then the cursor ring and the badge (Task 5; dark rounded rectangle, white 13 px text, 16 px right of and above the cursor, kept inside the canvas). Until Task 5 the hand state is visible only in the data attributes and the line style. It sizes its backing store to the box times `devicePixelRatio` on resize. `data-hand-state`, `data-hand-mode` and `data-hand-target` are written only when they change (R18). With no hand for `HAND_LOST_MS` it clears (R13).
+The `<canvas className="hand-overlay" data-testid="hand-overlay" aria-hidden="true">` built in T2 stays: inside `.viewport`, above the scene canvas, `pointer-events: none` (R17), not CSS-mirrored, backing store sized to the box × `devicePixelRatio`. From T3 its handle is `draw(frame: OverlayFrame)` and `clear()`:
+- clear, then per hand `drawHand(points, style)` (T3); the mark and the badge (T5); the link line in `LINK_COLOUR` when `frame.link` is set (T5 draws it; P1 tasks set it); the angle arc (T8).
+- Badges: a dark rounded rectangle with white 13 px text, 16 px right of and above the cursor, kept inside the canvas by the pure `badgeBox(cursor, textWidth, canvasSize, avoid?)`. When the second hand's badge would overlap the first's, `avoid` places it below its cursor.
+- Attributes, written only when they change (R18): `data-hand-count`; `data-hand-state`, `data-hand-target` (slot 0); `data-hand2-state`, `data-hand2-target` (slot 1); `data-gesture`. `data-hand-mode` is removed in T3.
+- A hand missing for `HAND_LOST_MS` disappears from the frame (R13); with no hands the canvas is cleared.
+
+`drawRing`, `drawSquare`, `drawBadge`, `drawLink` and `drawArc` take a 2D context; their unit tests use a small recording fake context, and `badgeBox` is pure.
 
 ### 8.3 `useHandControl` (`src/hands/useHandControl.ts`)
 
 ```ts
 export function useHandControl(input: {
-  source: HandSource; tracker: TrackerStatus; enabled: boolean;      // camera on and 手勢 on
-  gate: { level: GateLevel; reason: GateReason | null }; objectCount: number; mode: HandMode;
-  sceneRef: RefObject<SceneHandle | null>; videoRef: RefObject<HTMLVideoElement | null>;
-  overlayRef: RefObject<HandOverlayHandle | null>; screenTargets: ScreenTargets;
-  onPick: (objectId: string, partId: string) => void;
-}): { status: { state: HandStatusState; text: string }; stats: HandStats };
+  source: HandSource; tracker: TrackerStatus; enabled: boolean;       // camera on and 手勢 on
+  gate: Gate; videoRef: RefObject<HTMLVideoElement | null>; overlayRef: RefObject<HandOverlayHandle | null>;
+  // T5
+  objectCount: number; sceneRef: RefObject<SceneHandle | null>; onPick: (objectId: string, partId: string) => void;
+  // T7
+  onActivate?: (objectId: string) => void; explodeAmount?: () => number; setExplode?: (amount: number) => void;
+}): { status: { state: HandStatusState; text: string }; debug: RefObject<HandDebugNumbers> };
 ```
 
-While `enabled`, it subscribes to `source` and `source.onTick`. Per frame: the video rect, `handSample(frame.hands[0], …)`, `controller.frame`, `overlay.draw`. Per tick: `controller.tick`, and `draw` when it returns a view. It implements `HandPort` with `sceneRef.current` (`hitTest`, `beginPartGrab`, `beginOrbit`, `frameTarget`), `screenTargets` and `onPick`. `gate`, `mode` and `objectCount` are pushed into the controller in effects. A `visibilitychange` to hidden, `enabled` turning false and unmount call `controller.reset()`. React state holds only the status line (recomputed when the tracker status, the gate, a cancel or the first hand changes) (R64).
+- **T3.** While enabled, per frame: read the video rect, `handSample` every hand of `frame.hands`, `dedupeHands`, and draw them in order with `tracked` or `locked` (from the gate). Per tick: clear after `HAND_LOST_MS` without a hand. The status line comes from `handStatus`, recomputed only when the tracker status, the gate or "a hand has been seen" changes. `debug` is a ref with the tracking numbers (hands in the last frame, pinch distance per hand), read by the debug panel without a render.
+- **T5.** It owns a `HandController`; implements `HandPort` with `sceneRef.current` (`hitTest` → `Target`, `beginPartGrab`, `beginOrbit`), an empty screen-target list, and `onPick`; pushes `gate` and `objectCount` into it in effects; per frame `controller.frame(samples)` → `overlay.draw`; per tick `controller.tick`; `reset()` on `visibilitychange` to hidden, on disable and on unmount; `onCancelled('loss')` sets `cancelledAt` for the status line. `debug` then also carries the controller's `stats`.
+- React state holds only the status line (R64).
 
 App computes the gate:
 
@@ -470,103 +593,157 @@ App computes the gate:
 const gate = handGate({ tryOn: tryOnActive, slow, agentActive, exploded: explode > 0 });
 ```
 
-`slow` is React state set from `speedStep` in `onRate`, changing only when it flips. During the explode animation back to 0, the gate is already `full` but `beginPartGrab` still refuses (§7.2), so no offset can be committed.
+`slow` is React state set from `speedStep` in `onRate`, changing only when it flips (T3). During the explode animation back to 0 the gate is already `full`, but `beginPartGrab` still refuses (§7.2), so no offset can be committed.
 
-### 8.4 Status line and debug panel (R43, R45)
+### 8.4 Status line and debug panel (T3; T5 completes; R43, R45)
 
 The status line renders under `.stage-toolbar`, next to the try-on line, as `<p className="notice hand-status" role="status" data-testid="hand-status" data-state={state}>` when the camera and 手勢 are on and the state is not `hidden`. `error`, `slow` and `cancelled` use the `warning` style.
 
-`HandDebugPanel` renders only when `new URLSearchParams(location.search).get('hands') === 'debug'`: a `<p data-testid="hand-debug" className="small-muted">` that reads `debugLine(stats, …)` every 500 ms with its own interval. Without the parameter it is not mounted, so the counters are only plain increments (R45, R46).
+`HandDebugPanel` renders only when `new URLSearchParams(location.search).get('hands') === 'debug'`: a `<p data-testid="hand-debug" className="small-muted">` that reads the debug ref every 500 ms with its own interval: in T3 `trackingDebugLine` (delegate, fps, inference ms, hands, pinch mm per hand), from T5 `debugLine` with the gesture counters. Without the parameter it is not mounted (R45, R46).
 
-## 9. Rotate mode (P1, T6)
+## 9. Fist (P1, T7)
 
-- **State.** `const [handMode, setHandMode] = useState<HandMode>('translate')`, reset to `'translate'` in `stopCamera` (R56). Passed to `useHandControl` (`controller.setMode`) and to the overlay through the view.
-- **On-screen buttons.** `HandModeButtons` renders, inside `.viewport` at the top-right corner (the top-left holds the stage label), a `.hand-modes` group of two real `<button type="button" aria-pressed>` elements, 手勢移動 and 手勢旋轉, each at least 88 × 48 CSS pixels, shown while the camera and 手勢 are on. Mouse clicks and keyboard activation work as for any button.
-- **Hand picking.** Each button registers with `ScreenTargets` through a ref callback: `{ id: 'mode-translate' | 'mode-rotate', label: '手勢移動' | '手勢旋轉', element, press }`. `ScreenTargets.rects()` reads each element's `getBoundingClientRect()` once per tracking frame. A pinch tap presses the button through `port.press(id)`, the same `setHandMode` the mouse calls; a drag that starts on a button does nothing (§5.2).
-- **Keys.** A separate window `keydown` listener in App (not the agent-gated undo handler): with the camera and 手勢 on, no modifier, and focus not in an `input`, `textarea`, `select` or `contenteditable`, G sets `'translate'` and R `'rotate'`. In `SceneViewport`'s canvas key handler, `r` is replaced by `Home` for 重設視角.
-- **Rotation.** `beginPartGrab(…, 'rotate', …)` uses `rotateEuler`; everything else in §7.2 applies unchanged.
-- **Style.** The second colour of `MODE_COLOURS` and the 旋轉 badge texts become reachable.
+### 9.1 Detection (`fist.ts`, R89)
 
-## 10. Double-pinch zoom (P1, T7)
+```ts
+export function curlRatio(world: readonly Landmark[] | undefined): number | null;
+export interface FistState { engaged: boolean; streak: number; handSeenAt: number | null; engagePalm: Point | null; moved: boolean }
+export type FistEvent = { type: 'fist-engage'; palm: Point } | { type: 'fist-move-start' } | { type: 'fist-release'; moved: boolean } | { type: 'fist-lost' };
+export function fistStep(state: FistState, input: { kind: 'hand'; palm: Point; curl: number | null; pinchMoved: boolean } | { kind: 'none' } | { kind: 'tick' }, now: number):
+  { state: FistState; events: FistEvent[] };
+```
 
-- `pinchStep` emits `double-tap` on a tap whose engage time and point are within `DOUBLE_TAP_MS` and `DOUBLE_TAP_PX` of the previous tap's, then clears `lastTap`. Single taps act at once; nothing is delayed (R60).
-- The controller handles `double-tap` when the gate is not `off` (R62): a part → `port.frame(target)` → `frameTarget(objectId, partId)`; empty space → `frameTarget()`, the same framing as 重設視角; an on-screen target → nothing more.
-- `frameTarget(objectId, partId)` measures the part's surface box as `projectPart` does, applies `frameBox`, sets `viewChanged = true`, and leaves damping off for that one update as `fit()` does. No data changes (R61).
+- `curlRatio`: for each of the index (5→8), middle (9→12), ring (13→16) and little (17→20) fingers, `|tip − wrist| / |knuckle − wrist|` on the world landmarks; the result is the largest of the four, so one extended finger means "not a fist". `null` without 21 finite world landmarks or with a degenerate knuckle distance. For orientation: an open hand gives about 1.8 (the synthetic hand: 1.88), a pinch with curled other fingers about 1.3–1.5 (the index stays the largest), a closed fist below 1.0. These are estimates from hand proportions; the manual check reads the real value in the debug line.
+- `fistStep` is the pinch machine's pattern: below `FIST_ENGAGE_RATIO` for `FIST_ENGAGE_FRAMES` engages, above `FIST_RELEASE_RATIO` for `FIST_RELEASE_FRAMES` releases, nothing in between, `null` resets the streak, the same `TRACKING_LOSS_MS` / `HAND_LOST_MS` time-outs, and a move start after `DRAG_DEAD_ZONE_PX` of palm movement. `pinchMoved` blocks engaging (R90).
+- `FIST_ENABLED = false`: `handSample` still computes `curl` for the debug line, but the controller never calls `fistStep` and never nulls `pinchM`.
+
+### 9.2 Fist and pinch (R90)
+
+In the controller, per hand and frame: when `curl < FIST_ENGAGE_RATIO`, the sample goes to `pinchStep` with `pinchM: null` (a fist-like frame never counts toward a pinch). A `fist-engage` on a hand whose pinch is engaged and has not moved cancels that pinch's session (grab → `cancel`, orbit → `end`, press → forgotten; nothing committed), resets its pinch state, and the fist proceeds. A hand whose pinch has moved passes `pinchMoved: true`, so it cannot engage a fist.
+
+### 9.3 Holding (R91–R94)
+
+On `fist-engage` with no session: `pick(palm)` (raw, no settling) → `decideFist`. `hold` → `port.activate(objectId)` when the object is not active, then `port.beginHold(objectId, hit)`; the hand owns a `hold` session with `ref` = the palm. `none` → the hand shows `fist` until it opens. On `fist-engage` while another hand owns a session: `join(owner, { kind: 'fist', target }, gate)`, which has no fist row in this spec, so the fist is inert. Moving the fist previews the hold (palm offset from `ref`); `fist-release` commits when moved, else cancels; loss follows R37. The explode row (T7) lets a pinch join a hold: `startSpan` from the palm to the pinch cursor, `startValue = port.explodeAmount()`, then `port.setExplode(explodeAmount(…))` on each change.
+
+The 爆炸圖 status text of R94 replaces the P0 line when `FIST_ENABLED` is true (`handStatus` input `fistEnabled`).
+
+## 10. Agent switch for the camera image (P1, T9, R99, R100)
+
+- **Contract (`shared/agent.ts`).** `StateChangeSchema` gains `cameraHidden: z.boolean().nullable().optional()`. Optional keeps the strict schema accepting every existing payload: the tools return objects without the key, and `agent-panel.spec.ts` and `workspace.spec.ts` route `state` events without it. A `SetCameraImageDetailSchema = z.strictObject({ visible: z.boolean(), cameraOn: z.boolean(), message })` joins the detail schemas.
+- **Tool (`server/tools/set-camera-image.ts`).** `defineTool({ name: 'set_camera_image', label: '鏡頭畫面', category: 'view', description, args: z.strictObject({ visible: z.boolean() }), side: 'server', scope: 'project', effects: 'uses-camera', run })`. With `state.cameraOn` false it returns `{ ok: false, summary: '請先開啟攝影機。', detail, stateChange: null }`, as `wear_on_arm` does; otherwise `ok` with 已隱藏鏡頭畫面（手部追蹤持續進行）。 or 已顯示鏡頭畫面。 and `{ activeObjectId: null, object: null, selection: null, explode: null, tryOn: null, cameraHidden: !visible }`. It does not check for a model. Description for the model: "shows or hides the live camera image behind the model; hand tracking and try-on keep running. Asks the user to turn the camera on if it is off."
+- **Registration.** `server/tools/index.ts` exports it after `wear_on_arm`, so it is listed in `AGENT_INSTRUCTIONS` from the registry. `checkedChange` in `helpers.ts` strips `cameraHidden` together with `tryOn` before the dry run. The loop in `server/agent.ts` needs no state for it (it does not track the image).
+- **`AGENT_INSTRUCTIONS`.** One rule line: "- set_camera_image only shows or hides the camera image; it changes no object. Use it when the user asks to hide or show the camera image (隱藏或顯示鏡頭畫面)."
+- **Client.** `applyStateEvent` returns `cameraHidden` in `StateEffects` when it is a boolean; `useAgentRun` calls `options.setCameraHidden(value)`; App passes a setter that applies it only while `camera === 'on'` (R100). The request (`buildAgentRequest`) is unchanged.
+- **Tests.** `tests/unit/agent-tools.test.ts`: camera on (both values), camera off, bad arguments. `tests/unit/tool-registry.test.ts`: its list of the nine tools, the label map and the effects map gain the tenth tool (an extension, R54). `tests/unit/apply-state.test.ts`: a payload with `cameraHidden`, and the existing payloads without it still parse. `tests/unit/agent-loop.test.ts`: `AGENT_INSTRUCTIONS` contains `set_camera_image`. E2E in `hand-control.spec.ts` (§11.3).
 
 ## 11. Testing strategy
 
 ### 11.1 Synthetic hands (`tests/fixtures/synthetic-hand.ts`)
 
+Built in T1:
+
 ```ts
 export function syntheticHand(options: { cursor: { x: number; y: number }; pinchM: number; size?: number; side?: 'left' | 'right';
-  world?: boolean }): HandLandmarks;
-export function landmarkSequence(steps: Array<{ at: number; hand: Parameters<typeof syntheticHand>[0] | null }>): …;
+  world?: boolean; fist?: boolean /* T7 */ }): HandLandmarks;
+export function clientToNormalized(point, view, video): { x: number; y: number };
 ```
 
-It builds a flat, open right or left hand around a normalised cursor point: image landmarks scaled to `size` (default 0.25 of the frame height), with landmarks 4 and 8 placed so their midpoint is the cursor and their world distance is `pinchM`; world landmarks in metres (palm about 8 cm), with `world: false` to drop them. Unit tests and the e2e helper both use it.
+It builds a flat, open hand around a normalised cursor point (landmarks 4 and 8 centred on it, `pinchM` apart in the world landmarks; palm 8 cm). T7 adds `fist: true`: the four fingertips are placed 35 % of the way from their knuckle to the wrist (curl ratio about 0.65) and the thumb tip 6 cm from the index tip (no pinch), and `cursor` then places the palm centre instead of the pinch midpoint.
 
 ### 11.2 Unit tests (Vitest, Node, no DOM)
 
-- `hand-tracking.test.ts` (T1): every `trackingPlan` case (start, keep while 手勢 off, stop when the camera goes off, never start while not needed); the rate window.
-- `hand-input.test.ts` (T2): `landmarkToClient` for a view wider and a view taller than the video, and the round trip through the e2e helper's inverse; `handSample` with each `CURSOR_POINT` and without world landmarks; One Euro passes the first sample, smooths jitter at rest, follows a fast move with little lag, resets; `pinchStep` engage and release at the thresholds and frame counts, no change between thresholds, one-frame spikes, `null` distance never engages, tap versus drag at the dead zone, loss shorter and longer than `TRACKING_LOSS_MS` while engaged, `HAND_LOST_MS` while idle; `pickTarget` prefers a screen target over a part behind it; `settleStep` ignores a raw target held less than `HOVER_SETTLE_MS`, and a cursor drift while the fingers close (a synthetic sequence moving 6 px over 3 frames during engage) keeps the grabbed target.
-- `hand-controller.test.ts` (T3): `handGate` priority for every reason; `speedStep` both directions with the 2 s hold; `decidePinch` table including no objects; the controller with a fake port (records calls, returns fake sessions): grab on the active object; grab on an inactive object calls `select` then `beginGrab` in one gesture; tap selects and calls `cancel`, not `commit`; drag calls `preview` with offsets from the engage point and `commit` once; `beginGrab` returning `null` makes the pinch inert; `preview` returning `false` cancels; loss within and beyond `TRACKING_LOSS_MS`; `'keep'` commits; gate changes cancel a grab and end an orbit; a pinch held across a gate change stays inert; `setMode` during a drag; `reset` cancels; `badgeText` for every state and mode with a 13-character name; `handStatus` priority; stats counters.
-- `hand-drag.test.ts` (T3): `dragPosition` has no jump at offset 0; a camera looking down −Z moves +X for a rightward offset; a rotated camera moves in its own plane; a child under a rotated parent and a rotated object root lands on the expected local position (checked by transforming back to world); halving the camera distance halves the move per pixel; rounding and the ±100 clamp. `orbitOffset` keeps the distance, turns the azimuth for a horizontal offset and clamps the polar angle. T6 adds `rotateEuler` (a horizontal offset turns about world Y even under a rotated parent; the result stays within ±180°); T7 adds `frameBox`.
+- `hand-tracking.test.ts`: T1 ✓ `trackingPlan` and `RateWindow`; T3 `frameClockStep` (keeps the video-frame clock while callbacks arrive, switches after `VIDEO_FRAME_STALL_MS` while playing, never switches while paused or not ready, never switches back).
+- `hand-input.test.ts`: T2 ✓ mapping, One Euro, pinch, picking, settling, overlay style. T3: `handSample.palm`; `dedupeHands` (close palms → one, far palms → two); the overlay style test changes to one hand colour, a link colour different from it, and no mode. T4: `assignHands` (two hands moving keep their slots; a new hand takes the free slot; a jump beyond `HAND_MATCH_PX` is a new hand; a missing hand leaves its slot `null`; the cheaper pairing wins).
+- `hand-gate.test.ts` (T3): `handGate` priority for every reason; `speedStep` both directions with the 2 s hold; `handStatus` priority and texts; `trackingDebugLine`.
+- `hand-controller.test.ts` (T4): `decidePinch` table including no objects; `pairSpan`, `pairAngle`, `angleDelta` wrap-around, `beyondDeadZone`; `joinGesture` returns `null` for every input; the controller with a fake port (records calls, returns fake sessions): grab on the active object; grab on an inactive object calls `select` then `beginGrab` in one gesture; tap selects and cancels; drag previews offsets from the engage point and commits once; `beginGrab` returning `null` makes the pinch inert; `preview` returning `false` cancels; loss within and beyond `TRACKING_LOSS_MS`; `'keep'` commits; gate changes cancel a grab and end an orbit; a pinch held across a gate change stays inert; `reset` cancels; **two hands:** a second pinch while the first grabs is inert (state `locked`, badge 另一手操作中, no port call); a second pinch while the first hand's pinch decided `none` starts its own gesture; both engaging in one frame → slot 0 owns; with a test join rule: joining freezes the owner's preview, the joiner's span and angle are measured from the owner's point, the joiner's release re-bases the owner (no jump on the next preview), the owner's release ends everything and leaves the joiner inert until it releases, a lost joiner leaves like a release, the frame's `link` is set while joined; `badgeText` for every state with a 13-character name; stats counters; `badgeBox` near each canvas edge and with `avoid`; the draw helpers against a recording context. T6–T8 add their rows and mappings through the real `joinGesture`.
+- `hand-drag.test.ts`: T4 `dragPosition` (no jump at offset 0; a camera looking down −Z moves +X for a rightward offset; a rotated camera moves in its own plane; a child under a rotated parent and a rotated object root lands on the expected local position, checked by transforming back to world; halving the camera distance halves the move per pixel; rounding and the ±100 clamp) and `orbitOffset` (keeps the distance, turns the azimuth for a horizontal offset, clamps the polar angle). T6 `zoomRatio`; T7 the object move and `explodeAmount`; T8 `rotateAboutView`.
+- `hand-sessions.test.ts` (T5): on a small Three.js node tree (object root rotated, parent part rotated, child part) a grab session's `preview` moves only the grabbed node and the child follows in world space; `rebase` makes the next offset start from the current preview; `commit` calls the callback once with the position rounded to 5 decimals and the stored rotation; a commit at the start position calls nothing; `cancel` restores; `grabStillValid` for an empty plan with the same active id (valid), a plan that rebuilds or moves anything (invalid), another active id (invalid). T6–T8 extend it.
+- `hand-fist.test.ts` (T7): `curlRatio` for the synthetic open hand, pinch and fist, and `null` without world landmarks; `fistStep` engage and release at the ratios and frame counts, no change between, spikes, time-outs, `pinchMoved` blocks engaging.
 
 ### 11.3 E2E (`tests/e2e/fake-hands.ts`, `hand-control.spec.ts`)
 
-The helper routes the worker URL with the same pattern as `arm-try-on.spec.ts` and fulfils it with a scripted worker:
+Built in T1: the helper routes the worker URL with the same pattern as `arm-try-on.spec.ts` and fulfils it with a scripted worker that answers every frame with the latest hands it received on `BroadcastChannel('forgehand-fake-hands')`, posts `ready` with a chosen delegate, can delay replies (`replyDelayMs`), closes every bitmap and counts frames.
+
+T3 extends it for two hands:
 
 ```ts
-export async function installFakeHands(context: BrowserContext, options?: { delegate?: 'GPU' | 'CPU'; replyDelayMs?: number }): Promise<void>;
-export async function showHand(page: Page, at: { x: number; y: number } /* client px */, pinchM: number): Promise<void>;
-export async function hideHand(page: Page): Promise<void>;
-export async function fakeHandsLog(page: Page): Promise<{ ready: number; frames: number; poseFrames: number }>;
+export interface FakeHand { at: { x: number; y: number } /* client px */; pinchM: number; fist?: boolean /* T7 */ }
+export async function showHands(page: Page, hands: readonly FakeHand[]): Promise<void>;   // [] hides all hands
+export async function showHand(page, at, pinchM): Promise<void>;   // = showHands([{ at, pinchM }])
+export async function hideHand(page): Promise<void>;               // = showHands([])
 ```
 
-- The fake worker posts `ready` with the chosen delegate (default GPU), waits `replyDelayMs` (default 0) before answering each frame so a test can make the tracker slow (150 ms gives about 6 frames per second, below `MIN_CONTROL_FPS`), opens `new BroadcastChannel('forgehand-fake-hands')`, keeps the latest hand it receives there, and answers every frame message with it (closing the bitmap). It also posts its counters (`ready` count, frames, frames with `pose: true`) on the channel, which the helper collects in the page through an init script.
-- `showHand` reads the video element's rectangle and `videoWidth`/`videoHeight` in the page, converts the client point back to normalised display coordinates (the inverse of `landmarkToClient`), builds the hand with `syntheticHand` in Node, and posts it on the channel. Tests then wait with `expect.poll` on the overlay's data attributes, so the filter and settle delays need no fixed sleeps.
-- The app has no test-only branch: the only seam is the worker URL (R50).
-- `workbench.spec.ts` and `visual-backgrounds.spec.ts` get one `await installFakeHands(context)` line each, so no camera test downloads a model (R51). `arm-try-on.spec.ts` and `live-cli.spec.ts` are not touched.
+The channel message becomes `{ type: 'hands', hands: HandLandmarks[] }`; the fake worker still accepts the old `{ type: 'hand', hand }`. Hands are answered in array order, so in a test the first hand shown is slot 0. The app has no test-only branch: the only seam is the worker URL (R50).
 
-`hand-control.spec.ts` grows with the tasks (R52, R59, R61):
-- T1: camera on starts tracking with `pose` false (`fakeHandsLog`); 手勢 off stops frames; try-on with 手勢 off still reaches `try-on-status` `tracking` and sends pose frames; toggling try-on does not post a second `ready`; camera off and on resets 手勢 to pressed.
-- T2: the overlay appears with a hand and the camera on, disappears with no hand and with the camera off; `data-hand-state` `tracked`; 手勢 off removes the overlay.
-- T4: hover then pinch-drag-release on 外殼 (`housing`) of the demo: only `housing`'s position changes in `data-model-json`, `projectPart('battery')` moves with it, `data-object-json` is unchanged, one 復原 restores it; a pinch on a part of a second (inactive) object activates it, selects the part and moves it; a tap selects without an undo step; a pinch on empty space changes `data-camera-position` only; with 手勢 off a pinch does nothing and a mouse click still selects.
-- T5: a hand lost mid-drag for longer than `TRACKING_LOSS_MS` puts the part back and shows the cancel notice; the exploded view and an active agent run (an `/api/agent` route that does not answer until the test releases it) make a pinch on a part turn the view instead; a fake with `replyDelayMs: 150` shows the 「太慢」 line and `locked` after `SPEED_HOLD_MS`, while a CPU `ready` with no delay keeps hand control on (a pinch-drag still moves a part); `?hands=debug` shows the panel; no gesture requests `/api/generate`, `/api/edit` or `/api/agent`. The full suite runs.
-- T6 and T7: the cases of R59 and R61.
+`hand-control.spec.ts` grows with the tasks:
+- T1 ✓, T2 ✓ as built. T3 removes the T2 case's `data-hand-mode` assertion (the only change to existing cases).
+- T3: two hands → `data-hand-count` 2 and ink near both points, one hidden → 1; the 隱藏鏡頭畫面 button appears only with the camera on, pressing it sets `aria-pressed`, the video's computed opacity is 0 while `paused` is false and `currentTime` advances, fake frames keep growing, the overlay still has ink on the hand, `data-image-hidden` is `true`; camera off and on → shown again and not pressed; try-on with the image hidden reaches `tracking`; the hint line before the first hand; 手勢 off hides the status line; a fake with `replyDelayMs: 150` shows the 「太慢」 line and `data-hand-state="locked"` after `SPEED_HOLD_MS`; a CPU `ready` with no delay shows no 「太慢」 line and `tracked`; `?hands=debug` shows `hand-debug` with the delegate and the hand count. While developing, the task also probes once (in a scratch test, not committed) whether a `requestVideoFrameCallback` registered on the hidden video fires in the headless shell, and reports the answer.
+- T5: hover then pinch-drag-release on 外殼 (`housing`) of the demo: only `housing`'s position changes in `data-model-json`, `projectPart('battery')` moves with it, `data-object-json` is unchanged, one 復原 restores it; a pinch on a part of a second (inactive) object activates it, selects the part and moves it; a tap selects without an undo step; a pinch on empty space changes `data-camera-position` only; a second hand's pinch while the first drags is inert (`data-hand2-state="locked"`, only the first hand's move is committed); with 手勢 off a pinch does nothing and a mouse click still selects; a hand lost mid-drag for longer than `TRACKING_LOSS_MS` puts the part back and shows the cancel notice; the exploded view and an active agent run (an `/api/agent` route held open until the test releases it) make a pinch on a part turn the view, with their notices; `?hands=debug` shows the gesture counters; no gesture requests `/api/generate`, `/api/edit` or `/api/agent` (except the held agent run). The full suite runs.
+- T6–T9: the cases of R88, R95, R98 and R100.
+
+Two-hand steps under SwiftShader take longer (two filters, two settles); tests poll attributes with `expect.poll` and never sleep for fixed times, except where a test proves that something stays unchanged.
 
 ## 12. Task plan and requirement map
 
-Seven tasks (R71). Each is one module group plus its tests and fits one fresh session. Order: 1 → 7. Tasks 6 and 7 are P1; cut 7 first, then 6.
+Nine tasks (R71). Tasks 1–2 are done; Tasks 3–5 finish the P0 core; Tasks 6–9 are P1 in the order of R71 and are cut from the end.
 
 | Task | Content | Requirements |
 |---|---|---|
-| 1 | Shared tracking: worker `pose` flag, `useHandTracking` + `trackingPlan`, `useArmTracking` as consumer, 手勢 switch in App, synthetic hand fixture, `fake-hands.ts` and its install in two specs, README privacy line, structure.md | 1–8, 9 (inference, worker), 10, 11 (switch name), 44 (switch), 50, 51, 53 (camera off), 54, 63, 66 |
-| 2 | Input pipeline: constants, types, mapping, One Euro, pinch machine, picking and settling, skeleton drawing, `HandOverlay`, `useHandControl` part 1 (skeleton only, tracked and locked styles) | 9 (overlay hidden), 12, 13, 14 (first colour), 15 (lines), 17 (overlay), 18 (state, mode), 19–23, 47, 48, 49 (input), 52 (overlay), 64 (overlay) |
-| 3 | Gestures, pure: gates and speed, pinch decision, `HandController`, drag and orbit maths, texts, style, stats | 16 (texts), 24–31 (rules and maths), 33 (rounding), 35 (maths), 37, 38, 39 (controller side), 40–42 (rules), 43 (texts), 45 (counters), 48, 49 (gestures) |
-| 4 | Wiring: `SceneViewport` `hitTest`, grab and orbit sessions, cancel rules, `onTransform` kind, `ScreenTargets` (empty), `useHandControl` part 2 with the controller (hand state on the overlay's data attributes; no ring or badge yet), App gates | 15 (line styles per state), 17, 18 (state, target), 22 (scene), 24–36 (wiring), 39 (scene side), 40–41 (wiring), 52 (move, orbit, tap, inactive, 手勢 off), 53, 55, 64 |
-| 5 | Cursor ring and badge drawing, status line, cancel notice, debug panel, README hand section, the remaining P0 e2e cases, full suite, manual webcam list | 9 (status line hidden), 15 (ring), 16 (badge drawn), 17 (badge aria-hidden), 37 (e2e), 40–41 (e2e), 43, 45, 46, 52 (rest), 54 (full suite), 70, 72 |
-| 6 | P1 rotate mode: `rotateEuler`, rotate sessions, hand mode state, `HandModeButtons` as on-screen targets, G/R keys, Home for 重設視角, second colour, e2e, README and manual lines | 11 (mode buttons), 14, 22 (screen targets live), 27 (press), 55 (Home), 56–59, 70, 72 |
-| 7 | P1 double-pinch zoom: double tap in `pinchStep`, `frameBox`, `frameTarget`, e2e, README and manual lines | 21 (double tap), 60–62, 70, 72 |
+| 1 ✓ | Shared tracking: worker `pose` flag, `useHandTracking` + `trackingPlan`, `useArmTracking` as consumer, 手勢 switch in App, synthetic hand fixture, `fake-hands.ts` and its install in two specs, README privacy line, structure.md | 1–8, 9 (inference, worker), 10, 11 (switch name), 44 (switch), 50, 51, 53 (camera off), 54, 63, 66 |
+| 2 ✓ | Input pipeline: constants, types, mapping, One Euro, pinch machine, picking and settling, skeleton drawing, `HandOverlay`, `useHandControl` part 1 (one skeleton) | 9 (overlay hidden), 12 (one hand), 13, 14 (first colour), 15 (lines), 17 (overlay), 18 (state), 19–23, 47, 48, 49 (input), 52 (overlay), 64 (overlay) |
+| 3 | Both hands and the hidden camera image: worker `numHands: 2`, `palm`, `dedupeHands`, capture-loop fallback, camera image toggle, overlay for two hands and its attributes, one hand colour, gates and speed, status line, debug panel (tracking numbers), `showHands` | 12 (both hands), 13, 14, 15 (tracked, locked), 18 (count, slot attributes), 40 (slow), 41 (gate), 43 (status line), 44, 45 (tracking numbers), 47 (`TRACKED_HANDS`, `DUPLICATE_HAND_PX`), 48 (stall rule, duplicates), 52 (two hands, hidden image, 手勢 status, slow, CPU, debug), 53, 63, 64, 66, 73–77, 78 (duplicates) |
+| 4 | Two-hand gesture core, pure: `assignHands`, decision, pair geometry, join rule (no rows), `HandController` with arbitration and hand-off, drag and orbit maths, badge texts, debug line, stats, ring, badge and link drawing helpers | 16, 21 (per hand), 24–31 (rules, maths), 33, 35 (maths), 37, 38, 39 (controller side), 40–42 (controller side), 45 (counters), 47 (`HAND_MATCH_PX`, `TWO_HAND_MIN_SPAN_PX`), 48, 49, 78 (slots), 79–84, 86 (frame link) |
+| 5 | Wiring: grab and orbit sessions with re-base, `SceneViewport` `hitTest` and busy and cancel rules, `onTransform` kind, `useHandControl` with the controller, rings, badges and link drawn, cancel notice, full debug panel, README hand section, remaining P0 e2e, full suite, manual webcam list | 15 (marks), 16 (badges drawn), 17, 18 (targets, gesture), 22 (scene), 24–36 (wiring), 37 (e2e), 39 (scene side), 41 (e2e), 43 (cancel notice), 45, 46, 52 (rest), 54, 55, 64, 70, 72, 81 (e2e), 85 |
+| 6 | P1 two-hand zoom: join row, `zoomRatio`, orbit `zoom`, `data-camera-target`, badge, e2e, README and manual lines | 31 (two-hand zoom), 82 (zoom row), 86, 87, 88, 70, 72 |
+| 7 | P1 fist: `curlRatio`, `fistStep`, fist and pinch precedence, `decideFist`, hold sessions and `onObjectMove`, explode row and `explodeAmount`, fist marks and badges, exploded status text, synthetic fist, e2e, README and manual lines | 15 (squares), 18 (fist states), 41 (fist when exploded), 43 (exploded line), 45 (curl), 47 (fist constants), 82 (explode row), 89–95, 70, 72 |
+| 8 | P1 two-hand rotate: join row, `rotateAboutView`, grab `rotate`, `both` notice, arc, e2e, README and manual lines | 55 (R stays), 82 (rotate row), 96–98, 70, 72 |
+| 9 | P1 agent switch: `set_camera_image`, optional `cameraHidden`, `AGENT_INSTRUCTIONS` line, client apply, unit tests, e2e, README and manual lines | 54 (tool lists), 99, 100, 70, 72 |
 
-Requirements 65 and 67–69 apply to every task; 71 is satisfied by `tasks.md` itself.
+Requirements 65 and 67–69 apply to every task; 71 is satisfied by `tasks.md` itself. Requirements 56–62 are removed.
 
-**Manual webcam list.** `tasks.md` carries it under its own heading in Task 5, so it exists even if both P1 tasks are cut. Task 5 checks it against what was built and hands it to the user; Tasks 6 and 7 add their lines (R72). Task 2 also asks the reviewer for an early webcam check of the skeleton and the tracking rate.
+**Manual webcam list.** `tasks.md` carries it under its own heading in Task 5, so it exists even if every P1 task is cut. Task 5 checks it against what was built and hands it to the user; Tasks 6–9 add their lines (R72). Task 3 also asks the reviewer for an early webcam check of two hands, their tracking rate and the hidden camera image, because the cost of the second hand is the largest unknown.
 
 ## 13. Key decisions
 
-- **A pure controller behind a port.** All timing, hysteresis, decisions and cancel rules live in one class with no DOM, so every rule in R19–R42 has a unit test with synthetic landmark sequences. The React and Three.js code only implements five port methods.
-- **Sessions in the scene, commit through the gizmo's callback.** The preview moves the same node the gizmo would move, so child parts follow for free, and the commit is the same `onTransform` → `updatePart`, so undo, notices, validation and conflict handling are the gizmo's.
-- **One worker per camera session.** Started on first need, kept idle while 手勢 and try-on are both off, terminated with the camera. Switching 手勢 or try-on never costs another 20–30 s start-up.
-- **The worker URL is the only test seam.** It already exists for try-on; the fake answers frames with scripted hands, so e2e tests drive the real app code end to end.
-- **Pinch on the world landmarks, cursor on the image landmarks.** Metric distances make the thresholds independent of how far the hand is from the camera; screen positions come from the image landmarks the user sees.
-- **Precision by depth.** Converting the cursor offset at the grabbed point's depth makes zooming in the precision control, as with the mouse, with no extra mode.
-- **Generic on-screen targets from the start.** The picker and the settled target already know the `screen` kind in Task 2, with an empty list until Task 6, so the mode buttons and later thumbnails or cards need no change to picking or pinch code.
+- **A pure controller behind a port, now for two hands.** All timing, hysteresis, decisions, arbitration and cancel rules live in one class with no DOM, so every rule in R19–R42 and R78–R98 has a unit test with synthetic landmark sequences.
+- **The first hand owns; the second only joins (Guiard).** Guiard's kinematic chain model says the non-dominant hand sets the frame of reference and the dominant hand acts within it (Y. Guiard, *Journal of Motor Behavior* 19(4), 1987). The owner holds the frame (a part, an object, the view) and the joiner acts on it. Roles go by order, not by handedness, so left-handed users and swapped labels need no special case.
+- **One number per two-hand gesture.** Zoom and explode read only the distance, rotate only the angle, each with a dead zone. This is what Apple's visionOS uses for two-hand zoom and rotate (pinch with both hands, drag apart or together, or in a circle; Apple Human Interface Guidelines, "Gestures"), and it keeps a sloppy two-hand motion from changing two things at once.
+- **Hand-off as in Meta's Interaction SDK.** A `Grabbable` there switches between a one-grab and a two-grab transformer as hands join and leave. Here the joiner's release re-bases the owner's session, so the one-hand gesture continues without a jump; the owner's release ends the gesture, and the joiner never takes it over.
+- **Two-hand gestures feed the owner's session.** No second scene session exists for zoom, rotate or explode, so commits stay one undo step and cancel rules stay those of the owner's gesture.
+- **The join rule is a table that P1 tasks extend.** Cutting a P1 task removes its row and nothing else; `assembly-joints` adds a fist row.
+- **Hide the image with opacity, keep the loop alive with a clock check.** The video keeps playing and stays in the page; if the browser stops video-frame callbacks for an unpainted video, the capture loop falls back to animation frames.
+- **Sessions in the scene, commit through the existing callbacks.** The preview moves the node the gizmo (or the 物件 panel) would move, so child parts follow for free, and the commit path is the existing one, with its undo, notices and validation.
+- **One worker per camera session, the worker URL as the only test seam, pinch on world landmarks, precision by depth** (unchanged from the 2026-11-15 design).
 
 ## 14. Risks and later improvements
 
-- **Task 4 is still the largest.** It touches `SceneViewport`, a new hook and App. The cursor ring and badge drawing were moved to Task 5 for that reason; Task 4 exposes the hand state through the overlay's data attributes only.
-- **Tuning time is not a task.** The constants are guesses until they meet the user's webcam. Plan about half a day after Task 5 for the manual list and constant changes.
-- **Speed on the user's laptop.** MediaPipe on the GPU now runs whenever the camera is on, next to the WebGL scene. If the rate falls below `MIN_CONTROL_FPS`, hand control locks itself (by design), and the demo would show the 「太慢」 line. Check it early: after Task 2 the skeleton is visible on the real webcam, and the try-on stats line already shows the tracking rate.
-- **E2E timing under SwiftShader.** The One Euro filter and the 150 ms settle add latency to every scripted step; tests poll attributes instead of sleeping, but the new spec may take a minute or two.
+- **Cost of the second hand.** The 50–70 ms estimate (§3.1) is not measured. If the user's laptop falls below `MIN_CONTROL_FPS` with two hands allowed, hand control locks with the 「太慢」 line during the demo. Task 3's report asks for an early measurement; the fallback is `TRACKED_HANDS = 1`, which keeps all P0 one-hand gestures.
+- **Video-frame callbacks on a hidden video.** Covered by the fallback (§3.2) and an e2e check that frames keep arriving, but headless Chromium may behave differently from the user's browser; the manual list checks the rate with the image hidden.
+- **Slot swaps when hands cross or touch.** Possible with position-only matching; two-hand gestures are short. The manual list checks it; `HAND_MATCH_PX` and `DUPLICATE_HAND_PX` are the knobs.
+- **Fist reliability.** The curl thresholds are estimates. `FIST_ENABLED = false` removes the fist and leaves pinch gestures unchanged; the debug line shows the curl ratio for tuning.
+- **Task size.** Task 5 (wiring and the rest of P0) and Task 7 (fist: detection, holds and explode) are the largest. Task 3 took the status line, gates and debug panel and Task 4 the drawing helpers so that Task 5 stays within one session; Task 7 has no P0 dependency beyond Task 5 and can be cut whole.
+- **Tuning time is not a task.** Plan about half a day after Task 5, and again after Task 7, for the manual list and constant changes.
+- **E2E timing under SwiftShader.** Two-hand steps double the filter and settle latency per step; tests poll attributes, but `hand-control.spec.ts` may take several minutes.
 - **Later: lazy pose loading** (§3.1), to make hand control ready about 4 s sooner on each camera start.
+
+## 15. Changes to the code of Tasks 1–2
+
+Tasks 1 and 2 stay as committed; these changes are made by later tasks:
+
+| File (built in) | Change | Task |
+|---|---|---|
+| `src/try-on/arm.worker.ts` (T1) | `numHands: 1` → `TRACKED_HANDS` (2) | T3 |
+| `src/hands/useHandTracking.ts` (T1) | capture-loop fallback to `requestAnimationFrame` when video-frame callbacks stall; interval cleared in `stop()` | T3 |
+| `src/hands/tracking-plan.ts` (T1) | adds `frameClockStep` | T3 |
+| `src/hands/constants.ts` (T2) | header comment no longer promises `ROTATE_DEG_PER_PX` and the double-tap constants; new constants per §4.1 | T3, T4, T6–T8 |
+| `src/hands/types.ts` (T2) | `HandMode` and `HandView.mode` removed; `HandView` per hand (`slot`, `cursor`, `palm`, `badge`); `OverlayFrame`, `GestureKind`, `HandSlot`; `HandSample.palm`; states `join`, then `fist`, `hold`; `HandSample.curl` | T3, T4, T7 |
+| `src/hands/mapping.ts` (T2) | `handSample` adds `palm`, then `curl` | T3, T7 |
+| `src/hands/style.ts` (T2) | `MODE_COLOURS` → `HAND_COLOUR` and `LINK_COLOUR`; `overlayStyle({ state })` without a mode; `ring` field → `mark` with fist squares | T3, T7 |
+| `src/hands/HandOverlay.tsx` (T2) | `draw(view)` → `draw(frame)` for up to two hands; `data-hand-mode` removed; `data-hand-count`, `data-hand2-state`, `data-hand2-target`, `data-gesture` added; marks, badges, link | T3, T5 |
+| `src/hands/useHandControl.ts` (T2) | uses every hand of the frame, not `hands[0]`; gate, status and debug outputs; then the controller | T3, T5 |
+| `src/hands/skeleton.ts` (T2) | `drawHand` unchanged; ring, square, badge, link and arc helpers added | T4, T7, T8 |
+| `src/hands/pinch.ts`, `targets.ts`, `one-euro.ts` (T2) | no change; instantiated per hand | — |
+| `tests/e2e/fake-hands.ts` (T1) | one hand → `showHands` for up to two hands (message `hands`), old helpers kept as wrappers; fists | T3, T7 |
+| `tests/fixtures/synthetic-hand.ts` (T1) | `fist` option | T7 |
+| `tests/e2e/hand-control.spec.ts` (T1, T2) | the T2 case's `data-hand-mode` assertion removed | T3 |
+| `tests/unit/hand-input.test.ts` (T2) | the overlay style test no longer expects two mode colours | T3 |
