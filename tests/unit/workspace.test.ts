@@ -22,7 +22,7 @@ function boxModel(partIds: string[] = ['body'], dimensions = vec(2, 1, 4), name 
 }
 const transform = (x = 0, ry = 0): ObjectTransform => ({ position: vec(x, 0, 0), rotation: vec(0, ry, 0) });
 function object(id: string, model = boxModel(), at = transform()): SceneObject {
-  return { id, model, transform: at, source: 'test', providerModel: 'fake', edited: false, createdAt: CREATED_AT };
+  return { id, model, transform: at, source: 'test', providerModel: 'fake', edited: false, material: null, createdAt: CREATED_AT };
 }
 function workspace(objects: SceneObject[], patch: Partial<Workspace> = {}): Workspace {
   return {
@@ -41,7 +41,7 @@ describe('workspace data and validation', () => {
   it('starts empty', () => {
     const ws = emptyWorkspace();
     expect(ws).toEqual({
-      version: WORKSPACE_VERSION, objects: [], activeObjectId: null, selection: { objectId: null, partIds: [] }, display: { explode: 0 },
+      version: WORKSPACE_VERSION, objects: [], activeObjectId: null, selection: { objectId: null, partIds: [] }, display: { explode: 0 }, joints: [],
     });
     expect(activeObject(ws)).toBeNull();
     expect(findObject(ws, 'a')).toBeNull();
@@ -88,7 +88,7 @@ describe('workspace data and validation', () => {
       ['a position out of range', 'INVALID_WORKSPACE', () => workspace([object('a', boxModel(), { position: vec(100.5, 0, 0), rotation: vec(0, 0, 0) })])],
       ['a rotation out of range', 'INVALID_WORKSPACE', () => workspace([object('a', boxModel(), { position: vec(0, 0, 0), rotation: vec(0, 361, 0) })])],
       ['a non-finite transform', 'INVALID_WORKSPACE', () => workspace([object('a', boxModel(), { position: vec(Number.NaN, 0, 0), rotation: vec(0, 0, 0) })])],
-      ['another version', 'INVALID_WORKSPACE', () => ({ ...workspace([a]), version: 2 }) as unknown as Workspace],
+      ['another version', 'INVALID_WORKSPACE', () => ({ ...workspace([a]), version: 3 }) as unknown as Workspace],
     ];
     it.each(cases)('%s', (_name, code, build) => {
       expect(codeOf(() => assertWorkspace(build()))).toBe(code);

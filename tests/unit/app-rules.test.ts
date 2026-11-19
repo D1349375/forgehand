@@ -15,7 +15,7 @@ function boxModel(partIds: string[]): ModelSpec {
 }
 const object = (id: string, partIds: string[]): SceneObject => ({
   id, model: boxModel(partIds), transform: { position: vec(0, 0, 0), rotation: vec(0, 0, 0) },
-  source: 'test', providerModel: 'fake', edited: false, createdAt: '2026-11-20T08:00:00.000Z',
+  source: 'test', providerModel: 'fake', edited: false, material: null, createdAt: '2026-11-20T08:00:00.000Z',
 });
 const deepFreeze = <T>(value: T): T => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {

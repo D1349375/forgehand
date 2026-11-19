@@ -142,7 +142,7 @@ test('代理新增的物件：瀏覽器採用伺服器給的 id 與位置，並�
     id: 'agent-made-object',
     model: copyModel(AGENT_NAME),
     transform: { position: { x: 0.4, y: 0, z: 0 }, rotation: { x: 0, y: 20, z: 0 } },
-    source: 'claude', providerModel: 'test-double', edited: false, createdAt: '2026-11-21T09:30:00.000Z',
+    source: 'claude', providerModel: 'test-double', edited: false, material: null, createdAt: '2026-11-21T09:30:00.000Z',
   };
   const summary = `已建立「${AGENT_NAME}」。`;
   const result: ToolResult = {

@@ -8,7 +8,7 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Task 1 — Joint data, workspace v2 and assemblies
 
-`[ ]`
+`[x]`
 
 Joints and materials become workspace data with a migration from version 1, and `setTransform` moves whole assemblies. Pure code only; nothing changes on screen.
 

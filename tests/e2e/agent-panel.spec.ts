@@ -55,7 +55,7 @@ test('代理串流更新模型、進度與回覆，並可復原', async ({ page 
   const created: SceneObject = {
     id: 'agent-bracelet', model: testModel,
     transform: { position: { x: 0.8, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } },
-    source: 'claude', providerModel: 'test-double', edited: false, createdAt: '2026-11-21T09:30:00.000Z',
+    source: 'claude', providerModel: 'test-double', edited: false, material: null, createdAt: '2026-11-21T09:30:00.000Z',
   };
   // The `result` event nulls an `add` object change; the `state` event carries it.
   const result: ToolResult = {
