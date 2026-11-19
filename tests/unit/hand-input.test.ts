@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import * as constants from '../../src/hands/constants';
-import { DUPLICATE_HAND_PX, HAND_LOST_MS, HOVER_SETTLE_MS, TRACKING_LOSS_MS } from '../../src/hands/constants';
+import { DUPLICATE_HAND_PX, HAND_LOST_MS, HAND_MATCH_PX, HOVER_SETTLE_MS, TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX } from '../../src/hands/constants';
 import { handSample, landmarkToClient } from '../../src/hands/mapping';
 import { OneEuroFilter2D } from '../../src/hands/one-euro';
 import { initialPinchState, pinchStep, type PinchEvent, type PinchInput, type PinchState } from '../../src/hands/pinch';
 import { HAND_CONNECTIONS } from '../../src/hands/skeleton';
-import { dedupeHands } from '../../src/hands/slots';
+import { assignHands, dedupeHands } from '../../src/hands/slots';
 import { HAND_COLOUR, LINK_COLOUR, LOCKED_COLOUR, overlayStyle } from '../../src/hands/style';
 import { initialSettleState, pickTarget, settleStep } from '../../src/hands/targets';
 import { targetKey, type HandState, type Point, type ScreenTarget, type Target } from '../../src/hands/types';
@@ -385,5 +385,49 @@ describe('dedupeHands', () => {
     expect(dedupeHands([first])).toEqual([first]);
     const near = { ...first, palm: { x: first.palm.x + 100, y: first.palm.y } };
     expect(dedupeHands([first, near], 150)).toEqual([first]);
+  });
+});
+describe('assignHands', () => {
+  const sample = (x: number, y = 300) => handSample(syntheticHand({ cursor: clientToNormalized({ x, y }, wideView, video), pinchM: 0.08 }), wideView, video)!;
+  const palm = (x: number, y = 300): Point => sample(x, y).palm;
+
+  it('has the two-hand constants of Task 4', () => {
+    expect(HAND_MATCH_PX).toBe(160);
+    expect(TWO_HAND_MIN_SPAN_PX).toBe(60);
+  });
+  it('gives a first hand the lowest free slot and a second hand the other one', () => {
+    expect(assignHands([null, null], [sample(300)])).toEqual([0, null]);
+    expect(assignHands([null, null], [sample(300), sample(700)])).toEqual([0, 1]);
+    expect(assignHands([palm(300), null], [sample(310), sample(700)])).toEqual([0, 1]);
+    expect(assignHands([null, palm(700)], [sample(705)])).toEqual([null, 0]);
+  });
+  it('keeps two moving hands in their slots, whatever their order in the frame', () => {
+    const slots = [palm(300), palm(700)];
+    expect(assignHands(slots, [sample(330), sample(680)])).toEqual([0, 1]);
+    expect(assignHands(slots, [sample(680), sample(330)])).toEqual([1, 0]);
+  });
+  it('treats a jump beyond HAND_MATCH_PX as a new hand, and drops it when no slot is free', () => {
+    expect(assignHands([palm(300), null], [sample(300 + HAND_MATCH_PX + 20)])).toEqual([null, 0]);
+    expect(assignHands([palm(300), null], [sample(300 + HAND_MATCH_PX - 20)])).toEqual([0, null]);
+    expect(assignHands([palm(300), palm(700)], [sample(500)])).toEqual([null, null]);
+  });
+  it('leaves the slot of a missing hand null', () => {
+    expect(assignHands([palm(300), palm(700)], [sample(310)])).toEqual([0, null]);
+    expect(assignHands([palm(300), palm(700)], [sample(690)])).toEqual([null, 0]);
+    expect(assignHands([palm(300), palm(700)], [])).toEqual([null, null]);
+  });
+  it('takes the pairing with the smaller total movement', () => {
+    // Hands at 300 and 420 move to 360 and 470: pairing 0→360 and 1→470 costs 110, the crossing one is not even in range.
+    const slots = [palm(300), palm(420)];
+    expect(assignHands(slots, [sample(470), sample(360)])).toEqual([1, 0]);
+    expect(assignHands(slots, [sample(360), sample(470)])).toEqual([0, 1]);
+  });
+  it('prefers a valid pairing over a cheaper one that needs a jump beyond the limit, and matches as many slots as it can', () => {
+    const slots = [palm(300), palm(560)];
+    // Sample at 440 is within the limit of both slots; sample at 700 only of slot 1. The only full matching is 0→440, 1→700.
+    expect(assignHands(slots, [sample(440), sample(700)])).toEqual([0, 1]);
+  });
+  it('honours a custom limit', () => {
+    expect(assignHands([palm(300), null], [sample(360)], 30)).toEqual([null, 0]);
   });
 });

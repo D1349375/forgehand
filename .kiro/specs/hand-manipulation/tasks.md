@@ -146,7 +146,7 @@ The worker tracks two hands and both skeletons are drawn; a 隱藏鏡頭畫面 b
 
 ## Task 4 — Two-hand gesture core (pure)
 
-`[ ]`
+`[x]`
 
 Every gesture rule for one and two hands as pure code with unit tests: hand slots, what a pinch does, which hand owns a gesture and when the other hand may join, the pair geometry, the drag and orbit maths, the badge texts, the debug counters, and the drawing helpers for rings, badges and the line between the hands. Nothing is wired into the scene.
 

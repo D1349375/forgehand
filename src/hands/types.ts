@@ -2,6 +2,8 @@
 export interface Point { x: number; y: number }
 /** Which of the two tracked hands: the first to appear takes 0. */
 export type HandSlot = 0 | 1;
+/** A point in 3D space (world metres or a local position). */
+export interface Vector { x: number; y: number; z: number }
 /** What the overlay shows about the hand. `locked` is hand control off, view-only or an inert pinch. */
 export type HandState = 'none' | 'tracked' | 'hover' | 'grab' | 'orbit' | 'locked'
   /** The second hand of a two-hand gesture (Task 4). */
