@@ -51,7 +51,7 @@ Hand tracking runs whenever the camera is on, through one worker that try-on and
 
 ## Task 2 — Input pipeline and the skeleton overlay
 
-`[ ]`
+`[x]`
 
 The pure input code (mapping, cursor filter, pinch state machine, picking and settling) and a hand skeleton drawn over the camera view. No gesture acts yet.
 

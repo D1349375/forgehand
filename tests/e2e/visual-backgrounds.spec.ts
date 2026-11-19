@@ -70,7 +70,7 @@ for (const background of ['bright', 'dark', 'cluttered'] as const) {
     await page.getByLabel('物件描述', { exact: true }).fill('紅色外殼、雙鏡頭、側電池與內部綠色板件');
     await page.getByRole('button', { name: '生成 3D 草案', exact: true }).click();
     await expect(page.getByTestId('model-name')).toHaveText('合成背景驗證：紅色外殼雙鏡頭裝置');
-    const canvas = viewport.locator('canvas');
+    const canvas = page.getByTestId('scene-canvas');
     await expect(canvas).toHaveAttribute('data-part-count', '9');
     await page.waitForTimeout(700);
     const defaultImage = await viewport.screenshot();

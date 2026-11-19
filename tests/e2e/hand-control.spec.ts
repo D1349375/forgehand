@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { fakeHandsLog, installFakeHands, showHand } from './fake-hands';
+import { fakeHandsLog, hideHand, installFakeHands, showHand } from './fake-hands';
 
 // Hand control is tested against a scripted worker (fake-hands.ts); the camera
 // stream, the capture loop and the app are real.
@@ -82,5 +82,58 @@ test.describe('T1 shared hand tracking and the 手勢 switch', () => {
     await openCamera(page);
     await expect(handsButton(page)).toHaveAttribute('aria-pressed', 'true');
     await framesAbove(page, 0);
+  });
+});
+
+/** How many pixels of the hand overlay inside the square around `centre` (client px, half-width `radius`) are drawn on. */
+async function overlayInk(page: Page, centre: { x: number; y: number }, radius: number) {
+  return page.getByTestId('hand-overlay').evaluate((element, area) => {
+    const canvas = element as HTMLCanvasElement;
+    const box = canvas.getBoundingClientRect();
+    const ratio = canvas.width / box.width;
+    const x = Math.max(0, Math.round((area.centre.x - box.left - area.radius) * ratio));
+    const y = Math.max(0, Math.round((area.centre.y - box.top - area.radius) * ratio));
+    const size = Math.round(area.radius * 2 * ratio);
+    const data = canvas.getContext('2d')!.getImageData(x, y, Math.min(size, canvas.width - x), Math.min(size, canvas.height - y)).data;
+    let ink = 0;
+    for (let index = 3; index < data.length; index += 4) if (data[index]! > 0) ink++;
+    return ink;
+  }, { centre, radius });
+}
+
+test.describe('T2 hand overlay', () => {
+  // One camera start covers the whole life of the overlay: it is drawn on the hand,
+  // follows the hand and the 手勢 switch, and goes away with the camera.
+  test('the skeleton lies on the hand and goes with the hand, the 手勢 switch and the camera', async ({ page }) => {
+    await openCamera(page);
+    await framesAbove(page, 0);
+    const overlay = page.getByTestId('hand-overlay');
+    await expect(overlay).toHaveAttribute('data-hand-state', 'none');
+    await expect(overlay).toHaveAttribute('aria-hidden', 'true');
+
+    const box = (await page.getByTestId('viewport').boundingBox())!;
+    const hand = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    const corner = { x: box.x + 40, y: box.y + 40 };
+    await showHand(page, hand, 0.1);
+    await expect(overlay).toHaveAttribute('data-hand-state', 'tracked');
+    await expect(overlay).toHaveAttribute('data-hand-mode', 'translate');
+    await expect(overlay).toHaveAttribute('data-hand-target', '');
+    // Poll: under load a slow frame can leave the overlay cleared for a moment (HAND_LOST_MS) before the next draw.
+    await expect.poll(() => overlayInk(page, hand, 90), { timeout: 45_000, intervals: [50, 100, 200] }).toBeGreaterThan(100);
+    expect(await overlayInk(page, corner, 30)).toBe(0);
+
+    await hideHand(page);
+    await expect(overlay).toHaveAttribute('data-hand-state', 'none');
+    expect(await overlayInk(page, hand, 90)).toBe(0);
+
+    await handsButton(page).click();
+    await expect(overlay).toHaveCount(0);
+    await handsButton(page).click();
+    await expect(overlay).toHaveCount(1);
+    await showHand(page, hand, 0.1);
+    await expect(overlay).toHaveAttribute('data-hand-state', 'tracked');
+
+    await page.getByRole('button', { name: '關閉攝影機', exact: true }).click();
+    await expect(overlay).toHaveCount(0);
   });
 });

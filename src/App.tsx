@@ -8,6 +8,8 @@ import {
 } from '../shared/workspace';
 import { SceneViewport, type SceneHandle, type TransformMode, type Vector } from './scene/SceneViewport';
 import { useArmTracking, type ArmTrackingStatus } from './try-on/useArmTracking';
+import { HandOverlay, type HandOverlayHandle } from './hands/HandOverlay';
+import { useHandControl } from './hands/useHandControl';
 import { useHandTracking } from './hands/useHandTracking';
 import type { AgentTurn } from '../shared/agent';
 import { AgentPanel } from './agent/AgentPanel';
@@ -76,6 +78,9 @@ export default function App() {
   const [handsOn, setHandsOn] = useState(true);
   const tracking = useHandTracking(videoRef, { running: camera === 'on', needed: handsOn || tryOnActive, wantPose: tryOnActive, mirrored });
   const armTracking = useArmTracking(tracking.source, tracking.status, tryOnActive);
+  const overlayRef = useRef<HandOverlayHandle>(null);
+  const handControlOn = camera === 'on' && handsOn;
+  useHandControl({ source: tracking.source, enabled: handControlOn, videoRef, overlayRef });
   const sceneRef = useRef<SceneHandle>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cameraRequest = useRef(0);
@@ -506,6 +511,7 @@ export default function App() {
             if (timed && timed.objectId === item.id) { setTiming(performance.now() - timed.startedAt); timingRef.current = null; }
             if (first) setMessage(item.source === 'demo' ? '示範模型已就緒。可拖曳旋轉、滾輪縮放，點擊零件即可選取。' : '3D 草案已建立。請旋轉檢查主要結構與分件，點擊零件即可選取。');
           }} />
+          {handControlOn && <HandOverlay ref={overlayRef} />}
           <div className="stage-label"><span className="tiny-cross">＋</span>{tryingOn ? '護臂試戴' : '虛擬展示位置'}<span>{tryingOn ? '' : 'CONCEPT / 01'}</span></div>
           {!active && !tryingOn && <div className="empty-scene"><div className="reticle"><span /><i /></div><h2>讓第一個想法成形</h2><p>描述物件的外形、顏色與組成，<br />在這裡旋轉檢視立體概念。</p><button className="button ghost" onClick={loadDemo} disabled={agentActive || atLimit}>載入示範模型</button></div>}
           {active && <div className="model-caption"><span className="eyebrow">{sourceLabel}</span><h2 data-testid="model-name">{active.model.name}</h2><span>{active.model.parts.length} 個實際零件 · 概念草案{single ? ` · 已選取 ${single.name}` : selectedParts.length > 1 ? ` · 已選取 ${selectedParts.length} 個零件` : ''}{workspace.objects.length > 1 ? ` · 工作區 ${workspace.objects.length} 個物件` : ''}</span></div>}
