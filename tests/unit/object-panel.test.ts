@@ -15,7 +15,7 @@ function boxModel(name: string, partIds: string[]): ModelSpec {
 }
 const object = (id: string, name: string, partIds: string[]): SceneObject => ({
   id, model: boxModel(name, partIds), transform: { position: vec(0, 0, 0), rotation: vec(0, 0, 0) },
-  source: 'test', providerModel: 'fake', edited: false, createdAt: '2026-11-20T08:00:00.000Z',
+  source: 'test', providerModel: 'fake', edited: false, material: null, createdAt: '2026-11-20T08:00:00.000Z',
 });
 /** Objects `a` (3 parts), `b` (2 parts), `c` (1 part) in creation order; `c` is active because it was added last. */
 const three = (): Workspace => [object('a', 'Alpha', ['p1', 'p2', 'p3']), object('b', 'Beta', ['q1', 'q2']), object('c', 'Gamma', ['r1'])]

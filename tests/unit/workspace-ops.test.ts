@@ -20,7 +20,7 @@ function boxModel(partIds: string[] = ['body'], name = 'Slab'): ModelSpec {
 }
 const transform = (x = 0, ry = 0): ObjectTransform => ({ position: vec(x, 0, 0), rotation: vec(0, ry, 0) });
 function object(id: string, model = boxModel(), at = transform()): SceneObject {
-  return { id, model, transform: at, source: 'test', providerModel: 'fake', edited: false, createdAt: CREATED_AT };
+  return { id, model, transform: at, source: 'test', providerModel: 'fake', edited: false, material: null, createdAt: CREATED_AT };
 }
 /** Builds a workspace through `addObject`, so the last object is active. */
 function build(...objects: SceneObject[]): Workspace {

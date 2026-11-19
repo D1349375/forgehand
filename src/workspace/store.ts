@@ -9,8 +9,8 @@ import { emptyWorkspace, type Workspace, type WorkspaceSelection } from '../../s
 
 export const HISTORY_LIMIT = 50;
 
-/** What an undo step remembers. `objects` is shared with the workspace it came from, never copied. */
-export type Snapshot = Pick<Workspace, 'objects' | 'activeObjectId'>;
+/** What an undo step remembers. `objects` and `joints` are shared with the workspace they came from, never copied. */
+export type Snapshot = Pick<Workspace, 'objects' | 'activeObjectId' | 'joints'>;
 
 export interface WorkspaceState {
   workspace: Workspace;
@@ -30,7 +30,7 @@ export const initialWorkspaceState: WorkspaceState = { workspace: emptyWorkspace
 
 const EMPTY_SELECTION: WorkspaceSelection = { objectId: null, partIds: [] };
 
-const snapshotOf = (ws: Workspace): Snapshot => ({ objects: ws.objects, activeObjectId: ws.activeObjectId });
+const snapshotOf = (ws: Workspace): Snapshot => ({ objects: ws.objects, activeObjectId: ws.activeObjectId, joints: ws.joints });
 
 /**
  * The workspace for a snapshot, keeping the current selection and explode only
@@ -51,6 +51,7 @@ export function restoreSnapshot(current: Workspace, snapshot: Snapshot): Workspa
     ...current,
     objects: snapshot.objects,
     activeObjectId: snapshot.activeObjectId,
+    joints: snapshot.joints,
     selection,
     display: sameActive ? current.display : { explode: 0 },
   };

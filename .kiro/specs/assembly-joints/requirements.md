@@ -105,11 +105,11 @@ Snap detection, checks, recommendations, tolerances and features are local rules
     | Insert M2 (CNC Kitchen M2×3) | length 3.0, hole Ø3.2; outer Ø from the datasheet | cnckitchen.store, M2×3 product and datasheet |
     | Insert M3 (CNC Kitchen M3×5.7) | length 5.7, hole Ø4.0, outer Ø4.6 | cnckitchen.store, M3×5.7 datasheet |
     | Screw M2, ISO 4762 | head Ø3.8, head height 2.0; lengths 4, 5, 6, 8, 10, 12, 16, 20 | ISO 4762 |
-    | Screw M3, ISO 4762 | head Ø5.5, head height 3.0; lengths 4, 5, 6, 8, 10, 12, 16, 20, 25, 30 | ISO 4762 |
+    | Screw M3, ISO 4762 | head Ø5.5, head height 3.0; lengths 5, 6, 8, 10, 12, 16, 20, 25, 30 (the ISO table starts at 5) | ISO 4762 |
     | Clearance hole, ISO 273 medium | M2 Ø2.4, M3 Ø3.4 | ISO 273 |
     | Tap drill, metric coarse | M2 Ø1.6, M3 Ø2.5 | ISO 261 / tap drill tables |
     | Disc magnets (Ø × thickness) | 6×2, 6×3, 8×3, 10×2, 10×3 | common N35–N52 neodymium sizes; one supplier datasheet cited |
-    | Dowel pins, ISO 8734 | Ø2, Ø3, Ø4; lengths 6, 8, 10, 12, 16, 20 | ISO 8734 |
+    | Dowel pins, ISO 8734 | Ø2: 6, 8, 10, 12, 16, 20; Ø3: 8, 10, 12, 16, 20; Ø4: 10, 12, 16, 20 (the lengths the ISO table lists per diameter) | ISO 8734 |
     | Glues | CA (瞬間膠), 2-part epoxy (AB 膠), solvent (溶劑黏合, ABS family only) | material table, requirement 9 |
 
     CNC Kitchen notes that printed holes come out smaller than designed, so its recommended hole diameters often fit tightly ([CNC Kitchen, "Are our heat-set insert datasheets wrong?"](https://cnckitchen.com/blog/are-our-heat-set-insert-datasheets-wrong)); the printer profile's hole compensation (requirement 17) covers that.

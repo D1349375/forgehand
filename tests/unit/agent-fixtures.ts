@@ -18,6 +18,7 @@ export function sceneObject(id: string, model: ModelSpec = demoModel, x = 0): Sc
     source: 'demo',
     providerModel: 'demo',
     edited: false,
+    material: null,
     createdAt: CREATED_AT,
   };
 }
