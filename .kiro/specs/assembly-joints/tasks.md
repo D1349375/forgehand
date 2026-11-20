@@ -52,7 +52,7 @@ Joints and materials become workspace data with a migration from version 1, and 
 
 ## Task 2 — Contact, snapping and joint features
 
-`[ ]`
+`[x]`
 
 The pure geometry: which faces touch, which faces face each other, how side b is aligned, a stable snap state for live use, re-alignment, and every hole, pocket and boss a joint needs.
 
