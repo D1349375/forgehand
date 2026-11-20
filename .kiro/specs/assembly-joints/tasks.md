@@ -272,6 +272,8 @@ Run `npm run dev`, 載入示範模型 twice, 開啟攝影機, and add `?hands=de
 
 ## Cut order
 
+**Only the user decides whether anything is cut.** A Kiro session never drops or simplifies a feature on its own, also not to save time: it reports the problem, and the reviewer asks the user. The list below is only a reference for that decision.
+
 If time runs short, cut in this order. Joints with screws and magnets, assembly moves, the mouse join and the export interface (Tasks 1–4 without the cut items) always stay.
 
 1. **Task 6, two-fist join**, when `hand-manipulation` Task 7 is cut or lands too late. Requirements 58–63 and the hold part of 87 are dropped; a fist move still commits through `setTransform`, so the assembly follows on release. Joints are made with the mouse or the agent.

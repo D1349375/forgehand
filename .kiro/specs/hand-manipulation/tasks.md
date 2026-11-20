@@ -438,6 +438,8 @@ A server tool lets the agent hide or show the camera image, through a new option
 
 ## Cut order
 
+**Only the user decides whether anything is cut.** A Kiro session never drops or simplifies a feature on its own, also not to save time: it reports the problem, and the reviewer asks the user. The list below is only a reference for that decision.
+
 If time runs short, drop whole tasks from the end, in this order. The P0 core (Tasks 1–5: both skeletons, the hidden camera image, the 手勢 switch, one-hand pinch-move and orbit) always stays. Each P1 task depends only on Task 5 (Task 9 only on Task 3), so cutting one never blocks another.
 
 1. **Task 9, agent switch.** Requirements 99–100 are dropped. The camera image is hidden only with the 隱藏鏡頭畫面 button; the server does not change.
