@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CANCEL_NOTICE_MS, MIN_CONTROL_FPS, SPEED_HOLD_MS } from '../../src/hands/constants';
-import { handGate, initialSpeedState, parseMinFps, speedStep, type Gate, type SpeedState } from '../../src/hands/gate';
+import { handGate, initialSpeedState, parseLossMs, parseMinFps, speedStep, type Gate, type SpeedState } from '../../src/hands/gate';
 import { handStatus, trackingDebugLine } from '../../src/hands/text';
 import type { TrackerStatus } from '../../src/hands/useHandTracking';
 
@@ -115,6 +115,12 @@ describe('trackingDebugLine', () => {
     expect(trackingDebugLine({ delegate: 'CPU', fps: 8, inferenceMs: 120, hands: 1, pinchMm: [null] }))
       .toBe('CPU · 每秒 8 幀 · 辨識 120 ms · 1 隻手 · 捏合 — mm');
   });
+  it('shows the loss threshold only when it is overridden', () => {
+    const base = { delegate: 'GPU' as const, fps: 22, inferenceMs: 48, hands: 1, pinchMm: [] };
+    expect(trackingDebugLine({ ...base, lossMs: 2000 })).toBe('GPU · 每秒 22 幀 · 辨識 48 ms · 1 隻手 · 遺失門檻 2000 ms');
+    expect(trackingDebugLine({ ...base, lossMs: null })).not.toContain('遺失門檻');
+    expect(trackingDebugLine(base)).not.toContain('遺失門檻');
+  });
 });
 
 describe('parseMinFps (?hands-min-fps)', () => {
@@ -156,5 +162,23 @@ describe('speedStep with a custom threshold', () => {
 describe('trackingDebugLine threshold', () => {
   it('shows the active speed threshold when given', () => {
     expect(trackingDebugLine({ delegate: 'GPU', fps: 22, inferenceMs: 48, hands: 0, pinchMm: [], minFps: 0 })).toBe('GPU · 每秒 22 幀 · 辨識 48 ms · 0 隻手 · 速度門檻 0 幀');
+  });
+});
+describe('parseLossMs (?hands-loss-ms)', () => {
+  it('takes an integer from 100 to 5000', () => {
+    expect(parseLossMs('?hands-loss-ms=100')).toBe(100);
+    expect(parseLossMs('?hands=debug&hands-loss-ms=2000')).toBe(2000);
+    expect(parseLossMs('?hands-loss-ms=5000')).toBe(5000);
+  });
+  it('returns null outside that range', () => {
+    for (const bad of ['99', '5001', '0', '-300', '100000']) expect(parseLossMs('?hands-loss-ms=' + bad)).toBeNull();
+  });
+  it('returns null for a value that is not an integer', () => {
+    for (const bad of ['abc', '', ' ', 'NaN', 'Infinity', '1e3', '300.5', '2000ms', '0x800']) expect(parseLossMs('?hands-loss-ms=' + bad)).toBeNull();
+  });
+  it('returns null when the parameter is absent', () => {
+    expect(parseLossMs('')).toBeNull();
+    expect(parseLossMs('?hands=debug')).toBeNull();
+    expect(parseLossMs('?hands-min-fps=0')).toBeNull();
   });
 });

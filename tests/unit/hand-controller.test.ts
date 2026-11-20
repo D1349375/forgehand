@@ -54,7 +54,7 @@ class FakeOrbit implements OrbitSession {
 }
 
 /** A controller, a fake port that records every call, and a clock that advances one frame at a time. */
-function makeRig(options: { join?: JoinRule; objectCount?: number; pick?: (point: Point) => Target } = {}) {
+function makeRig(options: { join?: JoinRule; objectCount?: number; pick?: (point: Point) => Target; lossMs?: number } = {}) {
   const log: string[] = [];
   const grabs: FakeGrab[] = [];
   const orbits: FakeOrbit[] = [];
@@ -80,7 +80,7 @@ function makeRig(options: { join?: JoinRule; objectCount?: number; pick?: (point
     },
     press: id => { log.push(`press ${id}`); },
   };
-  const controller = new HandController(port, { join: options.join });
+  const controller = new HandController(port, { join: options.join, lossMs: options.lossMs });
   controller.setObjectCount(options.objectCount ?? 1);
   const cancelled: string[] = [];
   controller.onCancelled = reason => cancelled.push(reason);
@@ -413,6 +413,45 @@ describe('HandController, one hand', () => {
     expect(rig.controller.tick(lastSeen + TRACKING_LOSS_MS + 1)?.gesture).toBe('none');
     expect(rig.grabs[0]!.cancels).toBe(1);
     expect(rig.cancelled).toEqual(['loss']);
+  });
+  describe('with a custom loss window (?hands-loss-ms)', () => {
+    const GAP_MS = 1000;
+    const gapFrames = Math.ceil(GAP_MS / FRAME_MS);
+    it('keeps a drag through a 1000 ms gap at 2000 ms', () => {
+      const rig = makeRig({ lossMs: 2000 });
+      pinch(rig, [[200, 300]]);
+      rig.run([[330, 300, true]], 10);
+      rig.run([], gapFrames);
+      expect(rig.grabs[0]!.cancels).toBe(0);
+      rig.run([[360, 300, true]], 3);
+      expect(rig.last.gesture).toBe('grab');
+      expect(rig.cancelled).toEqual([]);
+    });
+    it('cancels the same drag at the default window', () => {
+      const rig = makeRig();
+      pinch(rig, [[200, 300]]);
+      rig.run([[330, 300, true]], 10);
+      rig.run([], gapFrames);
+      expect(rig.grabs[0]!.cancels).toBe(1);
+      expect(rig.cancelled).toEqual(['loss']);
+    });
+    it('still cancels once the gap passes the custom window', () => {
+      const rig = makeRig({ lossMs: 2000 });
+      pinch(rig, [[200, 300]]);
+      rig.run([[330, 300, true]], 10);
+      rig.run([], Math.ceil(2000 / FRAME_MS) + 2);
+      expect(rig.grabs[0]!.cancels).toBe(1);
+      expect(rig.cancelled).toEqual(['loss']);
+    });
+    it('keeps an idle hand visible for the custom window and hides it by the default', () => {
+      const custom = makeRig({ lossMs: 2000 });
+      custom.run([[200, 300]], 3);
+      expect(custom.controller.tick(custom.now + GAP_MS)).toBeNull();
+      expect(custom.controller.tick(custom.now + 2001)?.hands).toHaveLength(0);
+      const normal = makeRig();
+      normal.run([[200, 300]], 3);
+      expect(normal.controller.tick(normal.now + GAP_MS)?.hands).toHaveLength(0);
+    });
   });
   it('records per-hand numbers for the debug panel', () => {
     const rig = makeRig();

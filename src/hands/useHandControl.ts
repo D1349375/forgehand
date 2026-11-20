@@ -42,10 +42,12 @@ export function useHandControl(input: {
   /** Objects in the workspace: with none, a pinch has nothing to act on. */
   objectCount: number;
   sceneRef: RefObject<SceneHandle | null>;
+  /** `?hands-loss-ms`: replaces both hand-loss windows; null keeps the defaults. */
+  lossMs?: number | null;
   /** A pinch on a part selects it, as a click does (activating its object when needed). */
   onPick: (objectId: string, partId: string) => void;
 }): { status: { state: HandStatusState; text: string }; debug: RefObject<HandDebugNumbers> } {
-  const { source, tracker, enabled, gate, videoRef, overlayRef, objectCount, sceneRef } = input;
+  const { source, tracker, enabled, gate, videoRef, overlayRef, objectCount, sceneRef, lossMs = null } = input;
   const [handSeen, setHandSeen] = useState(false);
   /** When hand tracking was lost during a drag and the part went back; the notice shows for CANCEL_NOTICE_MS. */
   const [cancelledAt, setCancelledAt] = useState<number | null>(null);
@@ -65,8 +67,8 @@ export function useHandControl(input: {
       beginOrbit: () => sceneRef.current?.beginOrbit() ?? null,
       press: () => { /* no on-screen targets yet */ },
     };
-    return new HandController(port);
-  }, [sceneRef]);
+    return new HandController(port, { lossMs });
+  }, [sceneRef, lossMs]);
   useEffect(() => { controller.setGate(gate); }, [controller, gate.level, gate.reason]);
   useEffect(() => { controller.setObjectCount(objectCount); }, [controller, objectCount]);
   useEffect(() => {

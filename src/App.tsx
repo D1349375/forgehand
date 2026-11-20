@@ -9,7 +9,7 @@ import {
 import { SceneViewport, type SceneHandle, type TransformMode, type Vector } from './scene/SceneViewport';
 import { useArmTracking, type ArmTrackingStatus } from './try-on/useArmTracking';
 import { HandOverlay, type HandOverlayHandle } from './hands/HandOverlay';
-import { handGate, initialSpeedState, parseMinFps, speedStep, type SpeedState } from './hands/gate';
+import { handGate, initialSpeedState, parseLossMs, parseMinFps, speedStep, type SpeedState } from './hands/gate';
 import { HandDebugPanel, handDebugRequested } from './hands/HandDebugPanel';
 import { useHandControl } from './hands/useHandControl';
 import { useHandTracking } from './hands/useHandTracking';
@@ -85,6 +85,7 @@ export default function App() {
   const speed = useRef<SpeedState>(initialSpeedState());
   /** Speed threshold: MIN_CONTROL_FPS, or ?hands-min-fps=<number> for slow machines. Read once at load. */
   const [minFps] = useState(() => parseMinFps(window.location.search));
+  const [lossMs] = useState(() => parseLossMs(window.location.search));
   const tracking = useHandTracking(videoRef, {
     running: camera === 'on', needed: handsOn || tryOnActive, wantPose: tryOnActive, mirrored,
     onRate: (fps, now) => {
@@ -120,7 +121,7 @@ export default function App() {
   const gate = handGate({ tryOn: tryOnActive, slow, agentActive, exploded: explode > 0 });
   const handControl = useHandControl({
     source: tracking.source, tracker: tracking.status, enabled: handControlOn, gate, videoRef, overlayRef,
-    objectCount: workspace.objects.length, sceneRef, onPick: (objectId, partId) => pick(objectId, partId, false),
+    objectCount: workspace.objects.length, sceneRef, lossMs, onPick: (objectId, partId) => pick(objectId, partId, false),
   });
   const handDebug = handDebugRequested(window.location.search);
 
@@ -560,7 +561,7 @@ export default function App() {
           <div className="button-group"><button className="button" onClick={undo} disabled={!store.canUndo || agentActive} title="Ctrl+Z">復原</button><button className="button" onClick={redo} disabled={!store.canRedo || agentActive} title="Ctrl+Shift+Z">重做</button><button className="icon-button" onClick={() => sceneRef.current?.zoomOut()} aria-label="縮小" disabled={!active}>−</button><button className="icon-button" onClick={() => sceneRef.current?.zoomIn()} aria-label="放大" disabled={!active}>＋</button><button className="button" onClick={() => sceneRef.current?.reset()} disabled={!active}>重設視角</button></div>
         </div>
         {handControlOn && handControl.status.state !== 'hidden' && <p className={`notice hand-status ${['error', 'slow'].includes(handControl.status.state) ? 'warning' : ''}`} role="status" data-testid="hand-status" data-state={handControl.status.state}>{handControl.status.text}</p>}
-        {handControlOn && handDebug && <HandDebugPanel source={tracking.source} debug={handControl.debug} minFps={minFps} />}
+        {handControlOn && handDebug && <HandDebugPanel source={tracking.source} debug={handControl.debug} minFps={minFps} lossMs={lossMs} />}
         {tryingOn && <p className={`notice ${armTracking.status.endsWith('-error') ? 'warning' : ''}`} role="status" data-testid="try-on-status" data-state={armTracking.status}>{armStatusText[armTracking.status]}
           {armTracking.stats && <span className="small-muted" data-testid="try-on-stats"> · {armTracking.stats.delegate} · 每秒 {armTracking.stats.fps.toFixed(0)} 幀 · 辨識 {armTracking.stats.inferenceMs.toFixed(0)} ms · 偵測到手 {armTracking.stats.handFps.toFixed(0)}／對齊 {armTracking.stats.armFps.toFixed(0)} 次每秒{armTracking.stats.source && ` · 前臂依${armTracking.stats.source === 'elbow' ? '手肘' : '手部方向'}`}</span>}</p>}
         {active && <div className="explode-toolbar"><button type="button" className={`button ${explode > 0 ? 'active' : ''}`} aria-pressed={explode > 0} disabled={agentActive} onClick={() => setExplodeAmount(explode > 0 ? 0 : 1)}>{explode > 0 ? '收回爆炸圖' : '爆炸圖'}</button>

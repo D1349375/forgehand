@@ -43,3 +43,14 @@ export function parseMinFps(search: string, fallback: number = MIN_CONTROL_FPS):
   const value = Number(raw);
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
+
+/**
+ * The hand-loss window from the page URL: `?hands-loss-ms=<integer 100..5000>` replaces both HAND_LOST_MS
+ * and TRACKING_LOSS_MS. A missing, empty, non-integer or out-of-range value returns null (keep the defaults). Read once at load.
+ */
+export function parseLossMs(search: string): number | null {
+  const raw = new URLSearchParams(search).get('hands-loss-ms');
+  if (raw === null || !/^\d+$/.test(raw.trim())) return null;
+  const value = Number(raw.trim());
+  return value >= 100 && value <= 5000 ? value : null;
+}
