@@ -75,6 +75,10 @@ The e2e suite starts its own server on ports 5197/8797 (override with `E2E_PORT`
 
 The camera image stays in your browser. Hand tracking runs on your machine whenever the camera is on; turning the camera on downloads the MediaPipe hand and pose model files from Google's public model storage, and the video and the hand landmarks never leave the browser. Model back ends receive text, not video.
 
+## Credits
+
+- [manifold-3d](https://github.com/elalish/manifold) 3.2.1 (Apache-2.0) builds the printable geometry of joint parts (holes, pockets and bosses). It loads only when a printable part is built, and its WebAssembly file ships with the app, so nothing is fetched from the network.
+
 ## License
 
 [MIT](LICENSE)
