@@ -24,7 +24,7 @@ Other Kiro sessions work in this same working tree at the same time. On 2026-11-
 
 ## Task 1 — File writers: STL, 3MF, zip and GLB
 
-`[ ]`
+`[x]`
 
 Everything that turns plain data into bytes: mesh helpers and the print frame, binary STL, the 3MF package with its plate layout, the zip, the GLB, and the escaping and number formats every document uses. Pure code in `src/export/`; nothing changes on screen. No dependency on unfinished `assembly-joints` tasks.
 
