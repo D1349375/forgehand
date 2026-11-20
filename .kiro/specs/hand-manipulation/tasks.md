@@ -37,7 +37,7 @@ Hand tracking runs whenever the camera is on, through one worker that try-on and
 **Done when:** `npm run check` passes; `arm-try-on.spec.ts` passes without any change to it (`git diff --stat tests/e2e/arm-try-on.spec.ts` is empty); the only changes to `workbench.spec.ts` and `visual-backgrounds.spec.ts` are the helper import and calls; the full e2e suite passes.
 
 **Session facts:**
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`, or the own fake in `arm-try-on.spec.ts`); unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing (`npx playwright test tests/e2e/<name>.spec.ts`). Run the full suite once at the end of a task that touches the browser: start it in the background with its output in a file (for example `npx playwright test *> artifacts/local/e2e-hand-task1.log`), give it a timeout of at least 15 minutes, and read the file when it finishes.
@@ -81,7 +81,7 @@ The pure input code (mapping, cursor filter, pinch state machine, picking and se
 **Done when:** `npm run check` passes, the tests above are green, and the full e2e suite passes. In the report, tell the reviewer that **the skeleton can now be checked on the user's real webcam**: `npm run dev`, 開啟攝影機, wait for the models to load (about 20–30 s the first time), raise a hand; the skeleton should lie on the hand and follow it without visible lag. For the tracking rate, turn on 護臂試戴 briefly and read the try-on stats line (每秒 … 幀 · 辨識 … ms). This lets the user test tracking speed and accuracy before the gesture tasks.
 
 **Session facts:**
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`, or the own fake in `arm-try-on.spec.ts`); unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing (`npx playwright test tests/e2e/<name>.spec.ts`). Run the full suite once at the end of a task that touches the browser: start it in the background with its output in a file (for example `npx playwright test *> artifacts/local/e2e-hand-task2.log`), give it a timeout of at least 15 minutes, and read the file when it finishes.
@@ -132,7 +132,7 @@ The worker tracks two hands and both skeletons are drawn; a 隱藏鏡頭畫面 b
 **Done when:** `npm run check` passes, the tests above are green, `git diff --stat tests/e2e/arm-try-on.spec.ts` is empty, and the full e2e suite passes. In the report, tell the reviewer that **two hands and the hidden image can now be checked on the real webcam**: `npm run dev`, open `/?hands=debug`, 開啟攝影機, wait for the models; raise one hand and note the frames per second and recognition ms in the debug line; raise both hands and note them again; press 隱藏鏡頭畫面 and check that both skeletons still follow and the rate does not drop. If the rate with two hands stays below 10 frames per second, the user should hear about it before Task 4 starts (the fallback is `TRACKED_HANDS = 1`, design §3.1).
 
 **Session facts:**
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`, or the own fake in `arm-try-on.spec.ts`); unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing (`npx playwright test tests/e2e/<name>.spec.ts`). Run the full suite once at the end of a task that touches the browser: start it in the background with its output in a file (for example `npx playwright test *> artifacts/local/e2e-hand-task3.log`), give it a timeout of at least 15 minutes, and read the file when it finishes.
@@ -176,7 +176,7 @@ Every gesture rule for one and two hands as pure code with unit tests: hand slot
 **Done when:** `npm run check` passes and the tests above are green.
 
 **Session facts:**
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`, or the own fake in `arm-try-on.spec.ts`); unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing (`npx playwright test tests/e2e/<name>.spec.ts`). Run the full suite once at the end of a task that touches the browser: start it in the background with its output in a file, give it a timeout of at least 15 minutes, and read the file when it finishes. This task does not touch the browser; no e2e run is needed.
@@ -190,7 +190,7 @@ Every gesture rule for one and two hands as pure code with unit tests: hand slot
 
 ## Task 5 — Wiring: pinch-move, orbit and the rest of the P0 core
 
-`[~]`
+`[x]`
 
 The controller drives the real scene: one hand pinches a part to move it through the gizmo's commit path, or pinches empty space to turn the view; a second hand's pinch is inert. The overlay draws rings, badges and the line between the hands; the status line shows the cancel notice; the debug panel shows the gesture counters. README and the manual webcam list finish the P0 core.
 
@@ -245,7 +245,7 @@ Run `npm run dev`, open the app with `?hands=debug` in the URL. Note the numbers
 16. **Report.** Which constants to change, and to what (pinch thresholds, `DRAG_GAIN`, `ORBIT_DEG_PER_PX`, cursor filter, `TRACKING_LOSS_MS` or `ON_TRACKING_LOSS`, `DUPLICATE_HAND_PX`, `HAND_MATCH_PX`, or `TRACKED_HANDS = 1` if two hands are too slow).
 
 **Session facts:**
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`, or the own fake in `arm-try-on.spec.ts`); unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing (`npx playwright test tests/e2e/<name>.spec.ts`). Run the full suite once at the end of a task that touches the browser: start it in the background with its output in a file (for example `npx playwright test *> artifacts/local/e2e-hand-task5.log`), give it a timeout of at least 15 minutes, and read the file when it finishes.
@@ -287,7 +287,7 @@ While one hand turns the view, the other hand pinches and the change in distance
 **Done when:** `npm run check` passes, the tests above are green, the full e2e suite passes, and the manual list has the new lines.
 
 **Session facts:**
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`, or the own fake in `arm-try-on.spec.ts`); unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing (`npx playwright test tests/e2e/<name>.spec.ts`). Run the full suite once at the end of a task that touches the browser: start it in the background with its output in a file (for example `npx playwright test *> artifacts/local/e2e-hand-task6.log`), give it a timeout of at least 15 minutes, and read the file when it finishes.
@@ -338,7 +338,7 @@ A fist on an object holds the whole object; moving the fist moves it, committed 
 **Done when:** `npm run check` passes, the tests above are green, the full e2e suite passes, and the manual list has the new lines.
 
 **Session facts:**
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`, or the own fake in `arm-try-on.spec.ts`); unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing (`npx playwright test tests/e2e/<name>.spec.ts`). Run the full suite once at the end of a task that touches the browser: start it in the background with its output in a file (for example `npx playwright test *> artifacts/local/e2e-hand-task7.log`), give it a timeout of at least 15 minutes, and read the file when it finishes.
@@ -381,7 +381,7 @@ While one hand grabs a part, the other hand pinches and moves around it; the cha
 **Done when:** `npm run check` passes, the tests above are green, the full e2e suite passes, and the manual list has the new lines.
 
 **Session facts:**
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`, or the own fake in `arm-try-on.spec.ts`); unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing (`npx playwright test tests/e2e/<name>.spec.ts`). Run the full suite once at the end of a task that touches the browser: start it in the background with its output in a file (for example `npx playwright test *> artifacts/local/e2e-hand-task8.log`), give it a timeout of at least 15 minutes, and read the file when it finishes.
@@ -424,7 +424,7 @@ A server tool lets the agent hide or show the camera image, through a new option
 **Done when:** `npm run check` passes, the tests above are green, `git diff --stat tests/e2e/agent-panel.spec.ts` is empty, the full e2e suite passes, and the manual list has the new line.
 
 **Session facts:**
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`, or the own fake in `arm-try-on.spec.ts`); unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing (`npx playwright test tests/e2e/<name>.spec.ts`). Run the full suite once at the end of a task that touches the browser: start it in the background with its output in a file (for example `npx playwright test *> artifacts/local/e2e-hand-task9.log`), give it a timeout of at least 15 minutes, and read the file when it finishes.
