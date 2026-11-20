@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { assemblyOf, moveRigid, objectMatrix } from '../../shared/assembly';
+import { touching, worldFace } from '../../shared/contact';
+import { CONTACT_ANGLE_DEG, CONTACT_GAP_MM } from '../../shared/joint-constants';
 import { ObjectIdSchema as IdsObjectIdSchema } from '../../shared/ids';
 import {
   CONTACT_FACES, FACE_LABELS, FaceIdSchema, JointSchema, MAX_JOINTS, faceAllows, faceShape,
@@ -854,27 +856,16 @@ describe('setTransform on an assembly', () => {
         return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
       };
     }
-    /**
-     * Gap between the planes of a's `+x` face and b's `-x` face along a's face normal, in mm, and
-     * the angle between the normals and the opposite direction, in degrees. A local stand-in for
-     * `touching` (design 4.2, Task 2).
-     */
-    function planeGap(ws: Workspace): { gapMm: number; angleDeg: number; lateralMm: number } {
-      const [ma, mb] = ['a', 'b'].map(id => objectMatrix(transformOf(ws, id)));
-      const normalA = new THREE.Vector3(1, 0, 0).transformDirection(ma!);
-      const normalB = new THREE.Vector3(-1, 0, 0).transformDirection(mb!);
-      const pointA = new THREE.Vector3(BOX.x / 2, 0, 0).applyMatrix4(ma!);
-      const pointB = new THREE.Vector3(-BOX.x / 2, 0, 0).applyMatrix4(mb!);
-      const between = pointB.clone().sub(pointA);
-      const gap = between.dot(normalA);
-      const lateral = between.clone().addScaledVector(normalA, -gap).length();
-      return { gapMm: gap * 1000, angleDeg: THREE.MathUtils.radToDeg(normalA.angleTo(normalB.clone().negate())), lateralMm: lateral * 1000 };
-    }
+    /** `touching` (design 4.2) for a's `+x` face and b's `-x` face, with the gap and the angle in the failure message. */
     const expectTouching = (ws: Workspace, step: string) => {
-      const { gapMm, angleDeg, lateralMm } = planeGap(ws);
-      expect(Math.abs(gapMm), `gap after ${step}`).toBeLessThanOrEqual(0.1);
-      expect(angleDeg, `angle after ${step}`).toBeLessThanOrEqual(1);
-      expect(lateralMm, `lateral after ${step}`).toBeLessThanOrEqual(0.1);
+      const [fa, fb] = [['a', '+x'], ['b', '-x']].map(([id, face]) => {
+        const object = findObject(ws, id!)!;
+        return worldFace(object, object.model.parts[0]!, face as FaceId)!;
+      });
+      const result = touching(fa!, fb!);
+      expect(Math.abs(result.gapMm), `gap after ${step}`).toBeLessThanOrEqual(CONTACT_GAP_MM);
+      expect(result.angleDeg, `angle after ${step}`).toBeLessThanOrEqual(CONTACT_ANGLE_DEG);
+      expect(result.ok, `touching after ${step}`).toBe(true);
     };
 
     it('starts touching', () => {

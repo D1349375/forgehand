@@ -55,6 +55,23 @@ export function objectMatrix(transform: ObjectTransform): THREE.Matrix4 {
     new THREE.Vector3(position.x, position.y, position.z), new THREE.Quaternion().setFromEuler(euler), new THREE.Vector3(1, 1, 1));
 }
 
+/**
+ * Object transform of a matrix: position rounded to 5 decimals, XYZ Euler
+ * degrees rounded to 2; null when the result leaves the transform limits.
+ */
+export function transformOfMatrix(matrix: THREE.Matrix4): ObjectTransform | null {
+  const position = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  matrix.decompose(position, quaternion, new THREE.Vector3());
+  const euler = new THREE.Euler().setFromQuaternion(quaternion, 'XYZ');
+  const transform: ObjectTransform = {
+    position: { x: round5(position.x), y: round5(position.y), z: round5(position.z) },
+    rotation: {
+      x: round2(THREE.MathUtils.radToDeg(euler.x)), y: round2(THREE.MathUtils.radToDeg(euler.y)), z: round2(THREE.MathUtils.radToDeg(euler.z)),
+    },
+  };
+  return within(transform.position, POSITION_LIMIT) && within(transform.rotation, ROTATION_LIMIT) ? transform : null;
+}
 const sameVector = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) =>
   a.x === b.x && a.y === b.y && a.z === b.z;
 
@@ -95,20 +112,9 @@ export function moveRigid(
   }
 
   const delta = objectMatrix(anchor).multiply(objectMatrix(old).invert());
-  const position = new THREE.Vector3();
-  const quaternion = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-  const euler = new THREE.Euler();
   for (const object of others) {
-    new THREE.Matrix4().multiplyMatrices(delta, objectMatrix(object.transform)).decompose(position, quaternion, scale);
-    euler.setFromQuaternion(quaternion, 'XYZ');
-    const moved: ObjectTransform = {
-      position: { x: round5(position.x), y: round5(position.y), z: round5(position.z) },
-      rotation: {
-        x: round2(THREE.MathUtils.radToDeg(euler.x)), y: round2(THREE.MathUtils.radToDeg(euler.y)), z: round2(THREE.MathUtils.radToDeg(euler.z)),
-      },
-    };
-    if (!within(moved.position, POSITION_LIMIT) || !within(moved.rotation, ROTATION_LIMIT)) return null;
+    const moved = transformOfMatrix(new THREE.Matrix4().multiplyMatrices(delta, objectMatrix(object.transform)));
+    if (!moved) return null;
     result.set(object.id, moved);
   }
   return result;

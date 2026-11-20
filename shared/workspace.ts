@@ -81,7 +81,7 @@ export const ZERO_TRANSFORM: ObjectTransform = freezeTransform({
 
 export type WorkspaceErrorCode =
   | 'INVALID_WORKSPACE' | 'OBJECT_LIMIT' | 'UNKNOWN_OBJECT' | 'DUPLICATE_OBJECT' | 'INVALID_SELECTION'
-  | 'JOINT_LIMIT' | 'UNKNOWN_JOINT' | 'INVALID_JOINT';
+  | 'JOINT_LIMIT' | 'UNKNOWN_JOINT' | 'INVALID_JOINT' | 'CANNOT_ALIGN' | 'LINKED';
 
 const MESSAGES: Record<WorkspaceErrorCode, string> = {
   INVALID_WORKSPACE: '工作區資料無效。',
@@ -92,6 +92,8 @@ const MESSAGES: Record<WorkspaceErrorCode, string> = {
   JOINT_LIMIT: `工作區最多 ${MAX_JOINTS} 個接合，請先刪除一個接合。`,
   UNKNOWN_JOINT: '找不到指定的接合。',
   INVALID_JOINT: '接合資料無效。',
+  CANNOT_ALIGN: '兩個面的方向差太多，請先旋轉物件。',
+  LINKED: '這兩個物件還透過其他接合相連，無法單獨對齊。',
 };
 
 /** Workspace failure. The message is fixed Traditional Chinese text without ids. */
