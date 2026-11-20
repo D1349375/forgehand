@@ -87,7 +87,7 @@ The pure geometry: which faces touch, which faces face each other, how side b is
 
 ## Task 3 — Checks, recommendations, the kit and printable parts
 
-`[ ]`
+`[x]`
 
 Findings and recommendations for every joint, the BOM and assembly notes, and the printable solid of a part with its features cut, using `manifold-3d`. **This task starts with a spike.** After it, the `export` spec can start.
 
