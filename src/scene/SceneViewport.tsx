@@ -7,8 +7,11 @@ import type { ObjectTransform } from '../../shared/workspace';
 import type { ArmSample } from '../try-on/arm-pose';
 import { createArmPreview } from './arm-preview';
 import { computeExplosion, groupProgress, worldMatrices } from './explode';
+import type { GrabSession, OrbitSession } from '../hands/controller';
+import type { Point } from '../hands/types';
 import { buildModel, disposeObject, modelBounds, objectsBounds } from './geometry';
-import { planSceneSync } from './scene-sync';
+import { createGrabSession, createOrbitSession, grabStillValid, type LiveGrab } from './hand-sessions';
+import { planSceneSync, type SceneSyncPlan } from './scene-sync';
 import { applyPartStyle, hologramPart } from './style';
 
 export type TransformMode = 'translate' | 'rotate' | null;
@@ -18,6 +21,12 @@ export interface SceneHandle {
   reset(): void; zoomIn(): void; zoomOut(): void;
   /** Viewport client coordinates of a part's centre (used by tests and tooling); `objectId` defaults to the active object. */
   projectPart(id: string, objectId?: string): { x: number; y: number } | null;
+  /** The nearest part under a client point, or null (also for a point outside the viewport). Used by hand control for hover and grabbing. */
+  hitTest(point: Point): { objectId: string; partId: string; name: string; objectName: string; hit: Vector } | null;
+  /** Starts moving a part by hand; null while the exploded view is shown, the mouse or the gizmo is busy, or the part is unknown. */
+  beginPartGrab(objectId: string, partId: string, hit: Vector): GrabSession | null;
+  /** Starts turning the view by hand; null while the mouse or the gizmo is busy, or with no objects. */
+  beginOrbit(): OrbitSession | null;
 }
 interface Props {
   objects: readonly SceneObjectInput[];
@@ -29,7 +38,7 @@ interface Props {
   explode?: number;
   tryOn?: { readonly current: ArmSample | null };
   onPick?: (objectId: string | null, partId: string | null, additive: boolean) => void;
-  onTransform?: (objectId: string, partId: string, position: Vector, rotation: Vector) => void;
+  onTransform?: (objectId: string, partId: string, position: Vector, rotation: Vector, kind: 'translate' | 'rotate') => void;
   onError?: (message: string) => void;
   onReady?: (info: { objects: number; parts: number; renderMs: number }) => void;
 }
@@ -56,6 +65,13 @@ interface View {
   /** Container of every object root; the scene's lights and gizmo stay outside it. */
   objects: THREE.Group;
   entries: Map<string, Entry>;
+  /** Every part surface mesh of every object, rebuilt in sync; the click handler and hitTest raycast against it. */
+  surfaces: THREE.Object3D[];
+  raycaster: THREE.Raycaster;
+  /** A mouse orbit or zoom is in progress (OrbitControls start and end). */
+  mouseBusy: boolean;
+  /** The running hand grab, if any. */
+  grab: LiveGrab | null;
   activeId: string | null;
   /** True once the user rotates or zooms after the last automatic framing. */
   viewChanged: boolean;
@@ -121,6 +137,39 @@ function objectIdOf(node: THREE.Object3D | null): string | null {
   return node ? node.userData.objectId : null;
 }
 
+function collectSurfaces(entries: Iterable<Entry>): THREE.Object3D[] {
+  const surfaces: THREE.Object3D[] = [];
+  for (const entry of entries) {
+    entry.root.traverse(object => { if (object instanceof THREE.Mesh && object.name.endsWith(':surface')) surfaces.push(object); });
+  }
+  return surfaces;
+}
+
+interface SurfaceHit { objectId: string; partId: string; point: THREE.Vector3 }
+
+/** Every (object, part) pair under a client point, nearest first, each pair once. The click handler and hitTest share it. */
+function hitsAt(current: View, point: Point): SurfaceHit[] {
+  const rect = current.renderer.domElement.getBoundingClientRect();
+  if (!(rect.width > 0 && rect.height > 0)) return [];
+  current.camera.updateMatrixWorld();
+  current.raycaster.setFromCamera(new THREE.Vector2((point.x - rect.left) / rect.width * 2 - 1, -(point.y - rect.top) / rect.height * 2 + 1), current.camera);
+  const hits: SurfaceHit[] = [];
+  const seen = new Set<string>();
+  for (const hit of current.raycaster.intersectObjects(current.surfaces, false)) {
+    let node: THREE.Object3D | null = hit.object;
+    while (node && typeof node.userData.partId !== 'string') node = node.parent;
+    const objectId = objectIdOf(node);
+    if (!node || !objectId) continue;
+    const key = JSON.stringify([objectId, node.userData.partId]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    hits.push({ objectId, partId: node.userData.partId, point: hit.point.clone() });
+  }
+  return hits;
+}
+
+const NO_CHANGES: Pick<SceneSyncPlan, 'build' | 'rebuild' | 'move' | 'remove'> = { build: [], rebuild: [], move: [], remove: [] };
+
 export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewport(props, ref) {
   const { objects, activeObjectId, selectedIds = [], transformMode = null, explode = 0 } = props;
   const container = useRef<HTMLDivElement>(null);
@@ -147,6 +196,50 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       const point = box.getCenter(new THREE.Vector3()).project(current.camera);
       const rect = current.renderer.domElement.getBoundingClientRect();
       return { x: rect.left + (point.x + 1) / 2 * rect.width, y: rect.top + (1 - point.y) / 2 * rect.height };
+    },
+    hitTest(point) {
+      const current = view.current;
+      if (!current) return null;
+      const rect = current.renderer.domElement.getBoundingClientRect();
+      if (point.x < rect.left || point.x > rect.right || point.y < rect.top || point.y > rect.bottom) return null;
+      const hit = hitsAt(current, point)[0];
+      const entry = hit ? current.entries.get(hit.objectId) : undefined;
+      const part = entry?.model.parts.find(candidate => candidate.id === hit?.partId);
+      if (!hit || !entry || !part) return null;
+      return { objectId: hit.objectId, partId: hit.partId, name: part.name, objectName: entry.model.name, hit: { x: hit.point.x, y: hit.point.y, z: hit.point.z } };
+    },
+    beginPartGrab(objectId, partId, hit) {
+      const current = view.current;
+      const entry = current?.entries.get(objectId);
+      const node = entry?.parts.get(partId);
+      const part = entry?.model.parts.find(candidate => candidate.id === partId);
+      if (!current || !entry || !node || !part) return null;
+      // A part shown at an exploded offset would write the display offset into the data; the mouse and the gizmo own the view while they drag.
+      if (current.mouseBusy || current.gizmo.dragging || explodeTarget.current > 0 || current.explodeShown > 0) return null;
+      current.grab?.cancel();
+      // Explosion bases are captured from the node positions: do it before the preview moves this node.
+      ensureExplosion(entry);
+      current.gizmo.enabled = false;
+      const session: LiveGrab = createGrabSession({
+        objectId, node, camera: current.camera,
+        viewportHeight: () => current.renderer.domElement.getBoundingClientRect().height,
+        stored: { position: { ...part.position }, rotation: { ...part.rotation } },
+        hit,
+        onCommit: (position, rotation, kind) => callbacks.current.onTransform?.(objectId, partId, position, rotation, kind),
+        onChange: current.invalidate,
+        onEnd: () => {
+          if (current.grab === session) current.grab = null;
+          current.gizmo.enabled = true;
+        },
+      });
+      current.grab = session;
+      return session;
+    },
+    beginOrbit() {
+      const current = view.current;
+      if (!current || current.mouseBusy || current.gizmo.dragging || current.entries.size === 0) return null;
+      current.viewChanged = true;
+      return createOrbitSession({ camera: current.camera, controls: current.controls, onChange: current.invalidate });
     },
   }), []);
 
@@ -218,6 +311,8 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       applyExplosion(active, current.explodeShown);
     }
     current.renderer.domElement.dataset.explode = current.explodeShown.toFixed(3);
+    // Activation and the explosion bases reset node positions; a running hand grab puts its last preview back.
+    current.grab?.reapply();
     current.invalidate();
   }
 
@@ -264,6 +359,11 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       fresh.clear();
       callbacks.current.onError?.(`無法建立這份 3D 模型，請調整描述後重試。${current.entries.size ? '上一個成功模型仍保留。' : '目前沒有可展示的模型。'}`);
     }
+    // A running hand grab survives only a sync that changes nothing but the active id, to its own object (requirement 39).
+    if (current.grab) {
+      const applied = failed ? { plan: NO_CHANGES, activeId: current.entries.has(activeId ?? '') ? activeId : current.activeId } : { plan, activeId };
+      if (!grabStillValid(applied.plan, applied.activeId, current.grab.objectId)) current.grab.invalidate();
+    }
     if (!failed) {
       const retired: Entry[] = [];
       if (plan.rebuild.length || plan.remove.length) current.gizmo.detach();
@@ -283,6 +383,7 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       }
       const previousActive = current.entries.get(current.activeId ?? '');
       current.entries = entries;
+      current.surfaces = collectSurfaces(entries.values());
       // The previously active object snaps back to assembled when another one becomes active.
       if (current.activeId !== activeId) {
         if (previousActive && entries.get(previousActive.id) === previousActive) { applyExplosion(previousActive, 0); }
@@ -358,8 +459,10 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
     let needsRender = true;
     const invalidate = () => { needsRender = true; };
     controls.addEventListener('change', invalidate);
-    const userMoved = () => { current.viewChanged = true; };
+    const userMoved = () => { current.viewChanged = true; current.mouseBusy = true; };
+    const userDone = () => { current.mouseBusy = false; };
     controls.addEventListener('start', userMoved);
+    controls.addEventListener('end', userDone);
     // Direct manipulation runs entirely in the browser; the model data is
     // updated once, when the drag ends.
     const gizmo = new TransformControls(camera, renderer.domElement);
@@ -375,10 +478,10 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       const position = { x: round(object.position.x, 5), y: round(object.position.y, 5), z: round(object.position.z, 5) };
       const rotation = { x: round(THREE.MathUtils.radToDeg(object.rotation.x), 2), y: round(THREE.MathUtils.radToDeg(object.rotation.y), 2),
         z: round(THREE.MathUtils.radToDeg(object.rotation.z), 2) };
-      callbacks.current.onTransform?.(objectId, object.userData.partId, position, rotation);
+      callbacks.current.onTransform?.(objectId, object.userData.partId, position, rotation, gizmo.mode === 'rotate' ? 'rotate' : 'translate');
     });
-    const current: View = { scene, camera, controls, gizmo, renderer, objects: objectsGroup, entries: new Map(), activeId: null, viewChanged: false,
-      explodeShown: 0, reset: () => fit(), invalidate };
+    const current: View = { scene, camera, controls, gizmo, renderer, objects: objectsGroup, entries: new Map(), surfaces: [], raycaster: new THREE.Raycaster(),
+      mouseBusy: false, grab: null, activeId: null, viewChanged: false, explodeShown: 0, reset: () => fit(), invalidate };
     renderer.domElement.dataset.explode = '0.000';
     view.current = current;
     const resize = () => {
@@ -409,32 +512,14 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
     // A click (not a drag) selects the part under the pointer. Repeated clicks
     // on the same spot step through every (object, part) pair under it, so
     // interior parts behind a translucent shell remain selectable.
-    const raycaster = new THREE.Raycaster();
     let press: { x: number; y: number } | null = null;
     let cycle: { x: number; y: number; keys: string[]; index: number } | null = null;
     const pointerDown = (event: PointerEvent) => { press = event.button === 0 ? { x: event.clientX, y: event.clientY } : null; };
     const pointerUp = (event: PointerEvent) => {
       const start = press; press = null;
       if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5 || gizmo.dragging || gizmo.axis !== null) return;
-      const rect = renderer.domElement.getBoundingClientRect();
-      const pointer = new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
-      raycaster.setFromCamera(pointer, camera);
-      const surfaces: THREE.Object3D[] = [];
-      for (const entry of current.entries.values()) {
-        entry.root.traverse(object => { if (object instanceof THREE.Mesh && object.name.endsWith(':surface')) surfaces.push(object); });
-      }
-      const pairs: Array<{ objectId: string; partId: string }> = [];
-      const keys: string[] = [];
-      for (const hit of raycaster.intersectObjects(surfaces, false)) {
-        let node: THREE.Object3D | null = hit.object;
-        while (node && typeof node.userData.partId !== 'string') node = node.parent;
-        const objectId = objectIdOf(node);
-        if (!node || !objectId) continue;
-        const keyOf = JSON.stringify([objectId, node.userData.partId]);
-        if (keys.includes(keyOf)) continue;
-        keys.push(keyOf);
-        pairs.push({ objectId, partId: node.userData.partId });
-      }
+      const pairs = hitsAt(current, { x: event.clientX, y: event.clientY });
+      const keys = pairs.map(pair => JSON.stringify([pair.objectId, pair.partId]));
       const repeat = cycle && Math.hypot(event.clientX - cycle.x, event.clientY - cycle.y) < 6 && cycle.keys.join() === keys.join();
       const index = repeat ? (cycle!.index + 1) % Math.max(pairs.length, 1) : 0;
       cycle = { x: event.clientX, y: event.clientY, keys, index };
@@ -480,6 +565,8 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       renderer.domElement.removeEventListener('pointerup', pointerUp);
       controls.removeEventListener('change', invalidate);
       controls.removeEventListener('start', userMoved);
+      controls.removeEventListener('end', userDone);
+      current.grab?.cancel();
       gizmo.detach();
       gizmo.dispose();
       controls.dispose();

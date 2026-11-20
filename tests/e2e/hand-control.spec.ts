@@ -1,5 +1,7 @@
-import { expect, test, type Page } from '@playwright/test';
-import { fakeHandsLog, hideHand, installFakeHands, showHand, showHands, handsUrl } from './fake-hands';
+import { expect, test, type Page, type Route } from '@playwright/test';
+import { demoModel } from '../../shared/demo';
+import type { ModelSpec } from '../../shared/model';
+import { fakeHandsLog, hideHand, installFakeHands, showHand, showHands, handsUrl, type FakeHand } from './fake-hands';
 
 // Hand control is tested against a scripted worker (fake-hands.ts); the camera
 // stream, the capture loop and the app are real.
@@ -239,5 +241,314 @@ test.describe('T3 tracking speed', () => {
     // The delegate is not a gate input: a CPU tracker with the speed gate off stays tracked and is never called too slow.
     await expect(page.getByTestId('hand-overlay')).toHaveAttribute('data-hand-state', 'tracked');
     await expect(page.locator('[data-testid="hand-status"][data-state="slow"]')).toHaveCount(0);
+  });
+});// ---- Task 5: pinch-move, orbit and the rest of the P0 core ------------------------------------------------------------------------
+type Pt = { x: number; y: number };
+type Row = [string, { x: number; y: number; z: number }, { x: number; y: number; z: number }, { x: number; y: number; z: number }, string];
+const OPEN = 0.1;
+const PINCH = 0.012;
+const sceneCanvas = (page: Page) => page.getByTestId('scene-canvas');
+const overlay = (page: Page) => page.getByTestId('hand-overlay');
+const undoButton = (page: Page) => page.getByRole('button', { name: '復原', exact: true });
+const modelRows = async (page: Page): Promise<Row[]> => JSON.parse((await sceneCanvas(page).getAttribute('data-model-json'))!);
+const rowOf = async (page: Page, id: string) => (await modelRows(page)).find(entry => entry[0] === id)!;
+const projectOf = (page: Page, id: string, objectId: string | null = null) =>
+  page.evaluate(([part, object]) => window.__forgehandScene?.projectPart(part!, object ?? undefined) ?? null, [id, objectId] as const);
+const distance = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+const shift = (point: Pt, dx: number, dy = 0): Pt => ({ x: point.x + dx, y: point.y + dy });
+
+/** The client point, near the part's centre, where the scene's own raycast finds `partId` (of `objectId`) as the nearest surface. */
+async function pointOn(page: Page, partId: string, objectId: string | null = null): Promise<Pt> {
+  const found = await page.evaluate(([part, object]) => {
+    const scene = window.__forgehandScene!;
+    const centre = scene.projectPart(part!, object ?? undefined);
+    if (!centre) return null;
+    let best: { x: number; y: number; d: number } | null = null;
+    for (let y = centre.y - 100; y <= centre.y + 100; y += 5) {
+      for (let x = centre.x - 100; x <= centre.x + 100; x += 5) {
+        const hit = scene.hitTest({ x, y });
+        const d = Math.hypot(x - centre.x, y - centre.y);
+        if (hit && hit.partId === part && (!object || hit.objectId === object) && (!best || d < best.d)) best = { x, y, d };
+      }
+    }
+    return best ? { x: best.x, y: best.y } : null;
+  }, [partId, objectId] as const);
+  expect(found, `no point on ${partId} found`).not.toBeNull();
+  return found!;
+}
+/** Any part point, found by scanning the whole canvas (the exploded view moves every part). */
+async function anyPartPoint(page: Page): Promise<Pt> {
+  const found = await page.evaluate(() => {
+    const scene = window.__forgehandScene!;
+    const rect = document.querySelector('[data-testid="scene-canvas"]')!.getBoundingClientRect();
+    for (let y = rect.top + 60; y < rect.bottom - 60; y += 15) {
+      for (let x = rect.left + 60; x < rect.right - 60; x += 15) if (scene.hitTest({ x, y })) return { x, y };
+    }
+    return null;
+  });
+  expect(found, 'no part found on the canvas').not.toBeNull();
+  return found!;
+}
+/** A point inside the canvas where the scene's raycast finds nothing, near its right edge. */
+async function emptyPoint(page: Page): Promise<Pt> {
+  const found = await page.evaluate(() => {
+    const scene = window.__forgehandScene!;
+    const rect = document.querySelector('[data-testid="scene-canvas"]')!.getBoundingClientRect();
+    for (let x = rect.right - 80; x > rect.left + 200; x -= 20) if (!scene.hitTest({ x, y: rect.top + rect.height / 2 })) return { x, y: rect.top + rect.height / 2 };
+    return null;
+  });
+  expect(found, 'no empty point found').not.toBeNull();
+  return found!;
+}
+async function demoAndCamera(page: Page) {
+  await page.getByRole('button', { name: '載入示範模型', exact: true }).first().click();
+  await expect(sceneCanvas(page)).toHaveAttribute('data-model-name', demoModel.name);
+  await openCamera(page);
+  await framesAbove(page, 0);
+}
+/** Requests to the model back end; hand gestures never make one. */
+function modelCalls(page: Page): string[] {
+  const calls: string[] = [];
+  page.on('request', request => { const match = /\/api\/(generate|edit|agent)\b/.exec(request.url()); if (match) calls.push(match[1]!); });
+  return calls;
+}
+
+// A hand that is not seen for TRACKING_LOSS_MS ends or restarts its gesture, and on a busy machine the fake camera can stall that
+// long. These helpers repeat a whole attempt (hover, pinch, move) up to three times; what they wait for is the behaviour under test.
+interface Aim {
+  /** The target key the hand must have settled on before it pinches; null when only the state matters. */
+  key: string | null;
+  /** What the hand shows while it hovers there. */
+  hover: 'hover' | 'tracked' | 'locked';
+  /** What the pinch must become. */
+  state: 'grab' | 'orbit';
+}
+const MOUSE_ONLY: readonly FakeHand[] = [];
+async function openHands(page: Page, at: Pt, others: readonly FakeHand[]) {
+  await showHands(page, [{ at, pinchM: OPEN }, ...others.map(hand => ({ ...hand, pinchM: OPEN }))]);
+  await expect(overlay(page)).toHaveAttribute('data-gesture', 'none', { timeout: 45_000 });
+}
+async function attempts(page: Page, at: Pt, others: readonly FakeHand[], attempt: () => Promise<void>) {
+  for (let count = 1; ; count++) {
+    try { await attempt(); return; } catch (error) {
+      if (count === 3) throw error;
+      await openHands(page, at, others);
+    }
+  }
+}
+/** Hover until the target has settled, then pinch and wait for the state. */
+async function pinchOnce(page: Page, at: Pt, aim: Aim, others: readonly FakeHand[]) {
+  await showHands(page, [{ at, pinchM: OPEN }, ...others]);
+  await expect(overlay(page)).toHaveAttribute('data-hand-state', aim.hover, { timeout: 45_000 });
+  if (aim.key !== null) await expect(overlay(page)).toHaveAttribute('data-hand-target', aim.key);
+  await showHands(page, [{ at, pinchM: PINCH }, ...others]);
+  await expect(overlay(page)).toHaveAttribute('data-hand-state', aim.state, { timeout: 10_000 });
+}
+const pinchOn = (page: Page, at: Pt, aim: Aim, others: readonly FakeHand[] = MOUSE_ONLY) =>
+  attempts(page, at, others, () => pinchOnce(page, at, aim, others));
+/** Pinch at `at`, move the hand by `by` and wait until `progressed` is true; `during` runs once the move shows. Returns where the hand ended. */
+async function dragBy(page: Page, at: Pt, aim: Aim, by: Pt, progressed: () => Promise<boolean>, options: { others?: readonly FakeHand[]; during?: () => Promise<void> } = {}) {
+  const others = options.others ?? MOUSE_ONLY;
+  const to = shift(at, by.x, by.y);
+  await attempts(page, at, others, async () => {
+    await pinchOnce(page, at, aim, others);
+    await showHands(page, [{ at: to, pinchM: PINCH }, ...others]);
+    await expect.poll(progressed, { timeout: 20_000 }).toBe(true);
+    await options.during?.();
+  });
+  return to;
+}
+
+test.describe('T5 pinch-move, orbit and the rest of the P0 core', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(handsUrl({ debug: true }));
+  });
+
+  test('a tap selects, a drag moves one part in one undo step, and a pinch on empty space turns only the view', async ({ page }) => {
+    const calls = modelCalls(page);
+    await demoAndCamera(page);
+    const objectId = (await sceneCanvas(page).getAttribute('data-active-object-id'))!;
+    const before = await modelRows(page);
+    const objects = await sceneCanvas(page).getAttribute('data-object-json');
+    await expect(undoButton(page)).toBeDisabled();
+    // Tap: the part is selected, nothing is moved and nothing joins the undo history.
+    const battery = await pointOn(page, 'battery');
+    await pinchOn(page, battery, { key: `${objectId}:battery`, hover: 'hover', state: 'grab' });
+    await expect(sceneCanvas(page)).toHaveAttribute('data-selected-ids', 'battery');
+    await openHands(page, battery, MOUSE_ONLY);
+    await expect(page.getByTestId('hand-debug')).toContainText('拖曳 0／完成 0／');
+    await expect(undoButton(page)).toBeDisabled();
+    expect(await modelRows(page)).toEqual(before);
+    // Drag 外殼: the preview moves it and its children, and nothing is written until the fingers open.
+    const housing = await pointOn(page, 'housing');
+    const batteryBefore = (await projectOf(page, 'battery'))!;
+    const dragged = await dragBy(page, housing, { key: `${objectId}:housing`, hover: 'hover', state: 'grab' }, { x: 90, y: 0 },
+      async () => (await projectOf(page, 'battery'))!.x > batteryBefore.x + 30);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'grab');
+    expect(await modelRows(page)).toEqual(before);
+    await showHand(page, dragged, OPEN);
+    await expect.poll(async () => distance((await rowOf(page, 'housing'))[1], before.find(entry => entry[0] === 'housing')![1]), { timeout: 45_000 }).toBeGreaterThan(0.02);
+    // Only 外殼 changed; its children keep their local positions and follow it. The object itself did not move.
+    const after = await modelRows(page);
+    expect(after.filter(entry => entry[0] !== 'housing')).toEqual(before.filter(entry => entry[0] !== 'housing'));
+    expect(after.find(entry => entry[0] === 'housing')![2]).toEqual(before.find(entry => entry[0] === 'housing')![2]);
+    expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
+    expect((await projectOf(page, 'battery'))!.x).toBeGreaterThan(batteryBefore.x + 30);
+    await expect(page.getByTestId('hand-debug')).toContainText(/完成 [1-9]/);
+    await undoButton(page).click();
+    await expect.poll(() => modelRows(page)).toEqual(before);
+    await expect(undoButton(page)).toBeDisabled();
+    // Empty space: the view turns, the data does not change.
+    const empty = await emptyPoint(page);
+    const camera = await sceneCanvas(page).getAttribute('data-camera-position');
+    await dragBy(page, empty, { key: '', hover: 'tracked', state: 'orbit' }, { x: -120, y: 0 },
+      async () => (await sceneCanvas(page).getAttribute('data-camera-position')) !== camera);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'orbit');
+    await openHands(page, shift(empty, -120), MOUSE_ONLY);
+    expect(await modelRows(page)).toEqual(before);
+    await expect(undoButton(page)).toBeDisabled();
+    expect(calls).toEqual([]);
+  });
+
+  test('a pinch on a part of an inactive object activates the object, selects the part and moves it', async ({ page }) => {
+    const calls = modelCalls(page);
+    const second: ModelSpec = { ...structuredClone(demoModel), name: '測試：第二個物件' };
+    await page.route('**/api/generate', route => {
+      const body = route.request().postDataJSON() as { requestId: string };
+      return route.fulfill({ json: {
+        design: { status: 'ready', explanation: '測試替身模型資料。', model: second },
+        source: 'codex', model: 'test-double-not-a-real-model', elapsedMs: 25, requestId: body.requestId,
+      } });
+    });
+    await demoAndCamera(page);
+    await page.getByRole('tab', { name: '生成新物件', exact: true }).click();
+    await page.getByLabel('物件描述', { exact: true }).fill('再做一個物件');
+    await page.getByRole('button', { name: '生成 3D 草案', exact: true }).click();
+    await expect(sceneCanvas(page)).toHaveAttribute('data-object-count', '2');
+    await expect(sceneCanvas(page)).toHaveAttribute('data-model-name', second.name);
+    const objects = JSON.parse((await sceneCanvas(page).getAttribute('data-object-json'))!) as Array<[string, unknown, unknown]>;
+    const firstId = objects[0]![0];
+    expect(await sceneCanvas(page).getAttribute('data-active-object-id')).not.toBe(firstId);
+    const objectJson = await sceneCanvas(page).getAttribute('data-object-json');
+    await sceneCanvas(page).scrollIntoViewIfNeeded();
+    const housing = await pointOn(page, 'housing', firstId);
+    const housingBefore = (await projectOf(page, 'housing', firstId))!;
+    // The first object is still inactive here: its first pinch activates it and the drag then moves the part.
+    const dragged = await dragBy(page, housing, { key: `${firstId}:housing`, hover: 'hover', state: 'grab' }, { x: 0, y: 80 },
+      async () => (await projectOf(page, 'housing', firstId))!.y > housingBefore.y + 20);
+    await expect(sceneCanvas(page)).toHaveAttribute('data-active-object-id', firstId);
+    await expect(sceneCanvas(page)).toHaveAttribute('data-selected-ids', 'housing');
+    await expect(sceneCanvas(page)).toHaveAttribute('data-model-name', demoModel.name);
+    const start = await rowOf(page, 'housing');
+    await showHand(page, dragged, OPEN);
+    await expect.poll(async () => distance((await rowOf(page, 'housing'))[1], start[1]), { timeout: 45_000 }).toBeGreaterThan(0.02);
+    expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objectJson);
+    await expect(sceneCanvas(page)).toHaveAttribute('data-active-object-id', firstId);
+    expect(calls).toEqual(['generate']);
+  });
+
+  test("a second hand's pinch is inert while the first hand drags", async ({ page }) => {
+    const calls = modelCalls(page);
+    await demoAndCamera(page);
+    const objectId = (await sceneCanvas(page).getAttribute('data-active-object-id'))!;
+    const before = await modelRows(page);
+    const housing = await pointOn(page, 'housing');
+    const battery = await pointOn(page, 'battery');
+    expect(Math.hypot(housing.x - battery.x, housing.y - battery.y)).toBeGreaterThan(60);
+    const batteryBefore = (await projectOf(page, 'battery'))!;
+    const second = (pinchM: number): FakeHand => ({ at: battery, pinchM });
+    // Both hands hover; the first grabs 外殼 and drags; the second hand then pinches 側邊電池 and drags too.
+    const first = await dragBy(page, housing, { key: `${objectId}:housing`, hover: 'hover', state: 'grab' }, { x: 0, y: 70 },
+      async () => (await projectOf(page, 'battery'))!.y > batteryBefore.y + 20, {
+        others: [second(OPEN)],
+        during: async () => {
+          await showHands(page, [{ at: shift(housing, 0, 70), pinchM: PINCH }, second(PINCH)]);
+          await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'locked');
+          await showHands(page, [{ at: shift(housing, 0, 70), pinchM: PINCH }, { at: shift(battery, 60), pinchM: PINCH }]);
+          await expect(sceneCanvas(page)).toHaveAttribute('data-selected-ids', 'housing');
+          await expect(overlay(page)).toHaveAttribute('data-gesture', 'grab');
+          await expect(overlay(page)).toHaveAttribute('data-hand-state', 'grab');
+        },
+      });
+    await showHands(page, [{ at: first, pinchM: OPEN }, { at: shift(battery, 60), pinchM: PINCH }]);
+    await expect.poll(async () => distance((await rowOf(page, 'housing'))[1], before.find(entry => entry[0] === 'housing')![1]), { timeout: 45_000 }).toBeGreaterThan(0.02);
+    // Only the first hand's move was committed; the second hand is free again once it opens.
+    const after = await modelRows(page);
+    expect(after.filter(entry => entry[0] !== 'housing')).toEqual(before.filter(entry => entry[0] !== 'housing'));
+    await showHands(page, [{ at: first, pinchM: OPEN }, { at: shift(battery, 60), pinchM: OPEN }]);
+    await expect(overlay(page)).not.toHaveAttribute('data-hand2-state', 'locked');
+    expect(calls).toEqual([]);
+  });
+
+  test('a hand lost mid-drag puts the part back and shows the cancel notice', async ({ page }) => {
+    await demoAndCamera(page);
+    const objectId = (await sceneCanvas(page).getAttribute('data-active-object-id'))!;
+    const before = await modelRows(page);
+    const housing = await pointOn(page, 'housing');
+    const batteryBefore = (await projectOf(page, 'battery'))!;
+    await dragBy(page, housing, { key: `${objectId}:housing`, hover: 'hover', state: 'grab' }, { x: 90, y: 0 },
+      async () => (await projectOf(page, 'battery'))!.x > batteryBefore.x + 30);
+    await hideHand(page);
+    await expect(handStatus(page)).toHaveAttribute('data-state', 'cancelled', { timeout: 45_000 });
+    await expect(handStatus(page)).toContainText('已取消這次移動');
+    await expect.poll(async () => Math.abs((await projectOf(page, 'battery'))!.x - batteryBefore.x), { timeout: 45_000 }).toBeLessThan(1);
+    expect(await modelRows(page)).toEqual(before);
+    await expect(undoButton(page)).toBeDisabled();
+    await expect(page.getByTestId('hand-debug')).toContainText(/取消 [1-9]/);
+  });
+
+  test('with 手勢 off a pinch does nothing and a mouse click still selects', async ({ page }) => {
+    await demoAndCamera(page);
+    const before = await modelRows(page);
+    const housing = await pointOn(page, 'housing');
+    await handsButton(page).click();
+    await expect(handsButton(page)).toHaveAttribute('aria-pressed', 'false');
+    await showHand(page, housing, PINCH);
+    await showHand(page, shift(housing, 90), PINCH);
+    // Proving that something stays unchanged takes a wait.
+    await page.waitForTimeout(600);
+    expect(await modelRows(page)).toEqual(before);
+    await expect(sceneCanvas(page)).toHaveAttribute('data-selected-ids', '');
+    await page.mouse.click(housing.x, housing.y);
+    await expect(sceneCanvas(page)).toHaveAttribute('data-selected-ids', 'housing');
+  });
+
+  test('the exploded view and a running agent make a pinch on a part turn the view, with their notices', async ({ page }) => {
+    const calls = modelCalls(page);
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/agent', async (route: Route) => {
+      await held;
+      try { await route.abort(); } catch { /* the client already closed the request */ }
+    });
+    await demoAndCamera(page);
+    const before = await modelRows(page);
+    /** A pinch on any part turns the view and never grabs. */
+    async function pinchTurnsView() {
+      const point = await anyPartPoint(page);
+      const camera = await sceneCanvas(page).getAttribute('data-camera-position');
+      const to = await dragBy(page, point, { key: null, hover: 'locked', state: 'orbit' }, { x: -100, y: 0 },
+        async () => sceneCanvas(page).getAttribute('data-camera-position').then(value => value !== camera));
+      await openHands(page, to, MOUSE_ONLY);
+      expect(await modelRows(page)).toEqual(before);
+    }
+    try {
+      await page.getByRole('button', { name: '爆炸圖', exact: true }).click();
+      await expect(sceneCanvas(page)).toHaveAttribute('data-explode', '1.000');
+      await expect(handStatus(page)).toHaveAttribute('data-state', 'exploded');
+      await expect(handStatus(page)).toContainText('爆炸圖開啟中');
+      await pinchTurnsView();
+      await page.getByRole('button', { name: '收回爆炸圖', exact: true }).click();
+      await expect(sceneCanvas(page)).toHaveAttribute('data-explode', '0.000');
+      await expect(page.locator('[data-testid="hand-status"][data-state="exploded"]')).toHaveCount(0);
+      await page.getByLabel('任務指示', { exact: true }).fill('把電池改成橘色');
+      await page.getByRole('button', { name: /^執行/ }).click();
+      await expect(handStatus(page)).toHaveAttribute('data-state', 'agent');
+      await expect(handStatus(page)).toContainText('代理執行中');
+      await pinchTurnsView();
+    } finally {
+      release();
+    }
+    expect(calls).toEqual(['agent']);
   });
 });

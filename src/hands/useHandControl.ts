@@ -1,26 +1,35 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { HAND_LOST_MS } from './constants';
+import type { SceneHandle } from '../scene/SceneViewport';
+import { CANCEL_NOTICE_MS } from './constants';
+import { HandController, type HandPort } from './controller';
 import type { Gate } from './gate';
 import type { HandOverlayHandle } from './HandOverlay';
 import { handSample } from './mapping';
 import { dedupeHands } from './slots';
+import type { HandStats } from './stats';
+import { pickTarget } from './targets';
 import { handStatus, type HandStatusState } from './text';
-import type { HandSlot, HandSample, HandView, OverlayFrame } from './types';
+import { EMPTY_TARGET, type GestureKind, type HandSample, type Target } from './types';
 import type { HandSource, TrackerStatus } from './useHandTracking';
 
-/** The tracking numbers the `?hands=debug` panel reads without a React render. */
+/** The numbers the `?hands=debug` panel reads without a React render. */
 export interface HandDebugNumbers {
   /** Hands in the latest frame, after removing duplicates. */
   hands: number;
   /** Thumb-index distance in millimetres per hand, null without world landmarks. */
   pinchMm: (number | null)[];
+  /** The running gesture. */
+  gesture: GestureKind;
+  /** The controller's counters (the same object for the life of the hook). */
+  stats: HandStats | null;
 }
 
+const IDLE_DEBUG: HandDebugNumbers = { hands: 0, pinchMm: [], gesture: 'none', stats: null };
+
 /**
- * Turns tracking frames into the hand overlay. Part 1 (Task 3): every hand of the
- * frame is drawn as `tracked`, or `locked` while the gate is not `full`; no
- * gesture acts yet. Everything runs inside the tracking callbacks, so a frame
- * causes no React render; React state holds only the status line.
+ * Turns tracking frames into the hand overlay and into gestures. A `HandController` runs inside the
+ * tracking callbacks, so a frame causes no React render; React state holds only the status line
+ * (the tracker, the gate, "a hand has been seen" and the cancel notice).
  */
 export function useHandControl(input: {
   source: HandSource;
@@ -30,16 +39,45 @@ export function useHandControl(input: {
   gate: Gate;
   videoRef: RefObject<HTMLVideoElement | null>;
   overlayRef: RefObject<HandOverlayHandle | null>;
+  /** Objects in the workspace: with none, a pinch has nothing to act on. */
+  objectCount: number;
+  sceneRef: RefObject<SceneHandle | null>;
+  /** A pinch on a part selects it, as a click does (activating its object when needed). */
+  onPick: (objectId: string, partId: string) => void;
 }): { status: { state: HandStatusState; text: string }; debug: RefObject<HandDebugNumbers> } {
-  const { source, tracker, enabled, gate, videoRef, overlayRef } = input;
+  const { source, tracker, enabled, gate, videoRef, overlayRef, objectCount, sceneRef } = input;
   const [handSeen, setHandSeen] = useState(false);
-  const debug = useRef<HandDebugNumbers>({ hands: 0, pinchMm: [] });
-  const level = useRef(gate.level);
-  level.current = gate.level;
-
+  /** When hand tracking was lost during a drag and the part went back; the notice shows for CANCEL_NOTICE_MS. */
+  const [cancelledAt, setCancelledAt] = useState<number | null>(null);
+  const debug = useRef<HandDebugNumbers>({ ...IDLE_DEBUG });
+  const onPick = useRef(input.onPick);
+  onPick.current = input.onPick;
+  const controller = useMemo(() => {
+    const port: HandPort = {
+      pick(point): Target {
+        return pickTarget(point, [], at => {
+          const hit = sceneRef.current?.hitTest(at);
+          return hit ? { kind: 'part', objectId: hit.objectId, partId: hit.partId, label: hit.name, hit: hit.hit } : EMPTY_TARGET;
+        });
+      },
+      select: (objectId, partId) => onPick.current(objectId, partId),
+      beginGrab: (objectId, partId, hit) => sceneRef.current?.beginPartGrab(objectId, partId, hit) ?? null,
+      beginOrbit: () => sceneRef.current?.beginOrbit() ?? null,
+      press: () => { /* no on-screen targets yet */ },
+    };
+    return new HandController(port);
+  }, [sceneRef]);
+  useEffect(() => { controller.setGate(gate); }, [controller, gate.level, gate.reason]);
+  useEffect(() => { controller.setObjectCount(objectCount); }, [controller, objectCount]);
   useEffect(() => {
     if (!enabled) return;
-    let handSeenAt: number | null = null;
+    let noticeTimer = 0;
+    controller.onCancelled = reason => {
+      if (reason !== 'loss') return;
+      setCancelledAt(performance.now());
+      window.clearTimeout(noticeTimer);
+      noticeTimer = window.setTimeout(() => setCancelledAt(null), CANCEL_NOTICE_MS);
+    };
     let seen = false;
     const unsubscribeFrames = source.subscribe(frame => {
       const video = videoRef.current;
@@ -52,36 +90,42 @@ export function useHandControl(input: {
         if (sample) samples.push(sample);
       }
       const hands = dedupeHands(samples);
-      debug.current = { hands: hands.length, pinchMm: hands.map(sample => (sample.pinchM === null ? null : sample.pinchM * 1000)) };
-      // With no hand in the frame the skeletons stay until HAND_LOST_MS has passed (see the tick below).
-      if (hands.length === 0) return;
-      handSeenAt = frame.receivedAt;
-      if (!seen) { seen = true; setHandSeen(true); }
-      const state = level.current === 'full' ? 'tracked' : 'locked';
-      const views: HandView[] = hands.map((sample, index) => ({
-        slot: index as HandSlot, state, targetKey: '', points: sample.points, cursor: sample.cursor, palm: sample.palm, badge: null,
-      }));
-      const overlay: OverlayFrame = { hands: views, gesture: 'none', link: null, arc: null };
+      if (hands.length > 0 && !seen) { seen = true; setHandSeen(true); }
+      const overlay = controller.frame(samples, frame.receivedAt);
+      debug.current = {
+        hands: hands.length, pinchMm: hands.map(sample => (sample.pinchM === null ? null : sample.pinchM * 1000)), gesture: overlay.gesture, stats: controller.stats,
+      };
       overlayRef.current?.draw(overlay);
     });
+    // Video frames without a result: time-outs (a lost hand, a lost pinch) apply here.
     const unsubscribeTicks = source.onTick(now => {
-      if (handSeenAt === null || now - handSeenAt < HAND_LOST_MS) return;
-      handSeenAt = null;
-      debug.current = { hands: 0, pinchMm: [] };
-      overlayRef.current?.clear();
+      const overlay = controller.tick(now);
+      if (!overlay) return;
+      if (overlay.hands.length === 0) debug.current = { ...debug.current, hands: 0, pinchMm: [], gesture: overlay.gesture };
+      else debug.current = { ...debug.current, gesture: overlay.gesture };
+      overlayRef.current?.draw(overlay);
     });
+    // A hidden page gets no frames: put a running drag back instead of leaving it half done.
+    const hidden = () => { if (document.visibilityState === 'hidden') controller.reset(); };
+    document.addEventListener('visibilitychange', hidden);
     return () => {
       unsubscribeFrames();
       unsubscribeTicks();
-      debug.current = { hands: 0, pinchMm: [] };
+      document.removeEventListener('visibilitychange', hidden);
+      window.clearTimeout(noticeTimer);
+      controller.onCancelled = undefined;
+      controller.reset();
+      debug.current = { ...IDLE_DEBUG, stats: controller.stats };
       overlayRef.current?.clear();
       setHandSeen(false);
+      setCancelledAt(null);
     };
-  }, [source, enabled, videoRef, overlayRef]);
-
+  }, [controller, source, enabled, videoRef, overlayRef]);
   const status = useMemo(
-    () => (enabled ? handStatus({ tracker, gate: { level: gate.level, reason: gate.reason }, cancelledAt: null, now: 0, handSeen }) : { state: 'hidden' as const, text: '' }),
-    [enabled, tracker, gate.level, gate.reason, handSeen],
+    () => (enabled
+      ? handStatus({ tracker, gate: { level: gate.level, reason: gate.reason }, cancelledAt, now: cancelledAt ?? 0, handSeen })
+      : { state: 'hidden' as const, text: '' }),
+    [enabled, tracker, gate.level, gate.reason, handSeen, cancelledAt],
   );
   return { status, debug };
 }

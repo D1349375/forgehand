@@ -118,7 +118,10 @@ export default function App() {
   /** While an agent run is active the user can only watch or cancel: manual changes would race its edits. */
   const agentActive = agent.active;
   const gate = handGate({ tryOn: tryOnActive, slow, agentActive, exploded: explode > 0 });
-  const handControl = useHandControl({ source: tracking.source, tracker: tracking.status, enabled: handControlOn, gate, videoRef, overlayRef });
+  const handControl = useHandControl({
+    source: tracking.source, tracker: tracking.status, enabled: handControlOn, gate, videoRef, overlayRef,
+    objectCount: workspace.objects.length, sceneRef, onPick: (objectId, partId) => pick(objectId, partId, false),
+  });
   const handDebug = handDebugRequested(window.location.search);
 
   async function refreshService() {
@@ -474,9 +477,10 @@ export default function App() {
     if (before.objects.length > 0) store.dispatch({ type: 'replace', next: setWorkspaceExplode(before, amount) });
     if (amount > 0) setTransformMode(null);
   }
-  function onTransform(_objectId: string, id: string, position: Vector, rotation: Vector) {
-    if (agentActive) return;
-    updatePart(id, { position, rotation }, transformMode === 'rotate' ? '已旋轉零件，可按「復原」回到上一步。' : '已移動零件，可按「復原」回到上一步。');
+  /** The gizmo and a hand grab share this path: one commit, one undo step. */
+  function onTransform(objectId: string, id: string, position: Vector, rotation: Vector, kind: 'translate' | 'rotate') {
+    if (agentActive || objectId !== store.current().activeObjectId) return;
+    updatePart(id, { position, rotation }, kind === 'rotate' ? '已旋轉零件，可按「復原」回到上一步。' : '已移動零件，可按「復原」回到上一步。');
   }
 
   // Keyboard shortcuts never fire while typing in a field.
