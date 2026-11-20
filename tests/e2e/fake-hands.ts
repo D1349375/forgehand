@@ -119,15 +119,22 @@ export async function fakeHandsLog(page: Page): Promise<{ ready: number; frames:
   });
 }
 
+/** The hand-loss window the e2e specs use unless a test says otherwise (ms); a hidden hand must stay hidden clearly longer than this. */
+export const E2E_LOSS_MS = 2000;
+
 /**
- * The app URL for hand-control specs. `?hands-min-fps=0` (the default here) switches the speed gate off:
- * a loaded machine delivers few fake-camera frames per second, which the gate would rightly call too slow.
- * Pass `minFps: null` to keep the app's default threshold.
+ * The app URL for hand-control specs.
+ * - `?hands-min-fps=0` (default here) switches the speed gate off: a loaded machine delivers few fake-camera
+ *   frames per second, which the gate would rightly call too slow. `minFps: null` keeps the app's default threshold.
+ * - `?hands-loss-ms=2000` (default here, see E2E_LOSS_MS) widens the hand-loss windows for the same reason: at 1 to 20
+ *   frames per second the 300 ms defaults expire between frames. `lossMs: null` keeps the app's defaults.
  */
-export function handsUrl(options: { minFps?: number | null; debug?: boolean } = {}): string {
+export function handsUrl(options: { minFps?: number | null; lossMs?: number | null; debug?: boolean } = {}): string {
   const params: string[] = [];
   if (options.debug) params.push('hands=debug');
   const minFps = options.minFps === undefined ? 0 : options.minFps;
   if (minFps !== null) params.push(`hands-min-fps=${minFps}`);
+  const lossMs = options.lossMs === undefined ? E2E_LOSS_MS : options.lossMs;
+  if (lossMs !== null) params.push(`hands-loss-ms=${lossMs}`);
   return params.length > 0 ? `/?${params.join('&')}` : '/';
 }

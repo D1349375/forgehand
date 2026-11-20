@@ -39,7 +39,7 @@ export function handStatus(input: { tracker: TrackerStatus; gate: Gate; cancelle
 }
 
 /** The tracking part of the `?hands=debug` line; `pinchMm` has one entry per hand in the latest frame. */
-export function trackingDebugLine(input: { delegate: TrackingDelegate | null; fps: number | null; inferenceMs: number | null; hands: number; pinchMm: readonly (number | null)[]; minFps?: number }): string {
+export function trackingDebugLine(input: { delegate: TrackingDelegate | null; fps: number | null; inferenceMs: number | null; hands: number; pinchMm: readonly (number | null)[]; minFps?: number; lossMs?: number | null }): string {
   const number = (value: number | null) => (value === null || !Number.isFinite(value) ? '—' : value.toFixed(0));
   const parts = [
     input.delegate ?? '—',
@@ -49,6 +49,7 @@ export function trackingDebugLine(input: { delegate: TrackingDelegate | null; fp
   ];
   if (input.pinchMm.length > 0) parts.push(`捏合 ${input.pinchMm.map(number).join('／')} mm`);
   if (input.minFps !== undefined) parts.push(`速度門檻 ${input.minFps} 幀`);
+  if (input.lossMs != null) parts.push(`遺失門檻 ${input.lossMs} ms`);
   return parts.join(' · ');
 }
 /** Cuts a name longer than `max` code points to its first `max` followed by 「…」. */

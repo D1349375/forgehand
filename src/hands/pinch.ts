@@ -36,14 +36,14 @@ export function initialPinchState(): PinchState {
  * tracking frames (`hand`, `none`) count toward streaks; `tick` only advances
  * time. Between the two thresholds nothing changes, a frame without a pinch
  * distance never engages, and a hand that comes back before the time-out
- * continues the same pinch.
+ * continues the same pinch. `lossMs`, when given, replaces both loss windows.
  */
-export function pinchStep(state: PinchState, input: PinchInput, now: number): { state: PinchState; events: PinchEvent[] } {
+export function pinchStep(state: PinchState, input: PinchInput, now: number, lossMs?: number): { state: PinchState; events: PinchEvent[] } {
   const events: PinchEvent[] = [];
   let next: PinchState = { ...state };
 
   // Time-outs first, so a hand frame arriving after a long gap starts afresh.
-  if (next.handSeenAt !== null && now - next.handSeenAt >= (next.engaged ? TRACKING_LOSS_MS : HAND_LOST_MS)) {
+  if (next.handSeenAt !== null && now - next.handSeenAt >= (lossMs ?? (next.engaged ? TRACKING_LOSS_MS : HAND_LOST_MS))) {
     events.push({ type: 'lost', engaged: next.engaged });
     next = { ...initialPinchState(), missing: true };
   }

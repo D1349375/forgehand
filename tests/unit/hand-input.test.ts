@@ -157,6 +157,24 @@ describe('pinchStep', () => {
   }
   const types = (events: PinchEvent[]) => events.map(event => event.type);
 
+  it('a custom loss window replaces both defaults', () => {
+    const open = hand(0.08);
+    const gap = Math.max(HAND_LOST_MS, TRACKING_LOSS_MS) + 700;
+    // Idle: a gap longer than HAND_LOST_MS loses the hand by default, not with a wider window.
+    expect(types(run([[open, 0], [open, gap]]).events)).toEqual(['found', 'lost', 'found']);
+    const idle = pinchStep(pinchStep(initialPinchState(), open, 0, 2000).state, open, gap, 2000);
+    expect(types(idle.events)).toEqual([]);
+    // Engaged: the same for TRACKING_LOSS_MS.
+    const engaged = (lossMs?: number) => {
+      let state = initialPinchState();
+      for (const [input, time] of [[hand(0.08), 0], [hand(0.02), 16], [hand(0.02), 32]] as Array<[PinchInput, number]>) state = pinchStep(state, input, time, lossMs).state;
+      expect(state.engaged).toBe(true);
+      return pinchStep(state, { kind: 'tick' }, 32 + gap, lossMs);
+    };
+    expect(types(engaged().events)).toEqual(['lost']);
+    expect(types(engaged(2000).events)).toEqual([]);
+    expect(types(engaged(500).events)).toEqual(['lost']);
+  });
   it('emits found on the first hand frame', () => {
     expect(run([[hand(0.08), 0], [hand(0.08), 16]]).log.map(types)).toEqual([['found'], []]);
   });

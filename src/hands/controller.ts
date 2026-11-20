@@ -124,6 +124,8 @@ export class HandController {
   onCancelled?: (reason: CancelReason) => void;
 
   private readonly join: JoinRule;
+  /** Replaces HAND_LOST_MS and TRACKING_LOSS_MS when set (`?hands-loss-ms`). */
+  private readonly lossMs: number | null;
   private tracks: [Track, Track] = [newTrack(0), newTrack(0)];
   private session: Session | null = null;
   /** A pinch that owns nothing: it may not act until it is released. `inert`: because another hand's gesture runs. */
@@ -134,8 +136,9 @@ export class HandController {
   /** Whether each slot had a hand in the latest frame. */
   private present: [boolean, boolean] = [false, false];
 
-  constructor(private readonly port: HandPort, options: { join?: JoinRule } = {}) {
+  constructor(private readonly port: HandPort, options: { join?: JoinRule; lossMs?: number | null } = {}) {
     this.join = options.join ?? joinGesture;
+    this.lossMs = options.lossMs ?? null;
   }
 
   /** The running two-hand gesture's measurements, or null. */
@@ -201,7 +204,7 @@ export class HandController {
       const sample = index === null || index === undefined ? null : hands[index] ?? null;
       this.present[slot] = sample !== null;
       if (!sample) {
-        const step = pinchStep(track.pinch, { kind: 'none' }, now);
+        const step = pinchStep(track.pinch, { kind: 'none' }, now, this.lossMs ?? undefined);
         track.pinch = step.state;
         events[slot] = step.events;
         track.pinchM = null;
@@ -214,7 +217,7 @@ export class HandController {
       track.pinchM = sample.pinchM;
       if (!track.pinch.engaged) track.settle = settleStep(track.settle, this.port.pick(track.cursor), now);
       const input: PinchInput = { kind: 'hand', cursor: track.cursor, pinchM: sample.pinchM };
-      const step = pinchStep(track.pinch, input, now);
+      const step = pinchStep(track.pinch, input, now, this.lossMs ?? undefined);
       track.pinch = step.state;
       events[slot] = step.events;
     }
@@ -227,7 +230,7 @@ export class HandController {
   tick(now: number): OverlayFrame | null {
     for (const slot of [0, 1] as const) {
       const track = this.tracks[slot];
-      const step = pinchStep(track.pinch, { kind: 'tick' }, now);
+      const step = pinchStep(track.pinch, { kind: 'tick' }, now, this.lossMs ?? undefined);
       track.pinch = step.state;
       this.handleEvents(slot, step.events, now);
     }
@@ -246,7 +249,7 @@ export class HandController {
 
   private expired(track: Track, now: number): boolean {
     const seen = track.pinch.handSeenAt;
-    return seen !== null && now - seen >= (track.pinch.engaged ? TRACKING_LOSS_MS : HAND_LOST_MS);
+    return seen !== null && now - seen >= (this.lossMs ?? (track.pinch.engaged ? TRACKING_LOSS_MS : HAND_LOST_MS));
   }
 
   private forget(track: Track, now: number): void {
@@ -477,7 +480,7 @@ export class HandController {
   // ---- the overlay frame -------------------------------------------------------------------------------------------------
 
   private visible(track: Track, now: number): boolean {
-    return track.pinch.handSeenAt !== null && now - track.pinch.handSeenAt < HAND_LOST_MS;
+    return track.pinch.handSeenAt !== null && now - track.pinch.handSeenAt < (this.lossMs ?? HAND_LOST_MS);
   }
 
   private gestureKind(): GestureKind {
