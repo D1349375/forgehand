@@ -37,7 +37,7 @@ Joints and materials become workspace data with a migration from version 1, and 
 
 **Session facts:**
 - Start from a clean tree. Other specs run in parallel in this repo; if `git status` shows uncommitted changes you did not make, stop and ask before editing.
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`, or the own fake in `arm-try-on.spec.ts`); unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing (`npx playwright test tests/e2e/<name>.spec.ts`). Run the full suite once at the end of the task: start it in the background with its output in a file (for example `npx playwright test *> artifacts/local/e2e-joints-task1.log`), give it a timeout of at least 15 minutes, and read the file when it finishes.
@@ -155,7 +155,7 @@ Joints become visible and usable with the mouse: marks on the parts, the 接合 
 
 **Session facts:**
 - Start from a clean tree. Other specs run in parallel in this repo and also edit `src/App.tsx` and `src/scene/SceneViewport.tsx`; if `git status` shows uncommitted changes you did not make, stop and ask before editing.
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`, or the own fake in `arm-try-on.spec.ts`); unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing (`npx playwright test tests/e2e/<name>.spec.ts`). Run the full suite once at the end of the task: start it in the background with its output in a file (for example `npx playwright test *> artifacts/local/e2e-joints-task4.log`), give it a timeout of at least 15 minutes, and read the file when it finishes.
@@ -199,7 +199,7 @@ The agent can create, change and remove joints and set materials, sees joints an
 
 **Session facts:**
 - Start from a clean tree. Other specs run in parallel in this repo; if `git status` shows uncommitted changes you did not make, stop and ask before editing.
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker; unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing. Run the full suite once at the end of the task: start it in the background with its output in a file (for example `npx playwright test *> artifacts/local/e2e-joints-task5.log`), give it a timeout of at least 15 minutes, and read the file when it finishes.
@@ -257,7 +257,7 @@ Run `npm run dev`, 載入示範模型 twice, 開啟攝影機, and add `?hands=de
 
 **Session facts:**
 - Start from a clean tree. Other specs run in parallel in this repo and also edit `src/hands/`, `src/App.tsx` and `src/scene/`; if `git status` shows uncommitted changes you did not make, stop and ask before editing.
-- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
 - Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`); unit tests never load MediaPipe.
 - The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start.
 - Run single spec files while developing. Run the full suite once at the end of the task: start it in the background with its output in a file (for example `npx playwright test *> artifacts/local/e2e-joints-task6.log`), give it a timeout of at least 15 minutes, and read the file when it finishes.

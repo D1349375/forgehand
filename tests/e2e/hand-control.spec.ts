@@ -171,12 +171,14 @@ test.describe('T3 both hands, the hidden camera image and the status line', () =
     await expect.poll(async () => Math.min(await overlayInk(page, left, 90), await overlayInk(page, right, 90)), { timeout: 45_000, intervals: [50, 100, 200] }).toBeGreaterThan(100);
     // Once a hand has been seen, the hint is gone.
     await expect(page.locator('[data-testid="hand-status"][data-state="hint"]')).toHaveCount(0);
+    // Hands keep their slots (design §4.7): the right hand stays in slot 1, and slot 0 empties once its loss window ends.
     await showHands(page, [{ at: right, pinchM: 0.1 }]);
     await expect(overlay).toHaveAttribute('data-hand-count', '1');
-    await expect(overlay).toHaveAttribute('data-hand2-state', 'none');
+    await expect(overlay).toHaveAttribute('data-hand-state', 'none');
+    await expect(overlay).toHaveAttribute('data-hand2-state', 'tracked');
     await hideHand(page);
     await expect(overlay).toHaveAttribute('data-hand-count', '0');
-    await expect(overlay).toHaveAttribute('data-hand-state', 'none');
+    await expect(overlay).toHaveAttribute('data-hand2-state', 'none');
   });
 
   test('the camera image can be hidden while the video, the tracking and the skeleton go on', async ({ page }) => {
@@ -336,8 +338,15 @@ async function attempts(page: Page, at: Pt, others: readonly FakeHand[], attempt
     }
   }
 }
-/** Hover until the target has settled, then pinch and wait for the state. */
+/**
+ * Hover until the target has settled, then pinch and wait for the state. The fake hand jumps between far points, which
+ * a real hand cannot do: a jump beyond HAND_MATCH_PX counts as a new hand and takes slot 1 while slot 0 waits out its
+ * loss window. So every attempt starts with no hand in either slot, and the hands then take their slots in order.
+ */
 async function pinchOnce(page: Page, at: Pt, aim: Aim, others: readonly FakeHand[]) {
+  await hideHand(page);
+  await expect(overlay(page)).toHaveAttribute('data-hand-state', 'none', { timeout: 45_000 });
+  await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'none', { timeout: 45_000 });
   await showHands(page, [{ at, pinchM: OPEN }, ...others]);
   await expect(overlay(page)).toHaveAttribute('data-hand-state', aim.hover, { timeout: 45_000 });
   if (aim.key !== null) await expect(overlay(page)).toHaveAttribute('data-hand-target', aim.key);
