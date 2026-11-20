@@ -392,6 +392,8 @@ One Playwright spec that checks the multi-object behaviour end to end, then the 
 
 ## Cut order
 
+**Only the user decides whether anything is cut.** A Kiro session never drops or simplifies a feature on its own, also not to save time: it reports the problem, and the reviewer asks the user. The list below is only a reference for that decision.
+
 If time runs short, drop these in order. Each is a self-contained part of one task, and the rest of the spec works without it:
 
 1. Inactive-object dimming (Task 4): all objects draw at full style.

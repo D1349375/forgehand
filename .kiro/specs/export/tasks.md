@@ -173,7 +173,7 @@ The 匯出套件 button, the export dialog with progress, findings, the summary 
 - `npm run check` (type check + build + unit tests) must pass before the task is marked `[x]`; report the real result.
 - No real model calls in tests: unit tests use a fake `ModelProvider`, e2e tests route `/api/*`. Never run `verify:real` or `verify:edit`.
 - Do not add dependencies.
-- If a test is flaky, or a failure cannot be fixed within two or three attempts, stop and report instead of investigating for a long time. If the step badges cost more than an hour, leave them out (`badges: []`) and report it: they are first in the cut order.
+- If a test is flaky, or a failure cannot be fixed within two or three attempts, stop and report instead of investigating for a long time. If the step badges take more than an hour, say so in the report and keep building them; never drop or simplify a feature on your own (only the user decides cuts).
 - Do not commit; the reviewer commits (suggested message: `feat(export): add the export dialog, exploded image and downloads (spec export, task 4)`).
 - User-facing strings and file contents are Traditional Chinese; code, comments and reports are English.
 
@@ -238,6 +238,8 @@ Run `npm run dev`.
 ---
 
 ## Cut order
+
+**Only the user decides whether anything is cut.** A Kiro session never drops or simplifies a feature on its own, also not to save time: it reports the problem, and the reviewer asks the user. The list below is only a reference for that decision.
 
 If time runs short, cut in this order (requirement 67, `docs/VISION.md` §5). The STL files, the 3MF and the BOM always stay.
 
