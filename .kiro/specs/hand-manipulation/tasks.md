@@ -190,7 +190,7 @@ Every gesture rule for one and two hands as pure code with unit tests: hand slot
 
 ## Task 5 — Wiring: pinch-move, orbit and the rest of the P0 core
 
-`[ ]`
+`[~]`
 
 The controller drives the real scene: one hand pinches a part to move it through the gizmo's commit path, or pinches empty space to turn the view; a second hand's pinch is inert. The overlay draws rings, badges and the line between the hands; the status line shows the cancel notice; the debug panel shows the gesture counters. README and the manual webcam list finish the P0 core.
 

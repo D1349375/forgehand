@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { drawHand } from './skeleton';
+import { drawBadge, drawHand, drawLink, drawRing, type Box } from './skeleton';
 import { overlayStyle } from './style';
 import type { OverlayFrame } from './types';
 
@@ -20,7 +20,8 @@ const IDLE = { count: '0', state: 'none', target: '', state2: 'none', target2: '
  */
 export const HandOverlay = forwardRef<HandOverlayHandle>(function HandOverlay(_props, ref) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const written = useRef({ ...IDLE });  useEffect(() => {
+  const written = useRef({ ...IDLE });
+  useEffect(() => {
     const element = canvas.current;
     if (!element) return;
     const resize = () => {
@@ -77,6 +78,18 @@ export const HandOverlay = forwardRef<HandOverlayHandle>(function HandOverlay(_p
         ctx.setTransform(ratio, 0, 0, ratio, -box.left * ratio, -box.top * ratio);
         for (const hand of frame.hands) {
           if (hand.state !== 'none') drawHand(ctx, hand.points, overlayStyle(hand));
+        }
+        if (frame.link) drawLink(ctx, frame.link);
+        for (const hand of frame.hands) {
+          if (hand.state !== 'none') drawRing(ctx, hand.cursor, overlayStyle(hand));
+        }
+        // Badges are placed inside the canvas box, so they are drawn in the box's own coordinates.
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        let taken: Box | null = null;
+        for (const hand of frame.hands) {
+          if (hand.state === 'none' || !hand.badge) continue;
+          const local = { x: hand.cursor.x - box.left, y: hand.cursor.y - box.top };
+          taken = drawBadge(ctx, hand.badge, local, { width: box.width, height: box.height }, taken);
         }
       },
       clear() {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { HAND_LOST_MS, TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX } from '../../src/hands/constants';
+import { CANCEL_NOTICE_MS, HAND_LOST_MS, TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX } from '../../src/hands/constants';
 import { HandController, type GrabSession, type HandPort, type OrbitSession } from '../../src/hands/controller';
 import { decidePinch } from '../../src/hands/decide';
 import type { Gate } from '../../src/hands/gate';
@@ -9,7 +9,7 @@ import { angleDelta, beyondDeadZone, pairAngle, pairSpan } from '../../src/hands
 import { badgeBox, drawBadge, drawLink, drawRing, type Box } from '../../src/hands/skeleton';
 import { createStats } from '../../src/hands/stats';
 import { HAND_COLOUR, LINK_COLOUR, overlayStyle } from '../../src/hands/style';
-import { badgeText, debugLine, shortenName } from '../../src/hands/text';
+import { badgeText, debugLine, handStatus, shortenName } from '../../src/hands/text';
 import { EMPTY_TARGET, type HandSample, type HandSlot, type HandState, type OverlayFrame, type Point, type Target } from '../../src/hands/types';
 import { clientToNormalized, syntheticHand } from '../fixtures/synthetic-hand';
 
@@ -679,6 +679,15 @@ describe('text', () => {
     expect(badgeText({ ...base, state: 'locked', target: target(name13), inert: true })).toBe('手勢：另一手操作中');
     expect(badgeText({ ...base, state: 'join', target: EMPTY_TARGET })).toBe('手勢：雙手操作');
     expect(badgeText({ ...base, state: 'none', target: EMPTY_TARGET })).toBe('');
+  });
+  it('shows the cancel notice for CANCEL_NOTICE_MS, then nothing once a hand has been seen', () => {
+    const input = { tracker: 'ready' as const, gate: FULL, cancelledAt: 1000, handSeen: true };
+    expect(handStatus({ ...input, now: 1000 })).toEqual({ state: 'cancelled', text: '手部追蹤中斷，已取消這次移動。' });
+    expect(handStatus({ ...input, now: 1000 + CANCEL_NOTICE_MS - 1 }).state).toBe('cancelled');
+    expect(handStatus({ ...input, now: 1000 + CANCEL_NOTICE_MS })).toEqual({ state: 'hidden', text: '' });
+    expect(handStatus({ ...input, cancelledAt: null, now: 1000 })).toEqual({ state: 'hidden', text: '' });
+    // The agent and exploded notices come before it.
+    expect(handStatus({ ...input, gate: VIEW_ONLY, now: 1000 }).state).toBe('exploded');
   });
   it('writes the debug line with the counters', () => {
     const stats = createStats();
