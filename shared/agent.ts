@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FaceIdSchema, JointMethodSchema, JointNeedsSchema, JointSchema, MAX_JOINTS } from './joint';
+import { ExportScopeSchema } from './export-plan';
 import { MaterialIdSchema } from './materials';
 import { PartIdSchema } from './model';
 import { DEFAULT_PRINTER_PROFILE, PrinterProfileSchema, type PrinterProfile } from './printer';
@@ -53,6 +54,8 @@ export type ToolCall = z.infer<typeof ToolCallSchema>;
 export const StateChangeSchema = z.strictObject({
   ...WorkspaceChangeSchema.shape,
   tryOn: z.boolean().nullable(),
+  /** Session state like `tryOn`: asks the browser to open the export dialog with this scope. Absent or null means no change. */
+  exportDialog: ExportScopeSchema.nullable().optional(),
 });
 export type StateChange = z.infer<typeof StateChangeSchema>;
 

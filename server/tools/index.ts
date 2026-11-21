@@ -15,5 +15,6 @@ export { updateJointTool } from './update-joint';
 export { removeJoint } from './remove-joint';
 export { setMaterial } from './set-material';
 export { wearOnArm } from './wear-on-arm';
+export { prepareExport } from './prepare-export';
 export { argKeys, argsShapeText, createToolRegistry, defineTool, getTool, listTools } from './registry';
 export type { ToolContext, ToolDefinition, ToolEffects, ToolRegistry, ToolScope, ToolSide } from './registry';

@@ -1,4 +1,5 @@
 import { StateChangeSchema } from '../../shared/agent';
+import type { ExportScope } from '../../shared/export-plan';
 import { WorkspaceError, applyWorkspaceChange, type Workspace } from '../../shared/workspace';
 
 /** What the caller should apply for one `state` event. */
@@ -11,6 +12,8 @@ export interface StateEffects {
   recordUndo: boolean;
   /** Present only when the event sets the try-on flag. */
   tryOn?: boolean;
+  /** Present only when the event asks to open the export dialog. Session state like `tryOn`: never an undo step. */
+  exportDialog?: ExportScope;
 }
 
 /**
@@ -22,11 +25,12 @@ export interface StateEffects {
 export function applyStateEvent(payload: unknown, workspace: Workspace): StateEffects | null {
   const parsed = StateChangeSchema.safeParse(payload);
   if (!parsed.success) return null;
-  const { tryOn, ...change } = parsed.data;
+  const { tryOn, exportDialog, ...change } = parsed.data;
   try {
     const { before, after } = applyWorkspaceChange(workspace, change);
     const effects: StateEffects = { before, after, recordUndo: change.object !== null || (change.joint ?? null) !== null };
     if (tryOn !== null) effects.tryOn = tryOn;
+    if (exportDialog) effects.exportDialog = exportDialog;
     return effects;
   } catch (cause) {
     if (cause instanceof WorkspaceError) return null;

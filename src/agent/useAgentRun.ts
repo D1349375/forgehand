@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { AgentTurn } from '../../shared/agent';
+import type { ExportScope } from '../../shared/export-plan';
 import { applyStateEvent, type StateEffects } from './apply-state';
 import { parseAgentEvent } from './events';
 import { buildAgentRequest, errorMessageFromBody, type RunSnapshot } from './request';
@@ -12,6 +13,8 @@ export interface AgentRunOptions {
   /** Applies one state event's workspace change: an undo step when `recordUndo`, else a plain replace. */
   applyWorkspace(effects: StateEffects): void;
   setTryingOn(on: boolean): void;
+  /** Opens the export dialog with the scope the agent chose. The agent never downloads; the user does. */
+  openExport?(scope: ExportScope): void;
   /** The workbench state to start a run from. */
   getSnapshot(): RunSnapshot;
   getTurns(): AgentTurn[];
@@ -62,6 +65,7 @@ export function useAgentRun(options: AgentRunOptions) {
         workspace = effects.after;
         optionsRef.current.applyWorkspace(effects);
         if (effects.tryOn !== undefined) optionsRef.current.setTryingOn(effects.tryOn);
+        if (effects.exportDialog !== undefined) optionsRef.current.openExport?.(effects.exportDialog);
         return;
       }
       if (event.type === 'final') optionsRef.current.pushTurn({ instruction: text, reply: event.reply });
