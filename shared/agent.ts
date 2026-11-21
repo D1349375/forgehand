@@ -1,5 +1,8 @@
 import { z } from 'zod';
+import { FaceIdSchema, JointMethodSchema, JointNeedsSchema, JointSchema, MAX_JOINTS } from './joint';
+import { MaterialIdSchema } from './materials';
 import { PartIdSchema } from './model';
+import { DEFAULT_PRINTER_PROFILE, PrinterProfileSchema, type PrinterProfile } from './printer';
 import {
   ObjectIdSchema, ObjectTransformSchema, WorkspaceChangeSchema, WorkspaceError, validateWorkspace,
   type Workspace,
@@ -106,11 +109,33 @@ export const ObjectSummarySchema = z.strictObject({
   position: ObjectTransformSchema.shape.position,
   rotation: ObjectTransformSchema.shape.rotation,
   active: z.boolean(),
+  material: MaterialIdSchema.nullable(),
 });
 export type ObjectSummary = z.infer<typeof ObjectSummarySchema>;
 
+const JointSideSummarySchema = z.strictObject({
+  objectId: ObjectIdSchema,
+  objectName: text,
+  partId,
+  partName: text,
+  face: FaceIdSchema,
+});
+
+/** A joint in the short form `get_project_state` lists: both sides with names, method, needs and finding codes. */
+export const JointSummarySchema = z.strictObject({
+  id: ObjectIdSchema,
+  a: JointSideSummarySchema,
+  b: JointSideSummarySchema,
+  method: JointMethodSchema,
+  needs: JointNeedsSchema,
+  confirmed: z.boolean(),
+  findings: z.array(z.string().min(1).max(40)).max(20),
+});
+export type JointSummary = z.infer<typeof JointSummarySchema>;
+
 export const GetProjectStateDetailSchema = z.strictObject({
   objects: z.array(ObjectSummarySchema).max(8),
+  joints: z.array(JointSummarySchema).max(MAX_JOINTS),
   activeObjectId: ObjectIdSchema.nullable(),
   // The object the read describes: the given or the active one. Null on an empty workspace.
   target: z.strictObject({
@@ -133,6 +158,24 @@ export const ObjectToolDetailSchema = z.strictObject({
   transform: ObjectTransformSchema.nullable(),
 });
 export type ObjectToolDetail = z.infer<typeof ObjectToolDetailSchema>;
+
+/** For `create_joint` and `update_joint`: the joint, what the rules recommend for it and what the checks found. */
+export const JointToolDetailSchema = z.strictObject({
+  jointId: ObjectIdSchema,
+  joint: JointSchema,
+  recommendation: z.array(z.strictObject({
+    method: JointMethodSchema,
+    ok: z.boolean(),
+    reasons: z.array(z.string().min(1).max(300)).max(8),
+  })).max(4),
+  findings: z.array(z.strictObject({
+    severity: z.enum(['error', 'warning', 'info']),
+    code: z.string().min(1).max(40),
+    message: z.string().min(1).max(300),
+  })).max(20),
+  derived: z.string().max(300),
+});
+export type JointToolDetail = z.infer<typeof JointToolDetailSchema>;
 
 export const WearOnArmDetailSchema = z.strictObject({
   tryOn: z.boolean(),
@@ -181,6 +224,8 @@ export const AgentRequestSchema = z.strictObject({
   tryOn: z.boolean(),
   cameraOn: z.boolean(),
   history: z.array(AgentTurnSchema).max(10),
+  // The user's printer tolerances, so the server's joint checks match the browser's. Optional: the default profile applies.
+  printer: PrinterProfileSchema.optional(),
 });
 
 /** Distinguishes request-validation failures so the route can map them to HTTP codes. */
@@ -198,12 +243,15 @@ export interface AgentRequest {
   tryOn: boolean;
   cameraOn: boolean;
   history: AgentTurn[];
+  /** Always set by `validateAgentRequest`; a request built by hand may leave it out (the default profile applies). */
+  printer?: PrinterProfile;
 }
 
 /**
  * Parses the request, then validates the workspace with `validateWorkspace`.
  * A workspace failure throws `AgentRequestError('INVALID_WORKSPACE')` with a
  * fixed message (no ids, no schema text); Zod throws for structural failures.
+ * A request without `printer` gets the default profile.
  */
 export function validateAgentRequest(input: unknown): AgentRequest {
   const raw = AgentRequestSchema.parse(input);
@@ -213,7 +261,7 @@ export function validateAgentRequest(input: unknown): AgentRequest {
     if (error instanceof WorkspaceError) throw new AgentRequestError('INVALID_WORKSPACE', '目前工作區資料無效，無法處理這次請求。');
     throw error;
   }
-  return { ...raw, workspace };
+  return { ...raw, workspace, printer: raw.printer ?? { ...DEFAULT_PRINTER_PROFILE } };
 }
 
 // ----- AgentStep validation -----

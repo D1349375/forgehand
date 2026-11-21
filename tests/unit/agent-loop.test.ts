@@ -8,6 +8,7 @@ import {
 import { demoModel } from '../../shared/demo';
 import { type ModelSpec } from '../../shared/model';
 import { emptyWorkspace, SceneObjectSchema, type ObjectChange, type Workspace } from '../../shared/workspace';
+import { twoBoxes } from '../fixtures/joint-workspace';
 import { CREATED_AT, idCounter, sceneObject, workspaceOf } from './agent-fixtures';
 
 /**
@@ -363,7 +364,7 @@ describe('server/agent.ts runAgent loop', () => {
       // Calls: agent round 1, the design task, agent round 2.
       expect(inputOf(0)).toContain('工作區共 1 個物件（上限 8）：');
       expect(inputOf(2)).toContain('工作區共 2 個物件（上限 8）：');
-      expect(inputOf(2)).toMatch(/- gen-1「.*」\d+ 個零件，位置 \([^)]*\) m，角度 \(0, 0, 0\)°【目前物件】/);
+      expect(inputOf(2)).toMatch(/- gen-1「.*」\d+ 個零件，位置 \([^)]*\) m，角度 \(0, 0, 0\)°，材料 未指定【目前物件】/);
       expect(inputOf(2)).not.toMatch(/- obj-1「[^\n]*【目前物件】/);
     });
 
@@ -401,12 +402,38 @@ describe('server/agent.ts runAgent loop', () => {
       await run(twoObjects());
 
       const input = inputOf(0);
-      expect(input).toContain('- obj-1「' + demoModel.name + '」' + demoModel.parts.length + ' 個零件，位置 (0, 0, 0) m，角度 (0, 0, 0)°【目前物件】');
-      expect(input).toContain('- obj-2「手環」' + demoModel.parts.length + ' 個零件，位置 (1, 0, 0) m，角度 (0, 0, 0)°\n');
+      expect(input).toContain('- obj-1「' + demoModel.name + '」' + demoModel.parts.length + ' 個零件，位置 (0, 0, 0) m，角度 (0, 0, 0)°，材料 未指定【目前物件】');
+      expect(input).toContain('- obj-2「手環」' + demoModel.parts.length + ' 個零件，位置 (1, 0, 0) m，角度 (0, 0, 0)°，材料 未指定\n');
       expect(input).toContain('目前物件「' + demoModel.name + '」的零件：');
       expect(input).not.toContain('目前物件「手環」');
       // The part list appears once: only the active object's parts.
       expect(input.split('(housing, ').length).toBe(2);
+    });
+
+    it('lists joints in the snapshot only when there are some', async () => {
+      script.mockResolvedValue(final);
+      await run(twoObjects());
+      expect(inputOf(0)).not.toContain('接合');
+      await run(twoBoxes({ joint: true }));
+      expect(inputOf(1)).toContain('接合 1 個：');
+      expect(inputOf(1)).toContain('- joint-1：「Block A」body（右面）↔「Block B」body（左面），膠合（瞬間膠），待確認，負重 未指定，拆裝 未指定');
+    });
+
+    it('runs create_joint without a printer in the request (default profile) and the next round sees the joint', async () => {
+      script
+        .mockResolvedValueOnce({ type: 'tool_calls', note: null, reply: null, calls: [{ tool: 'create_joint', argsJson: '{"a":{"objectId":"a"},"b":{"objectId":"b"}}', reason: null }] })
+        .mockResolvedValueOnce(final);
+      const request = makeTestRequest({ workspace: twoBoxes() });
+      expect(request.printer).toBeUndefined();
+      await runAgent(fakeProvider, request, { maxRounds: 5, totalTimeoutMs: 60000, newObjectId: idCounter('joint'), now: () => CREATED_AT }, emit, abortController.signal);
+      const result = events.filter(e => e.name === 'result').map(e => ToolResultSchema.parse(e.data))[0]!;
+      expect(result).toMatchObject({ tool: 'create_joint', ok: true });
+      const state = events.filter(e => e.name === 'state').map(e => StateChangeSchema.parse(e.data))[0]!;
+      expect(state.joint).toMatchObject({ op: 'add', joint: { id: 'joint-1' } });
+      expect(inputOf(0)).not.toContain('接合');
+      expect(inputOf(1)).toContain('接合 1 個：');
+      expect(inputOf(1)).toContain('- joint-1：「Block A」body（右面）↔「Block B」body（左面）');
+      expect(events.map(e => e.name).slice(-2)).toEqual(['final', 'done']);
     });
 
     it('applies a state change to the working copy so a later call in the round sees it', async () => {
@@ -523,6 +550,15 @@ describe('server/agent.ts runAgent loop', () => {
       '- Call remove_object only when the user asks to remove an object.',
       '- set_transform moves or rotates a whole object (position in metres, rotation in degrees). It never changes size; change sizes with edit_design.',
     ]) expect(AGENT_INSTRUCTIONS).toContain(line);
+    // Assembly-joints rules (design 9), each line in full, and the four tools by name.
+    for (const name of ['create_joint', 'update_joint', 'remove_joint', 'set_material']) expect(AGENT_INSTRUCTIONS).toContain('- ' + name + '(');
+    for (const line of [
+      '- Joints connect two objects (or two parts of one object) on flat faces. The only fixing methods are screw-insert (heat-set inserts with M2 or M3 screws), magnet, pin and glue. Snap-fits and moving joints (hinges, sliders) are not supported yet; PLA is too brittle for snap-fits. Never suggest welding for printed parts.',
+      '- Before recommending a method, ask the user about the load (light, medium, heavy) and how often the parts are taken apart (never, sometimes, often) unless they are known; then call update_joint with load and disassembly and explain the recommendation using the reasons the tool returns. Do not invent dimensions or strengths.',
+      '- Pass confirmed: true only when the user chose or accepted the method in this conversation.',
+      "- Metal and plastic parts are fastened mechanically (screws or pins), not glued alone. Hole sizes come from the user's printer profile, which you cannot change.",
+      '- set_transform on a jointed object moves its whole assembly. An object leaves its assembly only when its joint is removed (remove_joint, only when the user asks).',
+    ]) expect(AGENT_INSTRUCTIONS).toContain(line);
     // Every existing rule stays.
     expect(AGENT_INSTRUCTIONS).toContain('- Prefer local tools (select_parts, explode_view, get_project_state) when they suffice.');
     for (const name of ['set_active_object', 'set_transform', 'remove_object']) expect(AGENT_INSTRUCTIONS).toContain('- ' + name + '(');
@@ -569,7 +605,7 @@ describe('server/agent.ts runAgent loop', () => {
     expect(taskArg.input).toContain('之前的指示');
     expect(taskArg.input).toContain('之前的回覆');
     expect(taskArg.input).toContain('目前狀態：工作區共 1 個物件（上限 8）：');
-    expect(taskArg.input).toContain('- obj-1「TestModel」1 個零件，位置 (0, 0, 0) m，角度 (0, 0, 0)°【目前物件】');
+    expect(taskArg.input).toContain('- obj-1「TestModel」1 個零件，位置 (0, 0, 0) m，角度 (0, 0, 0)°，材料 未指定【目前物件】');
     expect(taskArg.input).toContain('目前物件「TestModel」的零件：Part1(p1, box, #ff0000)');
     expect(taskArg.input).toContain('已選取：p1');
     expect(taskArg.input).toContain('爆炸圖程度：50%');

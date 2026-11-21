@@ -45,7 +45,7 @@ export function JointPanel({
         <button type="button" className="button" onClick={onCancelJoin}>取消接合</button>
       </>}
     </div>
-    {joining && <p className="notice info" role="status" data-testid="mouse-join-status" data-step={mouseJoin.step}>{status}</p>}
+    {joining && <p className="notice info mouse-join-status" role="status" data-testid="mouse-join-status" data-step={mouseJoin.step}>{status}</p>}
     {mouseNotice && <p className="small-muted" data-testid="mouse-join-notice">{mouseNotice}</p>}
     {error && <p className="notice warning" role="alert">{error}</p>}
     {rows.length > 0 && <ul className="joint-list" aria-label="接合清單">{rows.map(row => <li key={row.id}>

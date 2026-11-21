@@ -2,11 +2,15 @@ import {
   agentJsonSchema, UNKNOWN_TOOL_LABEL, validateAgentStep,
   type AgentEventName, type AgentRequest, type AgentStep, type AgentTurn, type ToolResult,
 } from '../shared/agent';
+import { checkJoints } from '../shared/joint-rules';
+import { MATERIALS } from '../shared/materials';
+import { DEFAULT_PRINTER_PROFILE } from '../shared/printer';
 import { activeObject, applyWorkspaceChange, MAX_OBJECTS } from '../shared/workspace';
 import { GenerationError, type ModelProvider, type ModelTask } from './provider';
 import { MODEL_INSTRUCTIONS } from './provider';
 import { runTool, type AgentWorkingState } from './agent-tools';
 import { argsShapeText, getTool, listTools } from './tools';
+import { DISASSEMBLY_TEXT, LOAD_TEXT, methodText, printerOf, sideText, UNKNOWN_NEED_TEXT } from './tools/joint-helpers';
 
 /** Sanitized message for a run that hit its total time limit (also used by the route's final bound). */
 export const AGENT_TIMEOUT_MESSAGE = '這次請求已逾時，請稍後重試或簡化任務。';
@@ -41,6 +45,7 @@ export async function runAgent(
     workspace: req.workspace,
     tryOn: req.tryOn,
     cameraOn: req.cameraOn,
+    printer: req.printer ?? DEFAULT_PRINTER_PROFILE,
   };
 
   // Compact round history (no full ModelSpec, no stateChange) sent to the model.
@@ -184,15 +189,34 @@ export function workspaceSnapshot(state: AgentWorkingState): string {
   const { workspace } = state;
   if (workspace.objects.length === 0) return '工作區沒有物件。';
   const lines = workspace.objects.map(object =>
-    `- ${object.id}「${object.model.name}」${object.model.parts.length} 個零件，位置 ${vectorText(object.transform.position)} m，角度 ${vectorText(object.transform.rotation)}°${object.id === workspace.activeObjectId ? '【目前物件】' : ''}`);
+    `- ${object.id}「${object.model.name}」${object.model.parts.length} 個零件，位置 ${vectorText(object.transform.position)} m，角度 ${vectorText(object.transform.rotation)}°，材料 ${object.material ? MATERIALS[object.material].label : UNKNOWN_NEED_TEXT}${object.id === workspace.activeObjectId ? '【目前物件】' : ''}`);
   const active = activeObject(workspace);
   const selected = active !== null && workspace.selection.objectId === active.id ? workspace.selection.partIds : [];
   const activeText = active === null ? '' : `目前物件「${active.model.name}」的零件：${active.model.parts.map(part => `${part.name}(${part.id}, ${part.primitive}, ${part.color})`).join('、')}。已選取：${selected.length ? selected.join('、') : '無'}。爆炸圖程度：${Math.round(workspace.display.explode * 100)}%。`;
   return [
     `工作區共 ${workspace.objects.length} 個物件（上限 ${MAX_OBJECTS}）：`,
     ...lines,
+    ...jointSnapshotLines(state),
     `${activeText}試戴：${state.tryOn ? '已開啟' : '關閉'}。`,
   ].join('\n');
+}
+
+/**
+ * The joints block of the snapshot; empty for a workspace without joints. Each joint shows its sides,
+ * method, state and needs, and the codes of its errors and warnings (info findings are not problems).
+ */
+function jointSnapshotLines(state: AgentWorkingState): string[] {
+  const { workspace } = state;
+  if (workspace.joints.length === 0) return [];
+  const findings = checkJoints(workspace, printerOf(state));
+  return [
+    `接合 ${workspace.joints.length} 個：`,
+    ...workspace.joints.map(joint => {
+      const problems = [...new Set((findings.get(joint.id) ?? []).filter(finding => finding.severity !== 'info').map(finding => finding.code))];
+      const { load, disassembly } = joint.needs;
+      return `- ${joint.id}：${sideText(workspace, joint.a)}↔${sideText(workspace, joint.b)}，${methodText(joint.method)}，${joint.confirmed ? '已確認' : '待確認'}，負重 ${load ? LOAD_TEXT[load] : UNKNOWN_NEED_TEXT}，拆裝 ${disassembly ? DISASSEMBLY_TEXT[disassembly] : UNKNOWN_NEED_TEXT}${problems.length ? `，問題：${problems.join('、')}` : ''}`;
+    }),
+  ];
 }
 
 /**
@@ -238,6 +262,11 @@ Rules:
 - If it is unclear which object the user means, ask in your final reply instead of guessing.
 - Call remove_object only when the user asks to remove an object.
 - set_transform moves or rotates a whole object (position in metres, rotation in degrees). It never changes size; change sizes with edit_design.
+- Joints connect two objects (or two parts of one object) on flat faces. The only fixing methods are screw-insert (heat-set inserts with M2 or M3 screws), magnet, pin and glue. Snap-fits and moving joints (hinges, sliders) are not supported yet; PLA is too brittle for snap-fits. Never suggest welding for printed parts.
+- Before recommending a method, ask the user about the load (light, medium, heavy) and how often the parts are taken apart (never, sometimes, often) unless they are known; then call update_joint with load and disassembly and explain the recommendation using the reasons the tool returns. Do not invent dimensions or strengths.
+- Pass confirmed: true only when the user chose or accepted the method in this conversation.
+- Metal and plastic parts are fastened mechanically (screws or pins), not glued alone. Hole sizes come from the user's printer profile, which you cannot change.
+- set_transform on a jointed object moves its whole assembly. An object leaves its assembly only when its joint is removed (remove_joint, only when the user asks).
 
 ${GEOMETRY_RULES}
 

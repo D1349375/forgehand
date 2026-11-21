@@ -1,4 +1,5 @@
 import type { AgentTurn } from '../../shared/agent';
+import type { PrinterProfile } from '../../shared/printer';
 import type { Workspace } from '../../shared/workspace';
 
 /** The workbench state a run starts from. */
@@ -6,6 +7,8 @@ export interface RunSnapshot {
   workspace: Workspace;
   tryOn: boolean;
   cameraOn: boolean;
+  /** The user's printer tolerances, so the server's joint checks match the browser's. */
+  printer?: PrinterProfile;
 }
 
 /** Most previous turns sent for context (matches the server's `history` limit). */
@@ -13,7 +16,7 @@ export const HISTORY_TURN_LIMIT = 10;
 
 /**
  * The `/api/agent` request body: the whole workspace (objects, active object,
- * selection, explode) plus the try-on flags, and only the latest turns.
+ * selection, explode) plus the try-on flags, the printer profile when given and only the latest turns.
  */
 export function buildAgentRequest(instruction: string, snapshot: RunSnapshot, turns: AgentTurn[], requestId: string) {
   return {
@@ -23,6 +26,7 @@ export function buildAgentRequest(instruction: string, snapshot: RunSnapshot, tu
     tryOn: snapshot.tryOn,
     cameraOn: snapshot.cameraOn,
     history: turns.slice(-HISTORY_TURN_LIMIT),
+    ...(snapshot.printer ? { printer: snapshot.printer } : {}),
   };
 }
 

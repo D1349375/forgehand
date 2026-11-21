@@ -7,9 +7,10 @@ import {
 } from '../../server/tools';
 import { ok } from '../../server/tools/helpers';
 
-const NINE_TOOLS = [
+const TOOLS = [
   'generate_design', 'edit_design', 'select_parts', 'get_project_state', 'explode_view',
-  'set_active_object', 'set_transform', 'remove_object', 'wear_on_arm',
+  'set_active_object', 'set_transform', 'remove_object',
+  'create_joint', 'update_joint', 'remove_joint', 'set_material', 'wear_on_arm',
 ];
 
 const fakeTool = (over: Partial<ToolDefinition<Record<string, never>>> = {}): ToolDefinition<Record<string, never>> => ({
@@ -65,9 +66,9 @@ describe('createToolRegistry', () => {
 });
 
 describe('default registry', () => {
-  it('holds exactly the nine working tools, all project-scope server tools, in the order the model sees them', () => {
-    expect(listTools().map(tool => tool.name)).toEqual(NINE_TOOLS);
-    expect(listTools({ scope: 'project', side: 'server' }).map(tool => tool.name)).toEqual(NINE_TOOLS);
+  it('holds exactly the thirteen working tools, all project-scope server tools, in the order the model sees them', () => {
+    expect(listTools().map(tool => tool.name)).toEqual(TOOLS);
+    expect(listTools({ scope: 'project', side: 'server' }).map(tool => tool.name)).toEqual(TOOLS);
     expect(listTools({ scope: 'home' })).toEqual([]);
     expect(listTools({ side: 'client' })).toEqual([]);
   });
@@ -86,6 +87,10 @@ describe('default registry', () => {
       set_active_object: '切換物件',
       set_transform: '移動物件',
       remove_object: '移除物件',
+      create_joint: '建立接合',
+      update_joint: '設定接合',
+      remove_joint: '移除接合',
+      set_material: '設定材料',
       wear_on_arm: '護臂試戴',
     });
   });
@@ -93,7 +98,7 @@ describe('default registry', () => {
   it('refuses to register an existing tool name again', () => {
     expect(() => defineTool(fakeTool({ name: 'generate_design' }))).toThrow(/generate_design/);
     expect(getTool('generate_design')).toBe(generateDesign);
-    expect(listTools()).toHaveLength(NINE_TOOLS.length);
+    expect(listTools()).toHaveLength(TOOLS.length);
   });
 
   it('gives every tool a description, a strict args schema and declared effects', () => {
@@ -110,6 +115,10 @@ describe('default registry', () => {
       set_active_object: 'writes-scene',
       set_transform: 'writes-scene',
       remove_object: 'writes-scene',
+      create_joint: 'writes-scene',
+      update_joint: 'writes-scene',
+      remove_joint: 'writes-scene',
+      set_material: 'writes-scene',
       wear_on_arm: 'uses-camera',
     });
   });
@@ -126,6 +135,10 @@ describe('argsShapeText', () => {
     expect(shape('set_active_object')).toBe('objectId: string');
     expect(shape('set_transform')).toBe('objectId: string, position?: object | null, rotation?: object | null');
     expect(shape('remove_object')).toBe('objectId: string');
+    expect(shape('create_joint')).toBe('a: object, b: object');
+    expect(shape('update_joint')).toBe('jointId: string, load?: string | null, disassembly?: string | null, method?: unknown | null, confirmed?: boolean | null');
+    expect(shape('remove_joint')).toBe('jointId: string');
+    expect(shape('set_material')).toBe('objectId: string, material: string | null');
     expect(shape('wear_on_arm')).toBe('enabled: boolean');
   });
 
@@ -138,10 +151,10 @@ describe('generated tool list in AGENT_INSTRUCTIONS', () => {
   const section = AGENT_INSTRUCTIONS.split('Available tools:\n')[1]!.split('\nRules:')[0]!;
   const lines = section.split('\n').filter(line => line.trim());
 
-  it('lists exactly the nine tools, in registration order, as `- name(args): description`', () => {
+  it('lists exactly the thirteen tools, in registration order, as `- name(args): description`', () => {
     expect(lines).toEqual(listTools({ scope: 'project', side: 'server' })
       .map(tool => `- ${tool.name}(${argsShapeText(tool.args)}): ${tool.description}`));
-    expect(lines.map(line => /^- (\w+)\(/.exec(line)![1])).toEqual(NINE_TOOLS);
+    expect(lines.map(line => /^- (\w+)\(/.exec(line)![1])).toEqual(TOOLS);
   });
 
   it('tells the model that wear_on_arm shows a stand-in cuff, not the user design', () => {
@@ -150,8 +163,8 @@ describe('generated tool list in AGENT_INSTRUCTIONS', () => {
     expect(line).toContain("not the user's design");
   });
 
-  it('has one line per tool, nine in all', () => {
-    expect(lines).toHaveLength(9);
+  it('has one line per tool, thirteen in all', () => {
+    expect(lines).toHaveLength(13);
   });
   it('does not mention tools that are not registered', () => {
     expect(AGENT_INSTRUCTIONS).not.toContain('estimate_weight_cost');

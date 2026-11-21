@@ -736,6 +736,15 @@ summary {
 .stage-column {
   min-width:0
 }
+/* The 接合 panel sits far below the canvas in the tall control column. While a mouse join runs, pin the canvas in view
+   so that reaching 新增接合 never leaves the user without it. The one-column layout keeps the normal flow. */
+@media(min-width:801px) {
+  .workspace:has(.mouse-join-status) .viewport {
+    position:sticky;
+    top:12px;
+    z-index:5
+  }
+}
 @media(min-width:1500px) {
   .workspace {
     grid-template-columns:minmax(0,1fr) 390px;
