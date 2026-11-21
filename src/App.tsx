@@ -1,12 +1,29 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { BufferGeometry } from 'three';
+import { assemblyOf } from '../shared/assembly';
+import { realignJoint } from '../shared/contact';
 import { demoModel } from '../shared/demo';
 import { applyEditPlan, describeChanges, editConflicts, EditError, EditResultSchema, validateEditPlan, type EditPlan, type EditResult } from '../shared/edit';
+import { newJoint, recommendJoint } from '../shared/joint-rules';
+import type { Joint } from '../shared/joint';
+import type { MaterialId } from '../shared/materials';
 import { validateGenerationResult, validateModel, type GenerationResult, type ModelSpec, type Part } from '../shared/model';
+import type { PrinterProfile } from '../shared/printer';
 import {
-  MAX_OBJECTS, WorkspaceError, activeObject, addObject, createObject, emptyWorkspace, findObject, removeObject, replaceModel, selectParts, setActiveObject,
-  setExplode as setWorkspaceExplode, setTransform, type ObjectTransform, type SceneObject, type Workspace,
+  MAX_OBJECTS, WorkspaceError, activeObject, addObject, createObject, emptyWorkspace, findObject, joinObjects, jointsRemovedBy, removeJoint, removeObject, replaceModel,
+  selectParts, setActiveObject, setExplode as setWorkspaceExplode, setMaterial, setTransform, updateJoint, type ObjectTransform, type SceneObject, type Workspace,
 } from '../shared/workspace';
-import { SceneViewport, type SceneHandle, type TransformMode, type Vector } from './scene/SceneViewport';
+import { SceneViewport, type JoinPreview, type SceneHandle, type TransformMode, type Vector } from './scene/SceneViewport';
+import { computeMarks, glowMarks } from './scene/joint-marks';
+import { JointCard, type PrintPreviewState } from './joints/JointCard';
+import { JointPanel } from './joints/JointPanel';
+import { PrinterPanel } from './joints/PrinterPanel';
+import {
+  buildKit, jointCardModel, jointRows, jointSideNames, onConfirm, onMethod, onNeeds, onParam, onRecommendation, type JointPatch,
+} from './joints/card-model';
+import { JOINT_NOTICES } from './joints/labels';
+import { mouseJoinStep, previewPoses, type MouseJoinEvent, type MouseJoinState } from './joints/mouse-join';
+import { loadPrinterProfile, savePrinterProfile } from './joints/printer-store';
 import { useArmTracking, type ArmTrackingStatus } from './try-on/useArmTracking';
 import { HandOverlay, type HandOverlayHandle } from './hands/HandOverlay';
 import { handGate, initialSpeedState, parseLossMs, parseMinFps, speedStep, type SpeedState } from './hands/gate';
@@ -42,6 +59,17 @@ const armStatusText: Record<ArmTrackingStatus, string> = {
 
 declare global { interface Window { __forgehandScene?: SceneHandle | null } }
 
+/** `localStorage`, or `null` where the browser refuses access (the printer setting then lasts for the session). */
+function browserStorage(): Storage | null {
+  try { return window.localStorage; } catch { return null; }
+}
+
+/** The notice suffix of a change that also removed joints (a deleted object, a part or face that is gone). */
+function cascadeNotice(before: Workspace, after: Workspace): string {
+  const removed = jointsRemovedBy(before, after);
+  return removed > 0 ? JOINT_NOTICES.cascade(removed) : '';
+}
+
 export default function App() {
   const [prompt, setPrompt] = useState('一個紅色、有四條腿的小桌子');
   const [instruction, setInstruction] = useState('');
@@ -55,6 +83,21 @@ export default function App() {
   const explode = workspace.display.explode;
   const atLimit = workspace.objects.length >= MAX_OBJECTS;
   const [transformMode, setTransformMode] = useState<TransformMode>(null);
+  /** The printer's tolerances: a browser setting, not part of the workspace and never an undo step. */
+  const [printer, setPrinter] = useState(() => loadPrinterProfile(browserStorage()));
+  /** 顯示接合: session state. */
+  const [showJoints, setShowJoints] = useState(true);
+  const [openJointId, setOpenJointId] = useState<string | null>(null);
+  const [mouseJoin, setMouseJoin] = useState<MouseJoinState>({ step: 'off' });
+  /** The mouse join as the click handlers see it: updated in the same call as the state, so two quick clicks never read a stale step. */
+  const mouseJoinRef = useRef<MouseJoinState>({ step: 'off' });
+  const [mouseNotice, setMouseNotice] = useState('');
+  /** A rejected joint change: shown in the 接合 panel, or in the card for a card action. */
+  const [jointError, setJointError] = useState('');
+  const [cardError, setCardError] = useState('');
+  const [printPreview, setPrintPreview] = useState<{ objectId: string; partId: string; status: 'loading' | 'ready'; geometry: BufferGeometry | null } | null>(null);
+  /** Each print preview request takes a number; an answer that arrives after the preview was closed or replaced is dropped. */
+  const printPreviewRequest = useRef(0);
   const [pending, setPending] = useState<Pending | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
@@ -124,6 +167,26 @@ export default function App() {
     objectCount: workspace.objects.length, sceneRef, lossMs, onPick: (objectId, partId) => pick(objectId, partId, false),
   });
   const handDebug = handDebugRequested(window.location.search);
+
+  // Joints (assembly-joints). Everything shown is derived: checks, features and findings come from the workspace and the printer profile.
+  /** Recomputed only when the objects, the joints or the printer profile change. */
+  const kit = useMemo(() => buildKit(workspace, printer), [workspace.objects, workspace.joints, printer]);
+  /** The joint whose card is open; a card whose joint is gone closes. */
+  const cardJointId = openJointId && workspace.joints.some(joint => joint.id === openJointId) ? openJointId : null;
+  const jointRowList = useMemo(() => jointRows(workspace, kit.findings), [workspace.objects, workspace.joints, kit]);
+  const recommendations = useMemo(() => cardJointId ? recommendJoint(workspace, cardJointId, printer) : [], [workspace.objects, workspace.joints, printer, cardJointId]);
+  const cardModel = useMemo(() => cardJointId ? jointCardModel(workspace, cardJointId, kit, recommendations) : null, [workspace.objects, workspace.joints, kit, recommendations, cardJointId]);
+  const marks = useMemo(() => computeMarks(workspace, kit, cardJointId), [workspace.objects, workspace.joints, kit, cardJointId]);
+  /** While a mouse join shows its preview: side b's assembly at the aligned pose, the two faces glowing and the 可以接合 cue. */
+  const joinPreview = useMemo<JoinPreview | null>(() => {
+    if (mouseJoin.step !== 'preview') return null;
+    const poses = previewPoses(workspace, mouseJoin.plan);
+    if (!poses) return null;
+    return { transforms: poses.transforms, glow: glowMarks(workspace, mouseJoin.plan.a, mouseJoin.plan.b), label: poses.label, ready: true };
+  }, [mouseJoin, workspace.objects, workspace.joints]);
+  const printPreviewProp = useMemo(
+    () => printPreview?.status === 'ready' && printPreview.geometry ? { objectId: printPreview.objectId, partId: printPreview.partId, geometry: printPreview.geometry } : null,
+    [printPreview]);
 
   async function refreshService() {
     try {
@@ -337,7 +400,7 @@ export default function App() {
       timingRef.current = { objectId: target.id, startedAt };
       setEditSummary({ changes: describeChanges(target.model, model, changes), explanation: plan.explanation });
       setInstruction('');
-      setMessage('修改已套用，可按「復原」回到上一步。');
+      setMessage(`修改已套用，可按「復原」回到上一步。${cascadeNotice(before, edited)}`);
     } catch (cause) {
       setConflict(null);
       setError(`${cause instanceof EditError ? cause.message : '修改無法套用。'}目前模型未變更。`);
@@ -414,7 +477,7 @@ export default function App() {
       setAdjustError(''); setEditSummary(null); setTiming(null); setRenderError('');
       timingRef.current = null;
       store.dispatch({ type: 'commit', next: after });
-      setMessage(label);
+      setMessage(label + cascadeNotice(before, after));
       return true;
     } catch (cause) {
       setAdjustError(`這個調整未通過資料驗證，未套用。${cause instanceof Error ? cause.message.slice(0, 120) : ''}`);
@@ -440,6 +503,8 @@ export default function App() {
   }
   function pick(objectId: string | null, id: string | null, additive: boolean) {
     if (agentActive) return;
+    // During a mouse join a click chooses a part for the join instead of selecting it (the part list and hand pinches too).
+    if (mouseJoinRef.current.step !== 'off') { stepMouseJoin({ type: 'pick', objectId, partId: id }); return; }
     setAdjustError('');
     const before = store.current();
     const next = pickPart(before, objectId, id, additive);
@@ -464,14 +529,17 @@ export default function App() {
       if (next === before) return;
       setEditSummary(null); setAdjustError('');
       store.dispatch({ type: 'commit', next });
-      setMessage(label);
+      setMessage(label + cascadeNotice(before, next));
     } catch (cause) {
       setObjectError(cause instanceof WorkspaceError ? '這個物件調整未通過驗證，未套用。' : cause instanceof Error ? cause.message : '物件調整失敗，未套用。');
     }
   }
   const renameObjectTo = (id: string, text: string) => commitObjectChange(ws => renameObject(ws, id, text), '已重新命名物件，可按「復原」回到上一步。');
-  const moveObject = (id: string, patch: { position?: ObjectTransform['position']; rotation?: ObjectTransform['rotation'] }) =>
-    commitObjectChange(ws => setTransform(ws, id, patch), '已調整物件位置，可按「復原」回到上一步。');
+  /** An object that is joined to others moves with its whole assembly (one undo step); the notice says how many others moved. */
+  const moveObject = (id: string, patch: { position?: ObjectTransform['position']; rotation?: ObjectTransform['rotation'] }) => {
+    const others = assemblyOf(store.current(), id).length - 1;
+    commitObjectChange(ws => setTransform(ws, id, patch), others > 0 ? JOINT_NOTICES.assemblyMoved(others) : '已調整物件位置，可按「復原」回到上一步。');
+  };
   const deleteObject = (id: string) => commitObjectChange(ws => removeObject(ws, id), '已刪除物件，可按「復原」回到上一步。');
   function setExplodeAmount(amount: number) {
     const before = store.current();
@@ -484,6 +552,108 @@ export default function App() {
     updatePart(id, { position, rotation }, kind === 'rotate' ? '已旋轉零件，可按「復原」回到上一步。' : '已移動零件，可按「復原」回到上一步。');
   }
 
+  // ---- Joints: mouse join, joint changes, material, printer profile and print preview ----
+  useEffect(() => { if (openJointId && !cardJointId) setOpenJointId(null); }, [openJointId, cardJointId]);
+  // Any other change of the workspace (an undo step, undo, redo) or of the printer profile ends a mouse join and closes a print preview.
+  useEffect(() => {
+    stepMouseJoin({ type: 'workspace-changed' });
+    closePrintPreview();
+    setJointError(''); setCardError('');
+  }, [workspace.objects, workspace.joints, printer]);
+  // An agent run starting cancels the mouse join.
+  useEffect(() => { if (agentActive) stepMouseJoin({ type: 'cancel' }); }, [agentActive]);
+
+  function stepMouseJoin(event: MouseJoinEvent) {
+    const result = mouseJoinStep(mouseJoinRef.current, event, store.current());
+    if (result.state !== mouseJoinRef.current) { mouseJoinRef.current = result.state; setMouseJoin(result.state); }
+    setMouseNotice(result.notice ?? '');
+  }
+  function startMouseJoin() {
+    if (agentActive) return;
+    setTransformMode(null); setJointError(''); setCardError('');
+    stepMouseJoin({ type: 'start' });
+  }
+  /** 確認接合: the aligned move and the new joint in one result, so one undo step; the card opens. */
+  function confirmMouseJoin() {
+    const state = mouseJoinRef.current;
+    if (state.step !== 'preview' || agentActive) return;
+    const before = store.current();
+    try {
+      const moves = state.plan.move ? [state.plan.move] : [];
+      const moved = moves.reduce((ws, move) => setTransform(ws, move.objectId, move.transform), before);
+      const joint = newJoint(moved, { id: crypto.randomUUID(), createdAt: new Date().toISOString(), a: state.plan.a, b: state.plan.b }, printer);
+      const next = joinObjects(before, { moves, joint });
+      setEditSummary(null); setAdjustError(''); setJointError(''); setCardError('');
+      mouseJoinRef.current = { step: 'off' }; setMouseJoin({ step: 'off' }); setMouseNotice('');
+      store.dispatch({ type: 'commit', next });
+      setOpenJointId(joint.id);
+      const names = jointSideNames(next, joint);
+      setMessage(JOINT_NOTICES.joined(names.a, names.b));
+    } catch (cause) {
+      setJointError(cause instanceof WorkspaceError ? cause.message : JOINT_NOTICES.rejected);
+    }
+  }
+  /** One joint change: one commit and a notice, with the cascade suffix when it removed joints. A rejected change is reported through `report`. */
+  function commitJointChange(change: (before: Workspace) => Workspace, label: string, report: (message: string) => void): boolean {
+    if (agentActive) return false;
+    const before = store.current();
+    try {
+      const next = change(before);
+      report('');
+      if (next === before) return false;
+      setEditSummary(null); setAdjustError('');
+      store.dispatch({ type: 'commit', next });
+      setMessage(label + cascadeNotice(before, next));
+      return true;
+    } catch (cause) {
+      report(cause instanceof WorkspaceError ? cause.message : JOINT_NOTICES.rejected);
+      return false;
+    }
+  }
+  function changeJoint(id: string, patchFor: (ws: Workspace, joint: Joint) => JointPatch, label: string) {
+    commitJointChange(ws => {
+      const joint = ws.joints.find(candidate => candidate.id === id);
+      if (!joint) throw new WorkspaceError('UNKNOWN_JOINT');
+      return updateJoint(ws, id, patchFor(ws, joint));
+    }, label, setCardError);
+  }
+  function removeJointById(id: string) {
+    if (commitJointChange(ws => removeJoint(ws, id), JOINT_NOTICES.removed, setCardError)) setOpenJointId(null);
+  }
+  const setObjectMaterial = (id: string, material: MaterialId | null) => commitObjectChange(ws => setMaterial(ws, id, material), JOINT_NOTICES.material);
+  function changePrinter(next: PrinterProfile) {
+    setPrinter(next);
+    savePrinterProfile(browserStorage(), next);
+  }
+  function closePrintPreview() {
+    printPreviewRequest.current++;
+    setPrintPreview(null);
+  }
+  /** 預覽「…」列印件: builds the printable solid of one part on demand (the CSG library loads on first use). A second press closes it. */
+  async function togglePrintPreview(target: { objectId: string; partId: string }) {
+    if (printPreview?.objectId === target.objectId && printPreview.partId === target.partId) { closePrintPreview(); return; }
+    const request = ++printPreviewRequest.current;
+    setPrintPreview({ ...target, status: 'loading', geometry: null });
+    try {
+      const ws = store.current();
+      const part = findObject(ws, target.objectId)?.model.parts.find(candidate => candidate.id === target.partId);
+      if (!part) throw new Error('missing part');
+      const current = buildKit(ws, printer);
+      const features = current.features.parts.get(`${target.objectId}:${target.partId}`) ?? [];
+      // Features of a joint with an error are left out of the preview, like they will be in the export.
+      const skip = new Set(features.filter(feature => current.findings.get(feature.jointId)?.some(finding => finding.severity === 'error')).map(feature => feature.id));
+      const { printablePart, toBufferGeometry } = await import('./print/printable');
+      const result = await printablePart(part, features, { skip });
+      if (request !== printPreviewRequest.current) return;
+      setPrintPreview({ ...target, status: 'ready', geometry: toBufferGeometry(result.mesh) });
+    } catch {
+      if (request !== printPreviewRequest.current) return;
+      setPrintPreview(null);
+      setCardError(JOINT_NOTICES.previewFailed);
+    }
+  }
+  const previewState: PrintPreviewState | null = printPreview ? { objectId: printPreview.objectId, partId: printPreview.partId, status: printPreview.status } : null;
+
   // Keyboard shortcuts never fire while typing in a field.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -493,7 +663,11 @@ export default function App() {
       const key = event.key.toLowerCase();
       if ((event.ctrlKey || event.metaKey) && key === 'z') { event.preventDefault(); if (event.shiftKey) redo(); else undo(); }
       else if ((event.ctrlKey || event.metaKey) && key === 'y') { event.preventDefault(); redo(); }
-      else if (event.key === 'Escape') { selectInActive([]); setTransformMode(null); }
+      else if (event.key === 'Escape') {
+        // Esc first puts a running mouse join away; only then does it clear the selection.
+        if (mouseJoinRef.current.step !== 'off') stepMouseJoin({ type: 'cancel' });
+        else { selectInActive([]); setTransformMode(null); }
+      }
       else if (event.key === 'Delete' && selected.length) { event.preventDefault(); removeSelected(); }
     };
     window.addEventListener('keydown', handler);
@@ -523,7 +697,8 @@ export default function App() {
         <div className={`viewport ${contrast ? 'high-contrast' : ''}`} data-testid="viewport">
           <video ref={videoRef} muted playsInline autoPlay className={`camera-video ${camera === 'on' && !cameraHidden ? 'visible' : ''} ${mirrored ? 'mirrored' : ''}`} data-mirrored={mirrored} data-image-hidden={cameraHidden} aria-label="即時攝影機背景" />
           <div className="viewport-shade" />
-          <SceneViewport ref={sceneRef} objects={workspace.objects} activeObjectId={workspace.activeObjectId} selectedIds={selected} transformMode={agentActive ? null : transformMode} explode={explode}
+          <SceneViewport ref={sceneRef} objects={workspace.objects} activeObjectId={workspace.activeObjectId} selectedIds={selected} transformMode={agentActive || mouseJoin.step !== 'off' ? null : transformMode} explode={explode}
+            joints={workspace.joints} marks={marks} showJoints={showJoints} joinPreview={joinPreview} printPreview={printPreviewProp}
             tryOn={tryOnActive ? armTracking.sample : undefined}
             onPick={pick} onTransform={onTransform}
             onError={message => {
@@ -595,7 +770,23 @@ export default function App() {
           <div className="service-status"><span className={`status-dot ${service?.configured ? 'connected' : 'unavailable'}`} /><div><strong>{service ? providerLabel(service.provider) : '本機服務未連線'}</strong><span>{service?.configured ? service.model : service?.reason || '尚未設定，請依 README 準備登入或金鑰。'}</span></div><button className="text-button" onClick={() => void refreshService()}>重新檢查</button></div><button className="text-button demo-link" onClick={loadDemo} disabled={agentActive || atLimit}>載入示範模型 <span>非 AI 生成</span></button>
         </section>
         {active && <ObjectPanel objects={workspace.objects} activeObjectId={workspace.activeObjectId} disabled={agentActive} error={objectError}
-          onActivate={activateObject} onRename={renameObjectTo} onTransform={moveObject} onRemove={deleteObject} />}
+          onActivate={activateObject} onRename={renameObjectTo} onTransform={moveObject} onRemove={deleteObject} onMaterial={setObjectMaterial} />}
+        {active && <JointPanel rows={jointRowList} showJoints={showJoints} mouseJoin={mouseJoin} mouseNotice={mouseNotice} error={jointError} disabled={agentActive}
+          openJointId={cardJointId} onToggleShow={() => setShowJoints(on => !on)} onOpen={id => { setOpenJointId(id); setCardError(''); }}
+          onStart={startMouseJoin} onConfirmJoin={confirmMouseJoin} onNextPair={() => stepMouseJoin({ type: 'next-pair' })} onCancelJoin={() => stepMouseJoin({ type: 'cancel' })}>
+          {cardModel && cardJointId && <JointCard model={cardModel} disabled={agentActive || mouseJoin.step !== 'off'} askDisabled={agentActive || Boolean(busy)} error={cardError} preview={previewState}
+            onNeeds={change => changeJoint(cardJointId, (ws, joint) => onNeeds(ws, joint, change, printer), JOINT_NOTICES.method)}
+            onMethod={kind => changeJoint(cardJointId, (ws, joint) => onMethod(joint, kind, recommendJoint(ws, cardJointId, printer)), JOINT_NOTICES.method)}
+            onParam={param => changeJoint(cardJointId, (_ws, joint) => onParam(joint, param), JOINT_NOTICES.method)}
+            onConfirm={() => changeJoint(cardJointId, () => onConfirm(), JOINT_NOTICES.confirmed)}
+            onUseRecommendation={() => changeJoint(cardJointId, ws => onRecommendation(recommendJoint(ws, cardJointId, printer)[0]!), JOINT_NOTICES.method)}
+            onRealign={() => commitJointChange(ws => realignJoint(ws, cardJointId), JOINT_NOTICES.realigned, setCardError)}
+            onPreview={target => void togglePrintPreview(target)}
+            onAskAgent={() => { stepMouseJoin({ type: 'cancel' }); void agent.run(cardModel.actions.askAgent); }}
+            onRemove={() => removeJointById(cardJointId)}
+            onClose={() => { setOpenJointId(null); setCardError(''); }} />}
+        </JointPanel>}
+        {active && <PrinterPanel profile={printer} onChange={changePrinter} />}
         {active && <section className="panel parts-panel" aria-label="零件選取與調整">
           <div className="panel-heading"><span className="eyebrow">SELECT & ADJUST</span><span className="tag">{active.model.parts.length} 件</span></div>
           <h2>零件</h2>

@@ -2,6 +2,8 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { localFace } from '../../shared/contact';
+import type { FaceId, Joint } from '../../shared/joint';
 import type { ModelSpec } from '../../shared/model';
 import type { ObjectTransform } from '../../shared/workspace';
 import type { ArmSample } from '../try-on/arm-pose';
@@ -11,6 +13,7 @@ import type { GrabSession, OrbitSession } from '../hands/controller';
 import type { Point } from '../hands/types';
 import { buildModel, disposeObject, modelBounds, objectsBounds } from './geometry';
 import { createGrabSession, createOrbitSession, grabStillValid, type LiveGrab } from './hand-sessions';
+import { buildPartMarks, markId, markKey, type PartMarks } from './joint-marks';
 import { planSceneSync, type SceneSyncPlan } from './scene-sync';
 import { applyPartStyle, hologramPart } from './style';
 
@@ -21,6 +24,8 @@ export interface SceneHandle {
   reset(): void; zoomIn(): void; zoomOut(): void;
   /** Viewport client coordinates of a part's centre (used by tests and tooling); `objectId` defaults to the active object. */
   projectPart(id: string, objectId?: string): { x: number; y: number } | null;
+  /** Viewport client coordinates of the centre of a part's contact face (used by tests and tooling), or null for an unknown part or a face that is not a contact face. */
+  projectFace(objectId: string, partId: string, face: FaceId): { x: number; y: number } | null;
   /** The nearest part under a client point, or null (also for a point outside the viewport). Used by hand control for hover and grabbing. */
   hitTest(point: Point): { objectId: string; partId: string; name: string; objectName: string; hit: Vector } | null;
   /** Starts moving a part by hand; null while the exploded view is shown, the mouse or the gizmo is busy, or the part is unknown. */
@@ -41,7 +46,27 @@ interface Props {
   onTransform?: (objectId: string, partId: string, position: Vector, rotation: Vector, kind: 'translate' | 'rotate') => void;
   onError?: (message: string) => void;
   onReady?: (info: { objects: number; parts: number; renderMs: number }) => void;
+  /** The workspace's joints; only written to data attributes here (the drawings come from `marks`). */
+  joints?: readonly Joint[];
+  /** One entry per joint side: outline, features and state, attached to the part's scene node. */
+  marks?: readonly PartMarks[];
+  /** 顯示接合: false hides every joint drawing. */
+  showJoints?: boolean;
+  /** A mouse or hand join in progress: objects shown at these poses (stored transforms untouched), glowing faces, and the 可以接合 cue. */
+  joinPreview?: JoinPreview | null;
+  /** The printable solid of one part, in millimetres. The viewport owns the geometry from now on and disposes it when it is replaced or cleared. */
+  printPreview?: PrintPreview | null;
 }
+export interface JoinPreview {
+  transforms: ReadonlyArray<{ objectId: string; transform: ObjectTransform }>;
+  glow: readonly PartMarks[];
+  /** World position of the 可以接合 label, or null for none. */
+  label: Vector | null;
+  ready: boolean;
+}
+export interface PrintPreview { objectId: string; partId: string; geometry: THREE.BufferGeometry }
+/** A joint drawing attached to a part node. */
+interface MarkNode { key: string; parent: THREE.Object3D; group: THREE.Group }
 /** Per-part exploded-view motion in the part's parent frame, rebuilt with each model. */
 interface ExplosionNode { node: THREE.Object3D; base: THREE.Vector3; offset: THREE.Vector3; depth: number }
 /** One object in the scene: `root` carries the object transform, `built` is the model's geometry inside it. */
@@ -77,6 +102,14 @@ interface View {
   viewChanged: boolean;
   /** Amount currently shown on the active object; eases toward the `explode` prop. */
   explodeShown: number;
+  /** Joint drawings and join-preview glows by mark id, with the part node each is attached to. */
+  markNodes: Map<string, MarkNode>;
+  /** Objects whose root is shown at a previewed pose. */
+  previewed: Set<string>;
+  /** The 可以接合 sprite, while shown. */
+  cue: THREE.Sprite | null;
+  /** The printable mesh of the print preview and the surface it hides. */
+  printed: { objectId: string; partId: string; group: THREE.Group; hidden: THREE.Object3D | null } | null;
   reset: () => void;
   invalidate: () => void;
 }
@@ -168,6 +201,39 @@ function hitsAt(current: View, point: Point): SurfaceHit[] {
   return hits;
 }
 
+/** The 可以接合 cue of a join preview: a text sprite that is always drawn on top. */
+function createCue(): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const context = canvas.getContext('2d');
+  if (context) {
+    context.fillStyle = 'rgba(8, 21, 32, 0.88)';
+    context.fillRect(4, 4, 504, 120);
+    context.strokeStyle = '#e6c2ff';
+    context.lineWidth = 6;
+    context.strokeRect(4, 4, 504, 120);
+    context.fillStyle = '#f2dcff';
+    context.font = 'bold 68px "Microsoft JhengHei", "Noto Sans TC", "PingFang TC", sans-serif';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText('可以接合', 256, 68);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false }));
+  sprite.name = 'join-cue';
+  sprite.renderOrder = 10;
+  sprite.raycast = () => {};
+  return sprite;
+}
+
+function disposeCue(sprite: THREE.Sprite): void {
+  sprite.material.map?.dispose();
+  sprite.material.dispose();
+  sprite.removeFromParent();
+}
+
 const NO_CHANGES: Pick<SceneSyncPlan, 'build' | 'rebuild' | 'move' | 'remove'> = { build: [], rebuild: [], move: [], remove: [] };
 
 export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewport(props, ref) {
@@ -194,6 +260,18 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       (surface ?? target).updateWorldMatrix(true, true);
       const box = new THREE.Box3().setFromObject(surface ?? target);
       const point = box.getCenter(new THREE.Vector3()).project(current.camera);
+      const rect = current.renderer.domElement.getBoundingClientRect();
+      return { x: rect.left + (point.x + 1) / 2 * rect.width, y: rect.top + (1 - point.y) / 2 * rect.height };
+    },
+    projectFace(objectId, partId, face) {
+      const current = view.current;
+      const entry = current?.entries.get(objectId);
+      const node = entry?.parts.get(partId);
+      const part = entry?.model.parts.find(candidate => candidate.id === partId);
+      const local = part ? localFace(part, face) : null;
+      if (!current || !node || !local) return null;
+      node.updateWorldMatrix(true, false);
+      const point = node.localToWorld(local.centre.clone()).project(current.camera);
       const rect = current.renderer.domElement.getBoundingClientRect();
       return { x: rect.left + (point.x + 1) / 2 * rect.width, y: rect.top + (1 - point.y) / 2 * rect.height };
     },
@@ -333,6 +411,109 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
     data.objectJson = JSON.stringify([...current.entries.values()].map(entry => [entry.id, entry.transform.position, entry.transform.rotation]));
   }
 
+  function writeJointAttributes() {
+    const current = view.current;
+    if (!current) return;
+    const joints = callbacks.current.joints ?? [];
+    current.renderer.domElement.dataset.jointCount = String(joints.length);
+    current.renderer.domElement.dataset.jointsJson = JSON.stringify(joints);
+  }
+
+  /** Brings the joint drawings and the join-preview glows to the requested marks: builds, replaces and removes only what changed. */
+  function syncMarks() {
+    const current = view.current;
+    if (!current) return;
+    const { marks = [], showJoints = true, joinPreview } = callbacks.current;
+    const wanted = new Map<string, PartMarks>();
+    if (showJoints) for (const item of marks) wanted.set(markId(item), item);
+    for (const glow of joinPreview?.glow ?? []) wanted.set(markId(glow), glow);
+    for (const [id, node] of current.markNodes) {
+      const item = wanted.get(id);
+      const part = item ? current.entries.get(item.objectId)?.parts.get(item.partId) : undefined;
+      if (item && part && node.parent === part && node.key === markKey(item)) continue;
+      disposeObject(node.group);
+      current.markNodes.delete(id);
+    }
+    for (const [id, item] of wanted) {
+      if (current.markNodes.has(id)) continue;
+      const part = current.entries.get(item.objectId)?.parts.get(item.partId);
+      if (!part) continue;
+      const group = buildPartMarks(item);
+      part.add(group);
+      current.markNodes.set(id, { key: markKey(item), parent: part, group });
+    }
+    current.invalidate();
+  }
+
+  /** Shows the objects of a join preview at their previewed poses and the cue; puts every other root back at its stored transform. */
+  function applyJoinPreview() {
+    const current = view.current;
+    if (!current) return;
+    const preview = callbacks.current.joinPreview ?? null;
+    const poses = new Map((preview?.transforms ?? []).map(item => [item.objectId, item.transform] as const));
+    for (const id of [...current.previewed]) {
+      if (poses.has(id)) continue;
+      const entry = current.entries.get(id);
+      if (entry) placeRoot(entry.root, entry.transform);
+      current.previewed.delete(id);
+    }
+    for (const [id, transform] of poses) {
+      const entry = current.entries.get(id);
+      if (!entry) continue;
+      placeRoot(entry.root, transform);
+      current.previewed.add(id);
+    }
+    const label = preview?.ready ? preview.label : null;
+    if (label && current.entries.size > 0) {
+      const cue = current.cue ?? (current.cue = createCue());
+      const { radius } = objectsBounds([...current.entries.values()].map(entry => entry.root));
+      cue.position.set(label.x, label.y, label.z);
+      cue.scale.set(radius * 0.9, radius * 0.225, 1);
+      if (!cue.parent) current.scene.add(cue);
+    } else if (current.cue) {
+      disposeCue(current.cue);
+      current.cue = null;
+    }
+    current.renderer.domElement.dataset.snap = preview?.ready ? 'ready' : 'none';
+    current.invalidate();
+  }
+
+  /** Replaces a part's display with its printable solid while a print preview is set. */
+  function applyPrintPreview() {
+    const current = view.current;
+    if (!current) return;
+    const wanted = callbacks.current.printPreview ?? null;
+    const entry = wanted ? current.entries.get(wanted.objectId) : undefined;
+    const node = wanted ? entry?.parts.get(wanted.partId) : undefined;
+    const shown = current.printed;
+    if (shown && wanted && node && shown.group.parent === node && shown.group.userData.source === wanted.geometry) return;
+    if (shown) {
+      if (shown.hidden) shown.hidden.visible = true;
+      disposeObject(shown.group);
+      current.printed = null;
+    }
+    const part = entry?.model.parts.find(candidate => candidate.id === wanted?.partId);
+    if (wanted && node && part) {
+      // The hologram style takes the geometry over; it is disposed with the group.
+      const group = hologramPart(wanted.geometry, part);
+      group.name = 'print-preview';
+      group.userData.source = wanted.geometry;
+      group.scale.setScalar(0.001);
+      group.traverse(object => {
+        object.raycast = () => {};
+        if (object.name.endsWith(':surface')) object.name = 'print-preview:body';
+      });
+      const hidden = node.children.find(child => typeof child.userData.partId !== 'string' && child !== group && !child.userData.jointMarks) ?? null;
+      if (hidden) hidden.visible = false;
+      node.add(group);
+      current.printed = { objectId: wanted.objectId, partId: wanted.partId, group, hidden };
+    } else if (wanted) {
+      wanted.geometry.dispose();
+    }
+    current.renderer.domElement.dataset.printPreview = current.printed ? `${current.printed.objectId}:${current.printed.partId}` : '';
+    current.invalidate();
+  }
+
   /** Brings the scene to the requested list: builds, rebuilds, moves and removes only what changed. */
   function sync(next: readonly SceneObjectInput[], activeId: string | null) {
     const current = view.current;
@@ -412,6 +593,10 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
     }
     writeAttributes();
     syncSelection();
+    // Rebuilt nodes lose their drawings, previews and hidden surfaces: put them back.
+    syncMarks();
+    applyJoinPreview();
+    applyPrintPreview();
     if (ready) callbacks.current.onReady?.(ready);
   }
 
@@ -436,6 +621,10 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
     renderer.domElement.dataset.objectCount = '0';
     renderer.domElement.dataset.activeObjectId = '';
     renderer.domElement.dataset.objectJson = '[]';
+    renderer.domElement.dataset.jointCount = '0';
+    renderer.domElement.dataset.jointsJson = '[]';
+    renderer.domElement.dataset.snap = 'none';
+    renderer.domElement.dataset.printPreview = '';
     renderer.domElement.style.cssText = 'width:100%;height:100%;display:block;touch-action:none;outline:none';
     renderer.domElement.tabIndex = 0;
     host.appendChild(renderer.domElement);
@@ -481,7 +670,8 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       callbacks.current.onTransform?.(objectId, object.userData.partId, position, rotation, gizmo.mode === 'rotate' ? 'rotate' : 'translate');
     });
     const current: View = { scene, camera, controls, gizmo, renderer, objects: objectsGroup, entries: new Map(), surfaces: [], raycaster: new THREE.Raycaster(),
-      mouseBusy: false, grab: null, activeId: null, viewChanged: false, explodeShown: 0, reset: () => fit(), invalidate };
+      mouseBusy: false, grab: null, activeId: null, viewChanged: false, explodeShown: 0,
+      markNodes: new Map(), previewed: new Set(), cue: null, printed: null, reset: () => fit(), invalidate };
     renderer.domElement.dataset.explode = '0.000';
     view.current = current;
     const resize = () => {
@@ -572,6 +762,7 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       gizmo.dispose();
       controls.dispose();
       armPreview?.dispose();
+      if (current.cue) disposeCue(current.cue);
       disposeObject(scene);
       renderer.dispose();
       renderer.forceContextLoss();
@@ -582,6 +773,10 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
 
   useEffect(() => { sync(objects, activeObjectId); }, [objects, activeObjectId]);
   useEffect(() => { syncSelection(); }, [selectedIds.join(','), transformMode, explode > 0]);
+  useEffect(() => { writeJointAttributes(); }, [props.joints]);
+  useEffect(() => { syncMarks(); }, [props.marks, props.showJoints, props.joinPreview]);
+  useEffect(() => { applyJoinPreview(); }, [props.joinPreview]);
+  useEffect(() => { applyPrintPreview(); }, [props.printPreview]);
 
   return <div ref={container} data-testid="scene-viewport" style={{ position: 'absolute', inset: 0 }} />;
 });

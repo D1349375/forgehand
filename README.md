@@ -48,6 +48,16 @@ Turn the camera on (開啟攝影機) and move your hands in front of it. Hand co
 
 Add `?hands=debug` to the address to show tracking numbers (delegate, frames per second, recognition time, pinch distance in mm) and gesture counters (drags, commits, cancels, losses). `?hands-min-fps=<number>` changes the speed threshold for slow machines (0 switches the speed check off).
 
+## Assembly joints
+
+Objects in the workspace can be joined, so a design says how its parts are fixed together and what to buy and print.
+
+- **Four fixing methods** suit printed prototypes: screws with heat-set inserts (M2 or M3), disc magnets, dowel pins (press fit on both sides, or press on one side and sliding on the other) and glue (CA, two-part epoxy, or solvent for ABS). Sizes come from published standards and datasheets (ISO 4762 screws, ISO 273 clearance holes, ISO 8734 pins, CNC Kitchen inserts), listed with their sources in `shared/standard-parts.ts`.
+- **Join with the mouse**: press 新增接合, click a part of one object, then a part of another. The faces that face each other are aligned and the cue 可以接合 shows. 換一組面 steps through the other facing faces, 確認接合 creates the joint (one undo step) and opens its card, and 取消接合 or Esc puts everything back. Joined objects form an assembly and move together, whether you move one in the 物件 panel or with the agent.
+- **The joint card** lists the recommendation with its reasons. Set 負重 (load) and 拆裝 (how often it is taken apart) and the method follows, until you choose a method yourself (確認方式). The card shows the derived parts (screw length, insert and hole sizes), the checks (for example 已分開, with 重新對齊 to bring the faces back together) and 預覽「…」列印件, which builds the printable part with its holes, pockets and bosses cut. Nothing is stored in a joint except your choices: holes and lengths follow the part dimensions and the printer profile.
+- **Materials**: each object has a 材料 (PLA, PETG, ABS, TPU, nylon, resin, aluminium or steel). It decides which glue and which method the recommendation prefers. A part marked as an internal component is treated as a bought part and never gets holes.
+- **Printer profile**: 列印設定 holds the tolerances of your printer in millimetres (sliding and press fit per side, hole and depth compensation, extra clearance for PETG). The values are starting points. Print a tolerance test piece first, then adjust them; the holes, markers and checks follow at once. The profile is stored in your browser, not in the design.
+
 ## Run it locally
 
 Requires Node.js 22.12+ and one model back end: a signed-in [Codex CLI](https://github.com/openai/codex) (default), Claude Code CLI (`MODEL_PROVIDER=claude`), or an OpenAI API key (`MODEL_PROVIDER=openai`).

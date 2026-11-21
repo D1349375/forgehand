@@ -1,4 +1,6 @@
+import { MaterialIdSchema, type MaterialId } from '../../shared/materials';
 import { MAX_OBJECTS, type ObjectTransform, type SceneObject } from '../../shared/workspace';
+import { MATERIAL_OPTIONS } from '../joints/labels';
 import { NumberField } from '../ui/NumberField';
 import { OBJECT_NAME_MAX, objectRows } from './object-panel';
 
@@ -16,10 +18,12 @@ interface Props {
   onRename: (id: string, text: string) => void;
   onRemove: (id: string) => void;
   onTransform: (id: string, patch: { position?: ObjectTransform['position']; rotation?: ObjectTransform['rotation'] }) => void;
+  /** The 材料 select: `null` is 未指定. */
+  onMaterial: (id: string, material: MaterialId | null) => void;
 }
 
-/** The 物件 panel: switch, rename, move and delete the objects of the workspace. */
-export function ObjectPanel({ objects, activeObjectId, disabled, error, onActivate, onRename, onRemove, onTransform }: Props) {
+/** The 物件 panel: switch, rename, set the material, move and delete the objects of the workspace. */
+export function ObjectPanel({ objects, activeObjectId, disabled, error, onActivate, onRename, onRemove, onTransform, onMaterial }: Props) {
   const rows = objectRows({ objects, activeObjectId });
   const active = objects.find(object => object.id === activeObjectId) ?? null;
   const vector = (label: string, key: 'position' | 'rotation', object: SceneObject) => {
@@ -41,6 +45,9 @@ export function ObjectPanel({ objects, activeObjectId, disabled, error, onActiva
       <label className="text-field"><span>名稱</span><input key={`name-${active.id}-${active.model.name}`} defaultValue={active.model.name} aria-label="物件名稱" maxLength={OBJECT_NAME_MAX} disabled={disabled}
         onBlur={event => { onRename(active.id, event.target.value); event.target.value = active.model.name; }}
         onKeyDown={event => { if (event.key === 'Enter') (event.target as HTMLInputElement).blur(); }} /></label>
+      <label className="text-field"><span>材料</span><select aria-label="材料" value={active.material ?? ''} disabled={disabled}
+        onChange={event => { const parsed = MaterialIdSchema.safeParse(event.target.value); onMaterial(active.id, parsed.success ? parsed.data : null); }}>
+        {MATERIAL_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
       {vector('物件位置', 'position', active)}
       {vector('物件角度', 'rotation', active)}
       <div className="button-group editor-actions"><button type="button" className="button danger" disabled={disabled} onClick={() => onRemove(active.id)}>刪除物件</button></div>

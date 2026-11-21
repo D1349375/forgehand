@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { AgentTurn } from '../../shared/agent';
 import { applyStateEvent, type StateEffects } from './apply-state';
 import { parseAgentEvent } from './events';
@@ -27,6 +27,8 @@ const CONNECTION_LOST = '連線在代理完成前中斷。已套用的變更會�
  */
 export function useAgentRun(options: AgentRunOptions) {
   const [state, dispatch] = useReducer(agentRunReducer, initialAgentRunState);
+  /** The instruction of the latest run, whoever started it (the agent panel's form or another control such as 請代理建議). */
+  const [lastInstruction, setLastInstruction] = useState('');
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const controllerRef = useRef<AbortController | null>(null);
@@ -38,6 +40,7 @@ export function useAgentRun(options: AgentRunOptions) {
     const text = instruction.trim();
     if (!text || runningRef.current) return;
     runningRef.current = true;
+    setLastInstruction(text);
     const controller = new AbortController();
     controllerRef.current = controller;
     const { signal } = controller;
@@ -110,6 +113,7 @@ export function useAgentRun(options: AgentRunOptions) {
     run,
     cancel,
     active: state.status === 'running',
+    instruction: lastInstruction,
     status: state.status,
     log: state.log,
     reply: state.reply,

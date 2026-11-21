@@ -9,5 +9,8 @@ export default defineConfig({
     // page reloads and unnecessary work on this low-memory development host.
     watch: { ignored: ['**/.npm-cache/**', '**/artifacts/**', '**/test-results/**', '**/playwright-report/**', '**/coverage/**'] },
   },
+  // manifold-3d is imported only on demand (the print preview). Without this, the dev server discovers it on the first
+  // preview, re-optimises its dependencies and reloads the page, which wipes the workspace. Dev only; builds are unaffected.
+  optimizeDeps: { include: ['manifold-3d'] },
   build: { chunkSizeWarningLimit: 700 },
 });
