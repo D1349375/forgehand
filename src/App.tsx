@@ -15,6 +15,7 @@ import {
   selectParts, setActiveObject, setExplode as setWorkspaceExplode, setMaterial, setTransform, updateJoint, type ObjectTransform, type SceneObject, type Workspace,
 } from '../shared/workspace';
 import { SceneViewport, type JoinPreview, type SceneHandle, type TransformMode, type Vector } from './scene/SceneViewport';
+import type { AssembleResult } from './scene/hand-sessions';
 import { computeMarks, glowMarks } from './scene/joint-marks';
 import { JointCard, type PrintPreviewState } from './joints/JointCard';
 import { JointPanel } from './joints/JointPanel';
@@ -60,10 +61,10 @@ const armStatusText: Record<ArmTrackingStatus, string> = {
 
 declare global { interface Window { __forgehandScene?: SceneHandle | null } }
 
-/** `localStorage`, or `null` where the browser refuses access (the printer setting then lasts for the session). */
 /** The export dialog and everything behind it (fflate, the CSG module, the GLB writer) load only when the dialog first opens. */
 const ExportDialog = lazy(() => import('./export/ExportDialog'));
 
+/** `localStorage`, or `null` where the browser refuses access (the printer setting then lasts for the session). */
 function browserStorage(): Storage | null {
   try { return window.localStorage; } catch { return null; }
 }
@@ -89,9 +90,9 @@ export default function App() {
   const [transformMode, setTransformMode] = useState<TransformMode>(null);
   /** The printer's tolerances: a browser setting, not part of the workspace and never an undo step. */
   const [printer, setPrinter] = useState(() => loadPrinterProfile(browserStorage()));
-  /** 顯示接合: session state. */
   /** 匯出套件: the open export dialog and its scope. Session state, never part of the workspace and never an undo step. */
   const [exportRequest, setExportRequest] = useState<ExportScope | null>(null);
+  /** 顯示接合: session state. */
   const [showJoints, setShowJoints] = useState(true);
   const [openJointId, setOpenJointId] = useState<string | null>(null);
   const [mouseJoin, setMouseJoin] = useState<MouseJoinState>({ step: 'off' });
@@ -173,6 +174,8 @@ export default function App() {
     objectCount: workspace.objects.length, sceneRef, lossMs, onPick: (objectId, partId) => pick(objectId, partId, false),
     // A fist holds a whole object: it activates it first, reads and sets the explode amount of the pull (display state, no undo step).
     onActivate: activateObject, explodeAmount: () => store.current().display.explode, setExplode: setExplodeAmount,
+    // A second fist cannot join an object that is already in the held object's assembly.
+    sameAssembly: (a, b) => assemblyOf(store.current(), a).includes(b),
   });
   const handDebug = handDebugRequested(window.location.search);
 
@@ -572,6 +575,48 @@ export default function App() {
     if (agentActive) return;
     moveObject(objectId, { position });
   }
+  /**
+   * Two fists let go (assembly-joints Task 6). A ready snap becomes one `joinObjects` (the moves, the new joint and its card, as one undo
+   * step); otherwise the moves of both objects are one commit. Returns whether it was applied: when not, the scene puts the objects back.
+   */
+  function onAssemble(result: AssembleResult): boolean {
+    if (agentActive) return false;
+    const before = store.current();
+    try {
+      const moves: Array<{ objectId: string; transform: ObjectTransform }> = [];
+      const startOf = (id: string) => findObject(before, id)?.transform;
+      const a = startOf(result.aId);
+      const b = startOf(result.bId);
+      if (!a || !b) return false;
+      if (result.aPosition) moves.push({ objectId: result.aId, transform: { position: result.aPosition, rotation: a.rotation } });
+      if (result.kind === 'join') {
+        moves.push({ objectId: result.bId, transform: result.bTransform });
+      } else if (result.bPosition) {
+        moves.push({ objectId: result.bId, transform: { position: result.bPosition, rotation: b.rotation } });
+      }
+      setEditSummary(null); setAdjustError(''); setObjectError(''); setJointError(''); setCardError('');
+      if (result.kind === 'join') {
+        const moved = moves.reduce((ws, move) => setTransform(ws, move.objectId, move.transform), before);
+        const joint = newJoint(moved, { id: crypto.randomUUID(), createdAt: new Date().toISOString(), a: result.a, b: result.b }, printer);
+        const next = joinObjects(before, { moves, joint });
+        store.dispatch({ type: 'commit', next });
+        setOpenJointId(joint.id);
+        const names = jointSideNames(next, joint);
+        setMessage(JOINT_NOTICES.joined(names.a, names.b));
+        return true;
+      }
+      if (moves.length === 0) return false;
+      const next = moves.reduce((ws, move) => setTransform(ws, move.objectId, move.transform), before);
+      if (next === before) return false;
+      store.dispatch({ type: 'commit', next });
+      const others = moves.reduce((count, move) => count + assemblyOf(before, move.objectId).length - 1, 0);
+      setMessage(others > 0 ? JOINT_NOTICES.assemblyMoved(others) : '已調整物件位置，可按「復原」回到上一步。');
+      return true;
+    } catch (cause) {
+      setObjectError(cause instanceof WorkspaceError ? '這個物件調整未通過驗證，未套用。' : '物件調整失敗，未套用。');
+      return false;
+    }
+  }
 
   // ---- Joints: mouse join, joint changes, material, printer profile and print preview ----
   useEffect(() => { if (openJointId && !cardJointId) setOpenJointId(null); }, [openJointId, cardJointId]);
@@ -721,7 +766,7 @@ export default function App() {
           <SceneViewport ref={sceneRef} objects={workspace.objects} activeObjectId={workspace.activeObjectId} selectedIds={selected} transformMode={agentActive || mouseJoin.step !== 'off' ? null : transformMode} explode={explode}
             joints={workspace.joints} marks={marks} showJoints={showJoints} joinPreview={joinPreview} printPreview={printPreviewProp}
             tryOn={tryOnActive ? armTracking.sample : undefined}
-            onPick={pick} onTransform={onTransform} onObjectMove={onObjectMove}
+            onPick={pick} onTransform={onTransform} onObjectMove={onObjectMove} workspace={workspace} onAssemble={onAssemble}
             onError={message => {
               setRenderError(message); setMessage('3D 顯示未完成，已保留上一個成功模型。');
               // Fall back to the last workspace that rendered (an empty one if nothing did yet).
@@ -768,6 +813,9 @@ export default function App() {
         <div className="stage-note"><span className="note-index">01 /</span><p>青藍輪廓呈現零件邊界，琥珀色輪廓表示已選取。攝影機只在本機顯示；生成與修改服務接收你的文字與目前模型資料。</p></div>
       </section>
       <aside className="control-column">
+        {exportRequest && <Suspense fallback={<p className="notice" role="status">正在載入匯出功能…</p>}>
+          <ExportDialog workspace={workspace} printer={printer} request={exportRequest} viewDirection={() => sceneRef.current?.viewDirection() ?? null} onClose={() => setExportRequest(null)} />
+        </Suspense>}
         <AgentPanel agent={agent} disabled={Boolean(busy)} />
         <section className="panel prompt-panel">
           {active && <div className="mode-switch" role="tablist" aria-label="文字用途"><button role="tab" aria-selected={editing} className={editing ? 'active' : ''} onClick={() => setMode('edit')}>修改目前模型</button><button role="tab" aria-selected={!editing} className={!editing ? 'active' : ''} onClick={() => setMode('create')}>生成新物件</button></div>}
@@ -813,9 +861,6 @@ export default function App() {
           <h2>零件</h2>
           <ul className="part-picker" aria-label="零件清單">{active.model.parts.map(part => <li key={part.id}><button type="button" aria-pressed={selected.includes(part.id)} disabled={agentActive} className={selected.includes(part.id) ? 'selected' : ''} onClick={event => pick(active.id, part.id, event.shiftKey)}>
             <span className="color-chip" style={{ background: part.color }} /><span>{part.name}<small>{part.id}{part.parentId ? ` · 屬於 ${active.model.parts.find(p => p.id === part.parentId)?.name ?? part.parentId}` : ''}</small></span></button></li>)}</ul>
-        {exportRequest && <Suspense fallback={<p className="notice" role="status">正在載入匯出功能…</p>}>
-          <ExportDialog workspace={workspace} printer={printer} request={exportRequest} viewDirection={() => sceneRef.current?.viewDirection() ?? null} onClose={() => setExportRequest(null)} />
-        </Suspense>}
           {!selectedParts.length && <p className="small-muted">點選畫面中的零件或上方清單即可選取；Shift 可多選，Esc 取消選取。</p>}
           {adjustError && <p className="notice warning" role="alert">{adjustError}</p>}
           {single && <div className="part-editor" data-testid="part-editor">

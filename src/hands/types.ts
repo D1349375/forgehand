@@ -31,7 +31,9 @@ export type Target =
     objectName?: string };
 /** An on-screen target (a button) in client pixels. Later specs register more of them. */
 export interface ScreenTarget { id: string; label: string; left: number; top: number; right: number; bottom: number }
-export type GestureKind = 'none' | 'grab' | 'orbit' | 'press' | 'zoom' | 'hold' | 'explode' | 'rotate';
+export type GestureKind = 'none' | 'grab' | 'orbit' | 'press' | 'zoom' | 'hold' | 'explode' | 'rotate'
+  /** Two fists, each holding an object, bringing two objects together to join them (assembly-joints Task 6). */
+  | 'assemble';
 /** What the overlay draws and exposes for one hand. */
 export interface HandView {
   slot: HandSlot;

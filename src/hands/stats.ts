@@ -28,13 +28,22 @@ export interface HandStats {
   twoHand: Record<string, number>;
   /** Pinches that were not allowed to act because the other hand's gesture ran. */
   inert: number;
+  /** Two-fist assemble gestures started (assembly-joints Task 6). */
+  assembles: number;
+  /** Joints created by releasing a ready assemble. */
+  joins: number;
+  /** The latest snap measurement of a running assemble; null before the first one. Null fields: no pair within the engage limits. */
+  snap: SnapStats | null;
   hands: [HandSlotStats, HandSlotStats];
 }
+
+/** What the debug line shows of the snap detection of one frame. */
+export interface SnapStats { gapMm: number | null; angleDeg: number | null; overlapMm2: number | null; detectMs: number }
 
 const emptyHand = (): HandSlotStats => ({ pinchM: null, pinching: false, target: '', curl: null, fist: false });
 
 export function createStats(): HandStats {
-  return { drags: 0, commits: 0, cancels: 0, dragLosses: 0, longestDragGapMs: 0, twoHand: {}, inert: 0, hands: [emptyHand(), emptyHand()] };
+  return { drags: 0, commits: 0, cancels: 0, dragLosses: 0, longestDragGapMs: 0, twoHand: {}, inert: 0, assembles: 0, joins: 0, snap: null, hands: [emptyHand(), emptyHand()] };
 }
 
 export function recordDrag(stats: HandStats): void { stats.drags++; }
@@ -45,3 +54,6 @@ export function recordJoin(stats: HandStats, gesture: string): void { stats.twoH
 export function recordDragLoss(stats: HandStats): void { stats.dragLosses++; }
 export function recordDragGap(stats: HandStats, gapMs: number): void { stats.longestDragGapMs = Math.max(stats.longestDragGapMs, Math.round(gapMs)); }
 export function recordHand(stats: HandStats, slot: 0 | 1, hand: HandSlotStats): void { stats.hands[slot] = hand; }
+export function recordAssemble(stats: HandStats): void { stats.assembles++; }
+export function recordJoined(stats: HandStats): void { stats.joins++; }
+export function recordSnap(stats: HandStats, snap: SnapStats): void { stats.snap = snap; }

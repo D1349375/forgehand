@@ -64,9 +64,10 @@ export function shortenName(name: string, max: number = BADGE_NAME_MAX): string 
  * The short badge next to a hand (requirement 16), so colour is never the only signal.
  * `target` is the settled target, or for a grab the grabbed part. `inert` marks a pinch that
  * may not act because the other hand's gesture runs. `gesture` tells the joining hand's badge (zoom, explode); `value` is the
- * explode percentage of the pull (requirement 95); `objectName` is the held object's name. Rotate (Task 8) is not read yet.
+ * explode percentage of the pull (requirement 95); `objectName` is the held object's name; `ready` is the snap of an assemble: the joining
+ * fist's badge then reads 可以接合 instead of the held object. Rotate (Task 8) is not read yet.
  */
-export function badgeText(view: { state: HandState; target: Target; gesture: GestureKind; value: number | null; objectName?: string; inert?: boolean }): string {
+export function badgeText(view: { state: HandState; target: Target; gesture: GestureKind; value: number | null; objectName?: string; inert?: boolean; ready?: boolean }): string {
   const name = view.target.kind === 'empty' ? '' : shortenName(view.target.label);
   switch (view.state) {
     case 'none': return '';
@@ -79,7 +80,9 @@ export function badgeText(view: { state: HandState; target: Target; gesture: Ges
       if (view.gesture === 'explode') return view.value === null ? '手勢：拉開' : `手勢：拉開 ${view.value}%`;
       return '手勢：雙手操作';
     case 'fist': return '手勢：握拳';
-    case 'hold': return view.objectName ? `手勢：握住 ${shortenName(view.objectName)}` : '手勢：握住';
+    case 'hold':
+      if (view.gesture === 'assemble' && view.ready) return '手勢：可以接合';
+      return view.objectName ? `手勢：握住 ${shortenName(view.objectName)}` : '手勢：握住';
     case 'tracked': return '手勢：待命';
   }
 }
@@ -99,5 +102,14 @@ export function debugLine(stats: HandStats, tracking: Parameters<typeof tracking
     `拖曳 ${stats.drags}／完成 ${stats.commits}／取消 ${stats.cancels}／拖曳中遺失 ${stats.dragLosses}（最長 ${stats.longestDragGapMs} ms）`,
     `雙手 ${twoHand}`,
     `無效捏合 ${stats.inert}`,
+    ...snapDebug(stats),
   ].join(' · ');
+}
+
+/** The snap numbers of the two-fist join (requirement 63), once an assemble has started; nothing before that. */
+function snapDebug(stats: HandStats): string[] {
+  if (stats.assembles === 0) return [];
+  const snap = stats.snap;
+  const value = (number: number | null | undefined, digits: number) => (number === null || number === undefined || !Number.isFinite(number) ? '—' : number.toFixed(digits));
+  return [`接合：間隙 ${value(snap?.gapMm, 1)} mm · 角度 ${value(snap?.angleDeg, 1)}° · 重疊 ${value(snap?.overlapMm2, 0)} mm² · 偵測 ${value(snap?.detectMs, 1)} ms · 接合 ${stats.joins}`];
 }

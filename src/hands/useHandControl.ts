@@ -52,6 +52,8 @@ export function useHandControl(input: {
   explodeAmount?: () => number;
   /** Sets the explode amount, as the 爆炸圖 slider does (display state, no undo step). */
   setExplode?: (amount: number) => void;
+  /** Whether two objects are connected through joints: a second fist on an object of the held object's assembly cannot join it (assembly-joints Task 6). */
+  sameAssembly?: (a: string, b: string) => boolean;
 }): { status: { state: HandStatusState; text: string }; debug: RefObject<HandDebugNumbers> } {
   const { source, tracker, enabled, gate, videoRef, overlayRef, objectCount, sceneRef, lossMs = null } = input;
   const [handSeen, setHandSeen] = useState(false);
@@ -60,8 +62,8 @@ export function useHandControl(input: {
   const debug = useRef<HandDebugNumbers>({ ...IDLE_DEBUG });
   const onPick = useRef(input.onPick);
   onPick.current = input.onPick;
-  const fistInputs = useRef({ onActivate: input.onActivate, explodeAmount: input.explodeAmount, setExplode: input.setExplode });
-  fistInputs.current = { onActivate: input.onActivate, explodeAmount: input.explodeAmount, setExplode: input.setExplode };
+  const fistInputs = useRef({ onActivate: input.onActivate, explodeAmount: input.explodeAmount, setExplode: input.setExplode, sameAssembly: input.sameAssembly });
+  fistInputs.current = { onActivate: input.onActivate, explodeAmount: input.explodeAmount, setExplode: input.setExplode, sameAssembly: input.sameAssembly };
   const controller = useMemo(() => {
     const port: HandPort = {
       pick(point): Target {
@@ -80,6 +82,8 @@ export function useHandControl(input: {
       setExplode: amount => fistInputs.current.setExplode?.(amount),
       // The camera view fills the stage, so its height is the viewport height the pull is scaled by.
       viewportHeight: () => videoRef.current?.getBoundingClientRect().height ?? 0,
+      beginAssemble: (owner, objectId, hit) => sceneRef.current?.beginAssemble(owner, objectId, hit) ?? null,
+      sameAssembly: (a, b) => fistInputs.current.sameAssembly?.(a, b) ?? a === b,
     };
     return new HandController(port, { lossMs });
   }, [sceneRef, videoRef, lossMs]);
