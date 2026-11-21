@@ -45,7 +45,7 @@ Turn the camera on (開啟攝影機) and move your hands in front of it. Hand co
 - **A second hand** can only start the two-hand gestures above; any other pinch or fist while the first hand is busy is shown as inactive until you open it.
 - **View-only and off**: while the exploded view is open or the agent is running, a pinch only turns the view, and the status line under the camera says so. While the arm try-on (護臂試戴) runs, or when the tracker is too slow for gestures (under 10 frames per second), hand control is off and the mouse works as usual. The skeletons stay visible in both cases.
 - **If tracking is lost** for more than about a third of a second during a drag, the part goes back to where it was and the status line says so.
-- **隱藏鏡頭畫面** hides the camera image and keeps tracking and the skeletons running, for a plain backdrop. Turning the camera off and on shows the image again.
+- **隱藏鏡頭畫面** hides the camera image and keeps tracking and the skeletons running, for a plain backdrop. Turning the camera off and on shows the image again. The agent can hide or show the camera image too: ask 「把鏡頭畫面藏起來」 or 「顯示鏡頭畫面」 while the camera is on.
 - Turn 手勢 off to use the mouse only. Everything above is local; no video or landmark leaves the browser.
 
 Add `?hands=debug` to the address to show tracking numbers (delegate, frames per second, recognition time, pinch distance in mm) and gesture counters (drags, commits, cancels, losses). `?hands-min-fps=<number>` changes the speed threshold for slow machines (0 switches the speed check off).

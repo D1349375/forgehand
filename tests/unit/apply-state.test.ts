@@ -113,6 +113,42 @@ describe('applyStateEvent', () => {
     expect(applyStateEvent(old, ws)).not.toBeNull();
   });
 
+  it('cameraHidden is returned as a session effect for true and false: no undo step, no workspace change', () => {
+    const ws = twoObjects();
+    for (const hidden of [true, false]) {
+      const effects = applyStateEvent(change({ cameraHidden: hidden }), ws)!;
+      expect(effects.cameraHidden).toBe(hidden);
+      expect(effects.recordUndo).toBe(false);
+      expect(effects.before).toBe(ws);
+      expect(effects.after.objects).toBe(ws.objects);
+      expect(effects.after.joints).toBe(ws.joints);
+      expect(effects).not.toHaveProperty('tryOn');
+      expect(effects).not.toHaveProperty('exportDialog');
+    }
+    // With other effects in one event, each keeps its own rule.
+    const both = applyStateEvent(change({ tryOn: true, explode: 0.5, cameraHidden: true }), ws)!;
+    expect(both).toMatchObject({ tryOn: true, cameraHidden: true, recordUndo: false });
+    expect(both.after.display.explode).toBe(0.5);
+  });
+
+  it('payloads without cameraHidden, or with null, still parse and set no cameraHidden effect', () => {
+    const ws = twoObjects();
+    expect(applyStateEvent(change(), ws)).not.toHaveProperty('cameraHidden');
+    expect(applyStateEvent(change({ cameraHidden: null }), ws)).not.toHaveProperty('cameraHidden');
+    expect(applyStateEvent(change({ tryOn: true }), ws)).not.toHaveProperty('cameraHidden');
+    expect(applyStateEvent(change({ exportDialog: { scope: 'workspace', objectId: null } }), ws)).not.toHaveProperty('cameraHidden');
+    // A payload from before this field existed (no cameraHidden key at all) parses.
+    const old = { activeObjectId: null, object: null, selection: null, explode: null, tryOn: null };
+    expect(applyStateEvent(old, ws)).not.toBeNull();
+  });
+
+  it.each([
+    ['a string', 'true'],
+    ['a number', 1],
+  ])('returns null for a cameraHidden that is %s', (_label, cameraHidden) => {
+    expect(applyStateEvent(change({ cameraHidden }), twoObjects())).toBeNull();
+  });
+
   it.each([
     ['an unknown scope', { scope: 'everything', objectId: null }],
     ['a missing object id', { scope: 'workspace' }],

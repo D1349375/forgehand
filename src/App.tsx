@@ -168,6 +168,8 @@ export default function App() {
   const agent = useAgentRun({
     applyWorkspace: applyAgentWorkspace,
     setTryingOn,
+    // The agent's switch only applies while the camera is on; with it off there is no image to hide.
+    setCameraHidden: hidden => { if (camera === 'on') setCameraHidden(hidden); },
     openExport: scope => setExportRequest(scope),
     getSnapshot: () => ({ workspace: store.current(), tryOn: tryingOn, cameraOn: camera === 'on', printer }),
     getTurns: () => agentTurns.current,

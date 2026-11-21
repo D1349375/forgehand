@@ -14,6 +14,8 @@ export interface StateEffects {
   tryOn?: boolean;
   /** Present only when the event asks to open the export dialog. Session state like `tryOn`: never an undo step. */
   exportDialog?: ExportScope;
+  /** Present only when the event hides (true) or shows (false) the camera image. Session state like `tryOn`: never an undo step. */
+  cameraHidden?: boolean;
 }
 
 /**
@@ -25,12 +27,13 @@ export interface StateEffects {
 export function applyStateEvent(payload: unknown, workspace: Workspace): StateEffects | null {
   const parsed = StateChangeSchema.safeParse(payload);
   if (!parsed.success) return null;
-  const { tryOn, exportDialog, ...change } = parsed.data;
+  const { tryOn, exportDialog, cameraHidden, ...change } = parsed.data;
   try {
     const { before, after } = applyWorkspaceChange(workspace, change);
     const effects: StateEffects = { before, after, recordUndo: change.object !== null || (change.joint ?? null) !== null };
     if (tryOn !== null) effects.tryOn = tryOn;
     if (exportDialog) effects.exportDialog = exportDialog;
+    if (typeof cameraHidden === 'boolean') effects.cameraHidden = cameraHidden;
     return effects;
   } catch (cause) {
     if (cause instanceof WorkspaceError) return null;

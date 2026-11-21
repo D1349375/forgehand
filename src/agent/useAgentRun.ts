@@ -13,6 +13,8 @@ export interface AgentRunOptions {
   /** Applies one state event's workspace change: an undo step when `recordUndo`, else a plain replace. */
   applyWorkspace(effects: StateEffects): void;
   setTryingOn(on: boolean): void;
+  /** Hides (true) or shows (false) the camera image the agent asked for. The caller decides whether it applies. */
+  setCameraHidden?(hidden: boolean): void;
   /** Opens the export dialog with the scope the agent chose. The agent never downloads; the user does. */
   openExport?(scope: ExportScope): void;
   /** The workbench state to start a run from. */
@@ -65,6 +67,7 @@ export function useAgentRun(options: AgentRunOptions) {
         workspace = effects.after;
         optionsRef.current.applyWorkspace(effects);
         if (effects.tryOn !== undefined) optionsRef.current.setTryingOn(effects.tryOn);
+        if (effects.cameraHidden !== undefined) optionsRef.current.setCameraHidden?.(effects.cameraHidden);
         if (effects.exportDialog !== undefined) optionsRef.current.openExport?.(effects.exportDialog);
         return;
       }
