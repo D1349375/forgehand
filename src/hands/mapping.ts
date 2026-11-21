@@ -1,5 +1,6 @@
 import type { HandLandmarks } from '../try-on/arm-pose';
 import { CURSOR_POINT, type CursorPoint } from './constants';
+import { curlRatio } from './fist';
 import type { HandSample, Point } from './types';
 
 export interface ViewBox { left: number; top: number; width: number; height: number }
@@ -38,7 +39,7 @@ function pinchDistance(hand: HandLandmarks): number | null {
 }
 
 /**
- * One hand as screen points, cursor, palm centre and pinch distance. Null for a hand with
+ * One hand as screen points, cursor, palm centre, pinch distance and curl ratio. Null for a hand with
  * fewer than 21 finite points or a view or video without a size.
  */
 export function handSample(hand: HandLandmarks, view: ViewBox, video: VideoSize, cursorPoint: CursorPoint = CURSOR_POINT): HandSample | null {
@@ -56,5 +57,5 @@ export function handSample(hand: HandLandmarks, view: ViewBox, video: VideoSize,
     x: PALM_LANDMARKS.reduce((sum, index) => sum + points[index]!.x, 0) / PALM_LANDMARKS.length,
     y: PALM_LANDMARKS.reduce((sum, index) => sum + points[index]!.y, 0) / PALM_LANDMARKS.length,
   };
-  return { points, cursor: { x: cursor.x, y: cursor.y }, palm, pinchM: pinchDistance(hand) };
+  return { points, cursor: { x: cursor.x, y: cursor.y }, palm, pinchM: pinchDistance(hand), curl: curlRatio(hand.world) };
 }

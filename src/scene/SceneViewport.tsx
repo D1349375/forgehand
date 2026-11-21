@@ -9,10 +9,10 @@ import type { ObjectTransform } from '../../shared/workspace';
 import type { ArmSample } from '../try-on/arm-pose';
 import { createArmPreview } from './arm-preview';
 import { computeExplosion, groupProgress, worldMatrices } from './explode';
-import type { GrabSession, OrbitSession } from '../hands/controller';
+import type { GrabSession, HoldSession, OrbitSession } from '../hands/controller';
 import type { Point } from '../hands/types';
 import { buildModel, disposeObject, modelBounds, objectsBounds } from './geometry';
-import { createGrabSession, createOrbitSession, grabStillValid, type LiveGrab } from './hand-sessions';
+import { createGrabSession, createHoldSession, createOrbitSession, grabStillValid, type LiveGrab, type LiveHold } from './hand-sessions';
 import { buildPartMarks, markId, markKey, type PartMarks } from './joint-marks';
 import { planSceneSync, type SceneSyncPlan } from './scene-sync';
 import { applyPartStyle, hologramPart } from './style';
@@ -32,6 +32,11 @@ export interface SceneHandle {
   beginPartGrab(objectId: string, partId: string, hit: Vector): GrabSession | null;
   /** Starts turning the view by hand; null while the mouse or the gizmo is busy, or with no objects. */
   beginOrbit(): OrbitSession | null;
+  /**
+   * Starts moving a whole object by hand (a fist); null for an unknown object, while the mouse or the gizmo is busy. It is not refused in
+   * the exploded view (only the object's root moves) and not because another hold runs.
+   */
+  beginObjectHold(objectId: string, hit: Vector): HoldSession | null;
 }
 interface Props {
   objects: readonly SceneObjectInput[];
@@ -44,6 +49,8 @@ interface Props {
   tryOn?: { readonly current: ArmSample | null };
   onPick?: (objectId: string | null, partId: string | null, additive: boolean) => void;
   onTransform?: (objectId: string, partId: string, position: Vector, rotation: Vector, kind: 'translate' | 'rotate') => void;
+  /** A hand hold moved a whole object: called once on release with the new position (the 物件 panel's path, one undo step). */
+  onObjectMove?: (objectId: string, position: Vector) => void;
   onError?: (message: string) => void;
   onReady?: (info: { objects: number; parts: number; renderMs: number }) => void;
   /** The workspace's joints; only written to data attributes here (the drawings come from `marks`). */
@@ -97,6 +104,8 @@ interface View {
   mouseBusy: boolean;
   /** The running hand grab, if any. */
   grab: LiveGrab | null;
+  /** The running hand holds (whole objects), at most one per hand. */
+  holds: Set<LiveHold>;
   activeId: string | null;
   /** True once the user rotates or zooms after the last automatic framing. */
   viewChanged: boolean;
@@ -318,6 +327,30 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       if (!current || current.mouseBusy || current.gizmo.dragging || current.entries.size === 0) return null;
       current.viewChanged = true;
       return createOrbitSession({ camera: current.camera, controls: current.controls, onChange: current.invalidate });
+    },
+    beginObjectHold(objectId, hit) {
+      const current = view.current;
+      const entry = current?.entries.get(objectId);
+      if (!current || !entry) return null;
+      // Unlike a part grab, a hold is allowed in the exploded view: it moves only the object's root, which the explode animation never
+      // touches. Another hold may run too (a second hand can hold a second object).
+      if (current.mouseBusy || current.gizmo.dragging) return null;
+      current.gizmo.enabled = false;
+      const session: LiveHold = createHoldSession({
+        objectId, root: entry.root, camera: current.camera,
+        viewportHeight: () => current.renderer.domElement.getBoundingClientRect().height,
+        stored: { ...entry.transform.position },
+        storedNow: () => ({ ...(current.entries.get(objectId)?.transform.position ?? entry.transform.position) }),
+        hit,
+        onCommit: position => callbacks.current.onObjectMove?.(objectId, position),
+        onChange: current.invalidate,
+        onEnd: () => {
+          current.holds.delete(session);
+          current.gizmo.enabled = current.holds.size === 0 && current.grab === null;
+        },
+      });
+      current.holds.add(session);
+      return session;
     },
   }), []);
 
@@ -545,6 +578,11 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       const applied = failed ? { plan: NO_CHANGES, activeId: current.entries.has(activeId ?? '') ? activeId : current.activeId } : { plan, activeId };
       if (!grabStillValid(applied.plan, applied.activeId, current.grab.objectId)) current.grab.invalidate();
     }
+    // The same rule for a hold (requirement 91 and 39): activating the held object is fine, anything else under it cancels it.
+    if (current.holds.size > 0) {
+      const applied = failed ? { plan: NO_CHANGES, activeId: current.entries.has(activeId ?? '') ? activeId : current.activeId } : { plan, activeId };
+      for (const hold of current.holds) if (!grabStillValid(applied.plan, applied.activeId, hold.objectId)) hold.invalidate();
+    }
     if (!failed) {
       const retired: Entry[] = [];
       if (plan.rebuild.length || plan.remove.length) current.gizmo.detach();
@@ -670,7 +708,7 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       callbacks.current.onTransform?.(objectId, object.userData.partId, position, rotation, gizmo.mode === 'rotate' ? 'rotate' : 'translate');
     });
     const current: View = { scene, camera, controls, gizmo, renderer, objects: objectsGroup, entries: new Map(), surfaces: [], raycaster: new THREE.Raycaster(),
-      mouseBusy: false, grab: null, activeId: null, viewChanged: false, explodeShown: 0,
+      mouseBusy: false, grab: null, holds: new Set(), activeId: null, viewChanged: false, explodeShown: 0,
       markNodes: new Map(), previewed: new Set(), cue: null, printed: null, reset: () => fit(), invalidate };
     renderer.domElement.dataset.explode = '0.000';
     view.current = current;
@@ -758,6 +796,7 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       controls.removeEventListener('start', userMoved);
       controls.removeEventListener('end', userDone);
       current.grab?.cancel();
+      for (const hold of [...current.holds]) hold.cancel();
       gizmo.detach();
       gizmo.dispose();
       controls.dispose();

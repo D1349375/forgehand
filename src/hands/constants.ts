@@ -55,3 +55,16 @@ export const HAND_MATCH_PX = 160;
 export const TWO_HAND_MIN_SPAN_PX = 60;
 /** Two-hand zoom ignores a change in the distance between the cursors smaller than this (pixels), so hand tremor does not zoom. */
 export const ZOOM_DEAD_ZONE_PX = 12;
+
+/** Fists: holding, moving and pulling apart a whole object (requirements 89-95). `false` turns fists off completely and leaves the pinch exactly as without them. */
+export const FIST_ENABLED: boolean = true;
+/** A fist engages when the curl ratio stays below this for FIST_ENGAGE_FRAMES consecutive tracking frames. */
+export const FIST_ENGAGE_RATIO = 1.0;
+export const FIST_ENGAGE_FRAMES = 3;
+/** A fist releases when the curl ratio stays above this for FIST_RELEASE_FRAMES consecutive tracking frames. */
+export const FIST_RELEASE_RATIO = 1.25;
+export const FIST_RELEASE_FRAMES = 3;
+/** Pulling an object apart ignores a change in the distance between the fist and the pinch smaller than this (pixels). */
+export const EXPLODE_DEAD_ZONE_PX = 12;
+/** Spreading the hands by this fraction of the viewport height goes from assembled to fully exploded. */
+export const EXPLODE_FULL_FRACTION = 0.5;

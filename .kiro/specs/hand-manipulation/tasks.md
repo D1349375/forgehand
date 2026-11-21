@@ -243,7 +243,9 @@ Run `npm run dev`, open the app with `?hands=debug` in the URL. Note the numbers
 14. **View-only.** Open 爆炸圖: a pinch turns the view, never grabs, and the notice says so. Close it again.
 15. **手勢 switch.** Turn 手勢 off: the skeletons and the status line disappear and the mouse works as usual; 護臂試戴 still works. Turn it on again.
 16. **Two-hand zoom** (Task 6). Pinch empty space with one hand, then pinch with the other and move the hands apart: the view zooms in; together: it zooms out; the second hand shows 手勢：雙手縮放 and a line joins the hands. Let go with the second hand and move the first: the view turns from where it is, with no jump. Note whether small hand tremor zooms (then raise `ZOOM_DEAD_ZONE_PX`).
-17. **Report.** Which constants to change, and to what (pinch thresholds, `DRAG_GAIN`, `ORBIT_DEG_PER_PX`, cursor filter, `TRACKING_LOSS_MS` or `ON_TRACKING_LOSS`, `DUPLICATE_HAND_PX`, `HAND_MATCH_PX`, `ZOOM_DEAD_ZONE_PX`, or `TRACKED_HANDS = 1` if two hands are too slow).
+17. **Fist** (Task 7). Note the curl ratio in the debug line (曲度) for an open hand, a pinch and a fist. Make a fist over the demo object: a hollow square, then a filled one with 手勢：握住 …; move it: the whole object moves; open the hand; one 復原 restores it. Note false fists during pinches and missed fists (then change `FIST_ENGAGE_RATIO`, `FIST_RELEASE_RATIO` or `FIST_ENGAGE_FRAMES`, or set `FIST_ENABLED = false`).
+18. **Pull apart** (Task 7). Hold the object with a fist and pinch with the other hand; move the pinch away: the object explodes; back: it closes. Repeat with 爆炸圖 already open: the fist still moves the object.
+19. **Report.** Which constants to change, and to what (pinch thresholds, `DRAG_GAIN`, `ORBIT_DEG_PER_PX`, cursor filter, `TRACKING_LOSS_MS` or `ON_TRACKING_LOSS`, `DUPLICATE_HAND_PX`, `HAND_MATCH_PX`, `ZOOM_DEAD_ZONE_PX`, the fist ratios and frames, `EXPLODE_DEAD_ZONE_PX`, `EXPLODE_FULL_FRACTION`, or `TRACKED_HANDS = 1` if two hands are too slow).
 
 **Session facts:**
 - E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
@@ -302,7 +304,7 @@ While one hand turns the view, the other hand pinches and the change in distance
 
 ## Task 7 — P1: fist to hold, move and explode an object
 
-`[ ]`
+`[x]`
 
 A fist on an object holds the whole object; moving the fist moves it, committed through the workspace's object transform on release. While the fist holds it, the other hand pinches and the change in distance to the fist sets the explode amount. Works in the exploded view.
 

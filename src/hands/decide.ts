@@ -1,4 +1,4 @@
-import type { Gate } from './gate';
+import { fistAllowed, type Gate } from './gate';
 import type { Target, Vector } from './types';
 
 export type PinchAction =
@@ -28,4 +28,16 @@ export function decidePinch(target: Target, context: { objectCount: number; gate
     return { kind: 'grab', objectId: target.objectId, partId: target.partId, hit: { x: target.hit.x, y: target.hit.y, z: target.hit.z } };
   }
   return { kind: 'orbit' };
+}
+
+export type FistAction = { kind: 'hold'; objectId: string; hit: Vector } | { kind: 'none' };
+
+/**
+ * What a fist that starts a gesture does (requirements 91 and 94): it holds the object of the part under the palm centre when hand
+ * control is fully on or the exploded view is open (`fistAllowed`); over empty space, over an on-screen target, with no objects or
+ * with the fist not allowed it holds nothing.
+ */
+export function decideFist(target: Target, context: { objectCount: number; gate: Gate }): FistAction {
+  if (context.objectCount <= 0 || !fistAllowed(context.gate) || target.kind !== 'part') return { kind: 'none' };
+  return { kind: 'hold', objectId: target.objectId, hit: { x: target.hit.x, y: target.hit.y, z: target.hit.z } };
 }

@@ -26,6 +26,12 @@ describe('constants', () => {
       TRACKED_HANDS: 2, DUPLICATE_HAND_PX: 40,
     });
   });
+  it('exports the fist defaults by name (Task 7)', () => {
+    expect(constants).toMatchObject({
+      FIST_ENABLED: true, FIST_ENGAGE_RATIO: 1.0, FIST_ENGAGE_FRAMES: 3, FIST_RELEASE_RATIO: 1.25, FIST_RELEASE_FRAMES: 3,
+      EXPLODE_DEAD_ZONE_PX: 12, EXPLODE_FULL_FRACTION: 0.5,
+    });
+  });
 });
 
 describe('landmarkToClient', () => {
@@ -88,6 +94,23 @@ describe('handSample', () => {
     const closed = handSample(syntheticHand({ cursor: { x: 0.5, y: 0.5 }, pinchM: 0.01 }), wideView, video)!;
     expect(closed.palm.x).toBeCloseTo(sample.palm.x, 6);
     expect(closed.palm.y).toBeCloseTo(sample.palm.y, 6);
+  });
+  it('gives the curl ratio: about 1.88 for the open hand, 1.88 still for a pinch (the middle finger is the largest), 0.65 for the fist, null without world landmarks', () => {
+    expect(handSample(syntheticHand({ cursor: { x: 0.5, y: 0.5 }, pinchM: 0.08 }), wideView, video)!.curl).toBeCloseTo(1.88, 1);
+    expect(handSample(syntheticHand({ cursor: { x: 0.5, y: 0.5 }, pinchM: 0.01 }), wideView, video)!.curl).toBeCloseTo(1.88, 1);
+    const fist = handSample(syntheticHand({ cursor: { x: 0.5, y: 0.5 }, pinchM: 0.08, fist: true }), wideView, video)!;
+    expect(fist.curl).toBeCloseTo(0.65, 2);
+    expect(fist.curl!).toBeLessThan(constants.FIST_ENGAGE_RATIO);
+    // The fist is not a pinch: the thumb tip stays 6 cm from the index tip.
+    expect(fist.pinchM).toBeCloseTo(0.06, 6);
+    expect(handSample(syntheticHand({ cursor: { x: 0.5, y: 0.5 }, pinchM: 0.04, world: false }), wideView, video)!.curl).toBeNull();
+  });
+  it('places the palm centre at the cursor of a synthetic fist', () => {
+    const at = { x: 0.4, y: 0.6 };
+    const fist = handSample(syntheticHand({ cursor: at, pinchM: 0.08, fist: true }), wideView, video)!;
+    const expected = landmarkToClient(at, wideView, video);
+    expect(fist.palm.x).toBeCloseTo(expected.x, 6);
+    expect(fist.palm.y).toBeCloseTo(expected.y, 6);
   });
   it('rejects a hand with fewer than 21 finite points', () => {
     expect(handSample({ ...hand, points: hand.points.slice(0, 20) }, wideView, video)).toBeNull();
@@ -371,6 +394,11 @@ describe('overlayStyle and the skeleton', () => {
     expect(style('orbit')).toMatchObject({ dashed: false, lineWidth: 3.5, mark: 'ring-filled' });
     expect(style('join')).toMatchObject({ dashed: false, lineWidth: 3.5, mark: 'ring-filled' });
     expect(style('locked')).toMatchObject({ colour: LOCKED_COLOUR, dashed: true, mark: 'none' });
+  });
+  it('shows the fist by a rounded square instead of a ring: hollow for a closed fist, filled with thicker lines while it holds an object', () => {
+    const style = (state: HandState) => overlayStyle({ state });
+    expect(style('fist')).toMatchObject({ dashed: false, lineWidth: 2, mark: 'square-hollow' });
+    expect(style('hold')).toMatchObject({ dashed: false, lineWidth: 3.5, mark: 'square-filled' });
   });  it('has the 21 distinct MediaPipe hand connections between valid landmarks', () => {
     expect(HAND_CONNECTIONS).toHaveLength(21);
     expect(new Set(HAND_CONNECTIONS.map(([a, b]) => `${Math.min(a, b)}-${Math.max(a, b)}`)).size).toBe(21);

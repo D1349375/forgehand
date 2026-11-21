@@ -72,6 +72,29 @@ export function drawRing(ctx: CanvasRenderingContext2D, cursor: Point, style: Ov
   ctx.restore();
 }
 
+const SQUARE_HALF = 15;
+const SQUARE_RADIUS = 6;
+/** A rounded square at the palm centre for the fist (requirement 95): hollow while it holds nothing, filled while it holds an object. Other marks draw nothing here. */
+export function drawSquare(ctx: CanvasRenderingContext2D, centre: Point, style: OverlayStyle): void {
+  if (style.mark !== 'square-hollow' && style.mark !== 'square-filled') return;
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.roundRect(centre.x - SQUARE_HALF, centre.y - SQUARE_HALF, SQUARE_HALF * 2, SQUARE_HALF * 2, SQUARE_RADIUS);
+  if (style.mark === 'square-filled') {
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = style.colour;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.strokeStyle = OUTLINE_COLOUR;
+  ctx.lineWidth = style.lineWidth + OUTLINE_EXTRA;
+  ctx.stroke();
+  ctx.strokeStyle = style.colour;
+  ctx.lineWidth = style.lineWidth;
+  ctx.stroke();
+  ctx.restore();
+}
 export interface Box { x: number; y: number; width: number; height: number }
 const BADGE_FONT = '13px sans-serif';
 const BADGE_PADDING_X = 8;

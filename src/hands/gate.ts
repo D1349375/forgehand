@@ -14,6 +14,13 @@ export function handGate(input: { tryOn: boolean; slow: boolean; agentActive: bo
   return { level: 'full', reason: null };
 }
 
+/**
+ * Whether a fist may hold, move and pull apart an object (requirement 94): at full control, and while the exploded view is open
+ * (moving the whole object does not touch the part offsets). Not during an agent run, try-on or when tracking is too slow.
+ */
+export function fistAllowed(gate: Gate): boolean {
+  return gate.level === 'full' || (gate.level === 'view-only' && gate.reason === 'exploded');
+}
 /** `since`: when the rate first disagreed with `slow`, or null while it agrees. */
 export interface SpeedState { slow: boolean; since: number | null }
 export function initialSpeedState(): SpeedState {

@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { drawBadge, drawHand, drawLink, drawRing, type Box } from './skeleton';
+import { drawBadge, drawHand, drawLink, drawRing, drawSquare, type Box } from './skeleton';
 import { overlayStyle } from './style';
 import type { OverlayFrame } from './types';
 
@@ -81,7 +81,9 @@ export const HandOverlay = forwardRef<HandOverlayHandle>(function HandOverlay(_p
         }
         if (frame.link) drawLink(ctx, frame.link);
         for (const hand of frame.hands) {
-          if (hand.state !== 'none') drawRing(ctx, hand.cursor, overlayStyle(hand));
+          if (hand.state === 'none') continue;
+          drawRing(ctx, hand.cursor, overlayStyle(hand));
+          drawSquare(ctx, hand.palm, overlayStyle(hand));
         }
         // Badges are placed inside the canvas box, so they are drawn in the box's own coordinates.
         ctx.setTransform(ratio, 0, 0, ratio, 0, 0);

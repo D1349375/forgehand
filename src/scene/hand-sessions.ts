@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ORBIT_DEG_PER_PX } from '../hands/constants';
-import type { GrabSession, OrbitSession } from '../hands/controller';
+import type { GrabSession, HoldSession, OrbitSession } from '../hands/controller';
 import { dragPosition, orbitOffset } from '../hands/drag';
 import type { Vector } from '../hands/types';
 import type { SceneSyncPlan } from './scene-sync';
@@ -110,6 +110,104 @@ export function createGrabSession(input: GrabInput): LiveGrab {
     },
     reapply() {
       if (!done && valid) show(current);
+    },
+    invalidate() {
+      valid = false;
+    },
+  };
+}
+
+export interface HoldInput {
+  objectId: string;
+  /** The object's root node: the only node a hold moves, so the explode animation (which moves part nodes) never touches it. */
+  root: THREE.Object3D;
+  camera: THREE.PerspectiveCamera;
+  /** Height of the viewport in client pixels. */
+  viewportHeight: () => number;
+  /** The object's stored position (`transform.position`) when the hold began; a commit only differs from it by the move. */
+  stored: Vector;
+  /** The stored position now, where a cancel puts the root back: a scene sync may have moved the object since the hold began. Defaults to `stored`. */
+  storedNow?: () => Vector;
+  /** The world point under the palm centre at engage. */
+  hit: Vector;
+  gain?: number;
+  /** Called once, and only when the rounded position differs from the stored one. */
+  onCommit(position: Vector): void;
+  /** The scene needs a new frame. */
+  onChange(): void;
+  /** The session is over, whichever way. */
+  onEnd(): void;
+}
+
+/** A hold the scene can also invalidate from `sync`. */
+export interface LiveHold extends HoldSession {
+  readonly objectId: string;
+  readonly valid: boolean;
+  /** The scene changed under the session: the next `preview` returns false and a commit does nothing. */
+  invalidate(): void;
+}
+
+/**
+ * Moves a whole object through the camera plane (design §7.4, requirement 92): the palm offset since the last re-base, times
+ * `gain`, becomes a world offset at the held point's depth, as for a part, with the objects group as the parent frame. Only the
+ * object's root moves; its parts follow, and the workspace changes only on `commit`.
+ */
+export function createHoldSession(input: HoldInput): LiveHold {
+  const { root, camera, stored } = input;
+  const storedRounded = rounded(stored);
+  let start: Vector = { ...stored };
+  let current: Vector = { ...stored };
+  let hit: Vector = { ...input.hit };
+  let valid = true;
+  let done = false;
+  const parentWorld = (): THREE.Matrix4 => {
+    root.parent?.updateWorldMatrix(true, false);
+    return root.parent ? root.parent.matrixWorld : new THREE.Matrix4();
+  };
+  const show = (position: Vector) => {
+    root.position.set(position.x, position.y, position.z);
+    root.updateMatrixWorld(true);
+    input.onChange();
+  };
+  const finish = () => {
+    done = true;
+    input.onEnd();
+  };
+  return {
+    objectId: input.objectId,
+    get valid() { return valid; },
+    preview(offset) {
+      if (done || !valid) return false;
+      camera.updateMatrixWorld();
+      current = dragPosition({
+        camera: { matrixWorld: camera.matrixWorld, fovDeg: camera.fov }, viewportHeight: input.viewportHeight(),
+        parentWorld: parentWorld(), start, hit, offset, gain: input.gain,
+      });
+      show(current);
+      return true;
+    },
+    rebase() {
+      if (done) return;
+      // The held point moved with the object, so the depth of the next offsets follows it.
+      const world = parentWorld();
+      const before = new THREE.Vector3(start.x, start.y, start.z).applyMatrix4(world);
+      const after = new THREE.Vector3(current.x, current.y, current.z).applyMatrix4(world);
+      hit = { x: hit.x + after.x - before.x, y: hit.y + after.y - before.y, z: hit.z + after.z - before.z };
+      start = { ...current };
+    },
+    commit() {
+      if (done) return;
+      const position = rounded(current);
+      try {
+        if (valid && !same(position, storedRounded)) input.onCommit(position);
+      } finally {
+        finish();
+      }
+    },
+    cancel() {
+      if (done) return;
+      show(input.storedNow?.() ?? stored);
+      finish();
     },
     invalidate() {
       valid = false;

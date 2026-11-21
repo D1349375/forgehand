@@ -165,6 +165,8 @@ export default function App() {
   const handControl = useHandControl({
     source: tracking.source, tracker: tracking.status, enabled: handControlOn, gate, videoRef, overlayRef,
     objectCount: workspace.objects.length, sceneRef, lossMs, onPick: (objectId, partId) => pick(objectId, partId, false),
+    // A fist holds a whole object: it activates it first, reads and sets the explode amount of the pull (display state, no undo step).
+    onActivate: activateObject, explodeAmount: () => store.current().display.explode, setExplode: setExplodeAmount,
   });
   const handDebug = handDebugRequested(window.location.search);
 
@@ -551,6 +553,11 @@ export default function App() {
     if (agentActive || objectId !== store.current().activeObjectId) return;
     updatePart(id, { position, rotation }, kind === 'rotate' ? '已旋轉零件，可按「復原」回到上一步。' : '已移動零件，可按「復原」回到上一步。');
   }
+  /** A fist moved a whole object: the 物件 panel's path, one undo step (an object joined to others moves with its assembly). */
+  function onObjectMove(objectId: string, position: Vector) {
+    if (agentActive) return;
+    moveObject(objectId, { position });
+  }
 
   // ---- Joints: mouse join, joint changes, material, printer profile and print preview ----
   useEffect(() => { if (openJointId && !cardJointId) setOpenJointId(null); }, [openJointId, cardJointId]);
@@ -700,7 +707,7 @@ export default function App() {
           <SceneViewport ref={sceneRef} objects={workspace.objects} activeObjectId={workspace.activeObjectId} selectedIds={selected} transformMode={agentActive || mouseJoin.step !== 'off' ? null : transformMode} explode={explode}
             joints={workspace.joints} marks={marks} showJoints={showJoints} joinPreview={joinPreview} printPreview={printPreviewProp}
             tryOn={tryOnActive ? armTracking.sample : undefined}
-            onPick={pick} onTransform={onTransform}
+            onPick={pick} onTransform={onTransform} onObjectMove={onObjectMove}
             onError={message => {
               setRenderError(message); setMessage('3D 顯示未完成，已保留上一個成功模型。');
               // Fall back to the last workspace that rendered (an empty one if nothing did yet).

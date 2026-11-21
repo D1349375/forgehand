@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CANCEL_NOTICE_MS, HAND_LOST_MS, TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX } from '../../src/hands/constants';
-import { HandController, type GrabSession, type HandPort, type OrbitSession } from '../../src/hands/controller';
-import { decidePinch } from '../../src/hands/decide';
+import {
+  CANCEL_NOTICE_MS, DRAG_DEAD_ZONE_PX, EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, FIST_ENGAGE_FRAMES, FIST_RELEASE_FRAMES, HAND_LOST_MS, TRACKING_LOSS_MS,
+  TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX,
+} from '../../src/hands/constants';
+import { HandController, type GrabSession, type HandPort, type HoldSession, type OrbitSession } from '../../src/hands/controller';
+import { decideFist, decidePinch } from '../../src/hands/decide';
+import { explodeAmount } from '../../src/hands/drag';
 import type { Gate } from '../../src/hands/gate';
 import { joinGesture, type JoinRule } from '../../src/hands/join';
 import { handSample } from '../../src/hands/mapping';
 import { angleDelta, beyondDeadZone, pairAngle, pairSpan } from '../../src/hands/pair';
-import { badgeBox, drawBadge, drawLink, drawRing, type Box } from '../../src/hands/skeleton';
+import { badgeBox, drawBadge, drawLink, drawRing, drawSquare, type Box } from '../../src/hands/skeleton';
 import { createStats } from '../../src/hands/stats';
 import { HAND_COLOUR, LINK_COLOUR, overlayStyle } from '../../src/hands/style';
 import { badgeText, debugLine, handStatus, shortenName } from '../../src/hands/text';
@@ -28,7 +32,22 @@ function hand(x: number, y: number, closed = false): HandSample {
   return handSample(syntheticHand({ cursor, pinchM: closed ? CLOSED : OPEN }), VIEW, VIDEO)!;
 }
 
-const part = (objectId: string, partId: string, label = partId): Target => ({ kind: 'part', objectId, partId, label, hit: { x: 0, y: 0, z: 0 } });
+/** How far the palm centre of an open hand lies below its pinch midpoint, in client pixels. */
+const PALM_DY = (() => { const sample = hand(500, 400); return sample.palm.y - sample.cursor.y; })();
+
+/**
+ * A hand with its palm centre at client point (x, y): a fist, or an open hand (pinching when closed). The palm stays where it is while
+ * the fingers curl, so a hand can go from open to pinching to fist without moving. 	humbIn puts the thumb on the index finger of a fist
+ * (a real fist does), so it has a short thumb-index distance.
+ */
+function palmHand(x: number, y: number, mode: 'open' | 'pinch' | 'fist', thumbIn = false): HandSample {
+  const fist = mode === 'fist';
+  const cursor = clientToNormalized({ x, y: fist ? y : y - PALM_DY }, VIEW, VIDEO);
+  const sample = handSample(syntheticHand({ cursor, pinchM: mode === 'pinch' ? CLOSED : OPEN, fist }), VIEW, VIDEO)!;
+  return thumbIn ? { ...sample, pinchM: CLOSED } : sample;
+}
+
+const part = (objectId: string, partId: string, label = partId, objectName?: string): Target => ({ kind: 'part', objectId, partId, label, hit: { x: 0, y: 0, z: 0 }, ...(objectName ? { objectName } : {}) });
 
 class FakeGrab implements GrabSession {
   previews: Point[] = [];
@@ -41,6 +60,19 @@ class FakeGrab implements GrabSession {
   rebase() { this.rebases++; this.log.push('grab.rebase'); }
   commit() { this.commits++; this.log.push('grab.commit'); }
   cancel() { this.cancels++; this.log.push('grab.cancel'); }
+}
+
+class FakeHold implements HoldSession {
+  previews: Point[] = [];
+  valid = true;
+  commits = 0;
+  cancels = 0;
+  rebases = 0;
+  constructor(private readonly log: string[]) {}
+  preview(offset: Point) { this.previews.push(offset); return this.valid; }
+  rebase() { this.rebases++; this.log.push('hold.rebase'); }
+  commit() { this.commits++; this.log.push('hold.commit'); }
+  cancel() { this.cancels++; this.log.push('hold.cancel'); }
 }
 
 class FakeOrbit implements OrbitSession {
@@ -56,13 +88,19 @@ class FakeOrbit implements OrbitSession {
 }
 
 /** A controller, a fake port that records every call, and a clock that advances one frame at a time. */
-function makeRig(options: { join?: JoinRule; objectCount?: number; pick?: (point: Point) => Target; lossMs?: number } = {}) {
+function makeRig(options: { join?: JoinRule; objectCount?: number; pick?: (point: Point) => Target; lossMs?: number; fistEnabled?: boolean } = {}) {
   const log: string[] = [];
   const grabs: FakeGrab[] = [];
+  const holds: FakeHold[] = [];
   const orbits: FakeOrbit[] = [];
+  const explodes: number[] = [];
   const state = {
-    pick: options.pick ?? ((point: Point): Target => (point.x < 500 ? part('o1', 'p1', 'Arm') : EMPTY_TARGET)),
+    pick: options.pick ?? ((point: Point): Target => (point.x < 500 ? part('o1', 'p1', 'Arm', 'Demo') : EMPTY_TARGET)),
     refuseGrab: false,
+    refuseHold: false,
+    /** The active object's explode amount, which setExplode writes like the workspace does. */
+    explode: 0,
+    viewportHeight: 800,
   };
   const port: HandPort = {
     pick: point => state.pick(point),
@@ -81,23 +119,35 @@ function makeRig(options: { join?: JoinRule; objectCount?: number; pick?: (point
       return session;
     },
     press: id => { log.push(`press ${id}`); },
+    activate: objectId => { log.push(`activate ${objectId}`); },
+    beginHold: (objectId, hit) => {
+      log.push(`beginHold ${objectId}`);
+      if (state.refuseHold) return null;
+      expect(hit).toEqual({ x: 0, y: 0, z: 0 });
+      const session = new FakeHold(log);
+      holds.push(session);
+      return session;
+    },
+    explodeAmount: () => state.explode,
+    setExplode: amount => { explodes.push(amount); state.explode = amount; },
+    viewportHeight: () => state.viewportHeight,
   };
-  const controller = new HandController(port, { join: options.join, lossMs: options.lossMs });
+  const controller = new HandController(port, { join: options.join, lossMs: options.lossMs, fistEnabled: options.fistEnabled });
   controller.setObjectCount(options.objectCount ?? 1);
   const cancelled: string[] = [];
   controller.onCancelled = reason => cancelled.push(reason);
   let now = 1000;
   let last: OverlayFrame = { hands: [], gesture: 'none', link: null, arc: null };
-  /** `hands`: [x, y, closed?] per hand, in the order they are handed to the controller. */
-  const run = (hands: ReadonlyArray<readonly [number, number, boolean?]>, frames = 1) => {
+  /** `hands`: [x, y, closed?] per hand (the pinch midpoint at x, y), or a ready sample (`palmHand`), in the order they are handed to the controller. */
+  const run = (hands: ReadonlyArray<readonly [number, number, boolean?] | HandSample>, frames = 1) => {
     for (let index = 0; index < frames; index++) {
       now += FRAME_MS;
-      last = controller.frame(hands.map(([x, y, closed]) => hand(x, y, closed)), now);
+      last = controller.frame(hands.map(entry => (Array.isArray(entry) ? hand(entry[0], entry[1], entry[2]) : entry as HandSample)), now);
     }
     return last;
   };
   const view = (slot: HandSlot) => last.hands.find(item => item.slot === slot);
-  return { controller, state, log, grabs, orbits, cancelled, run, view, get now() { return now; }, get last() { return last; } };
+  return { controller, state, log, grabs, holds, orbits, explodes, cancelled, run, view, get now() { return now; }, get last() { return last; } };
 }
 
 type Rig = ReturnType<typeof makeRig>;
@@ -163,13 +213,15 @@ describe('pair geometry', () => {
 });
 
 describe('joinGesture', () => {
-  it('has one row so far (Task 6): orbit + pinch is a zoom unless hand control is off; every other input is null', () => {
+  const AGENT: Gate = { level: 'view-only', reason: 'agent' };
+  it('has two rows so far: orbit + pinch is a zoom unless hand control is off (Task 6), hold + pinch is an explode at full control or while exploded (Task 7); every other input is null', () => {
     for (const owner of ['press', 'grab', 'orbit', 'hold'] as const) {
       for (const kind of ['pinch', 'fist'] as const) {
         for (const target of [EMPTY_TARGET, part('o1', 'p1')]) {
-          for (const gate of [FULL, VIEW_ONLY, OFF]) {
+          for (const gate of [FULL, VIEW_ONLY, AGENT, OFF]) {
             const zoom = owner === 'orbit' && kind === 'pinch' && gate.level !== 'off';
-            expect(joinGesture(owner, { kind, target }, gate)).toBe(zoom ? 'zoom' : null);
+            const explode = owner === 'hold' && kind === 'pinch' && (gate.level === 'full' || (gate.level === 'view-only' && gate.reason === 'exploded'));
+            expect(joinGesture(owner, { kind, target }, gate)).toBe(zoom ? 'zoom' : explode ? 'explode' : null);
           }
         }
       }
@@ -465,7 +517,9 @@ describe('HandController, one hand', () => {
     expect(hand0.pinching).toBe(true);
     expect(hand0.pinchM).toBeCloseTo(CLOSED);
     expect(hand0.target).toBe('o1:p1');
-    expect(rig.controller.stats.hands[1]).toEqual({ pinchM: null, pinching: false, target: '' });
+    expect(hand0.curl).toBeCloseTo(1.88, 1);
+    expect(hand0.fist).toBe(false);
+    expect(rig.controller.stats.hands[1]).toEqual({ pinchM: null, pinching: false, target: '', curl: null, fist: false });
   });
 });
 
@@ -865,6 +919,549 @@ describe('HandController, two-hand zoom (the real joinGesture)', () => {
     const base = { target: EMPTY_TARGET, value: null };
     expect(badgeText({ ...base, state: 'join', gesture: 'zoom' })).toBe('手勢：雙手縮放');
     expect(badgeText({ ...base, state: 'orbit', gesture: 'zoom' })).toBe('手勢：轉動視角');
+  });
+});
+
+describe('HandController, fist (Task 7, the real joinGesture)', () => {
+  const owner: [number, number] = [200, 300];
+  const second: [number, number] = [700, 300];
+  const open = (at: readonly [number, number]) => palmHand(at[0], at[1], 'open');
+  const pinching = (at: readonly [number, number]) => palmHand(at[0], at[1], 'pinch');
+  const fist = (at: readonly [number, number], thumbIn = false) => palmHand(at[0], at[1], 'fist', thumbIn);
+
+  /** An open hand over the object for a few frames, then a fist: the fist holds the object under its palm. */
+  function holding(options: Parameters<typeof makeRig>[0] = {}, others: ReadonlyArray<readonly [number, number]> = []) {
+    const rig = makeRig(options);
+    rig.run([open(owner), ...others.map(open)], 4);
+    rig.run([fist(owner), ...others.map(open)], FIST_ENGAGE_FRAMES);
+    return rig;
+  }
+  /** The fist holds, then the other hand (far to the right) pinches and joins as an explode. */
+  function pulling(options: Parameters<typeof makeRig>[0] & { explode?: number } = {}) {
+    const rig = makeRig(options);
+    rig.state.explode = options.explode ?? 0.3;
+    rig.run([open(owner), open(second)], 4);
+    rig.run([fist(owner), open(second)], FIST_ENGAGE_FRAMES);
+    rig.run([fist(owner), pinching(second)], 3);
+    return rig;
+  }
+  /** The second hand moves in small steps to x, at the height of the first (a jump beyond HAND_MATCH_PX is a new hand). */
+  function pull(rig: Rig, from: number, to: number, ownerAt: readonly [number, number] = owner) {
+    const steps = Math.max(1, Math.ceil(Math.abs(to - from) / 25));
+    for (let step = 1; step <= steps; step++) rig.run([fist(ownerAt), palmHand(from + ((to - from) * step) / steps, second[1], 'pinch')], 1);
+    rig.run([fist(ownerAt), palmHand(to, second[1], 'pinch')], 40);
+  }
+  const expectedAmount = (rig: Rig, start: number) => {
+    const measured = rig.controller.twoHand!;
+    return explodeAmount({
+      start, startSpan: measured.startSpan, span: measured.span, deadZonePx: EXPLODE_DEAD_ZONE_PX, viewportHeight: rig.state.viewportHeight, fullFraction: EXPLODE_FULL_FRACTION,
+    });
+  };
+
+  describe('holding an object', () => {
+    it('holds the object under the palm: activate, then beginHold, a hold state, the badge with the object name', () => {
+      const rig = holding();
+      expect(rig.log).toEqual(['activate o1', 'beginHold o1']);
+      expect(rig.view(0)!.state).toBe('hold');
+      expect(rig.view(0)!.badge).toBe('手勢：握住 Demo');
+      expect(rig.last.gesture).toBe('hold');
+      expect(rig.controller.stats.hands[0].fist).toBe(true);
+      expect(rig.controller.stats.hands[0].curl).toBeCloseTo(0.65, 2);
+    });
+
+    it('needs FIST_ENGAGE_FRAMES frames and shows nothing held before that', () => {
+      const rig = makeRig();
+      rig.run([open(owner)], 4);
+      rig.run([fist(owner)], FIST_ENGAGE_FRAMES - 1);
+      expect(rig.log).toEqual([]);
+      expect(rig.view(0)!.state).not.toBe('hold');
+      rig.run([fist(owner)], 1);
+      expect(rig.view(0)!.state).toBe('hold');
+    });
+
+    it('calls activate then beginHold for a part of an inactive object, and cuts a long object name in the badge', () => {
+      const target = part('o2', 'p9', 'Leg', 'ABCDEFGHIJKLM');
+      const rig = holding({ pick: () => target });
+      expect(rig.log).toEqual(['activate o2', 'beginHold o2']);
+      expect(rig.view(0)!.badge).toBe('手勢：握住 ABCDEFGHIJKL…');
+    });
+
+    it('holds nothing over empty space: a hollow fist with its own badge, until the hand opens', () => {
+      const rig = holding({ pick: () => EMPTY_TARGET });
+      expect(rig.log).toEqual([]);
+      expect(rig.view(0)!.state).toBe('fist');
+      expect(rig.view(0)!.badge).toBe('手勢：握拳');
+      expect(rig.last.gesture).toBe('none');
+      rig.run([fist([320, 360])], 20);
+      expect(rig.log).toEqual([]);
+      rig.run([open([320, 360])], FIST_RELEASE_FRAMES + 1);
+      expect(rig.view(0)!.state).toBe('tracked');
+    });
+
+    it('holds nothing without objects, and when the scene refuses (the hand shows a fist)', () => {
+      const none = holding({ objectCount: 0 });
+      expect(none.log).toEqual([]);
+      expect(none.view(0)!.state).toBe('fist');
+      const refused = makeRig();
+      refused.state.refuseHold = true;
+      refused.run([open(owner)], 4);
+      refused.run([fist(owner)], FIST_ENGAGE_FRAMES);
+      expect(refused.log).toEqual(['activate o1', 'beginHold o1']);
+      expect(refused.view(0)!.state).toBe('fist');
+      expect(refused.last.gesture).toBe('none');
+    });
+
+    it('previews the palm offset from the engage point and commits once on release; a stationary fist commits nothing', () => {
+      const rig = holding();
+      rig.run([fist([200, 300])], 5);
+      expect(rig.holds[0]!.previews).toHaveLength(0);
+      rig.run([fist([320, 360])], 40);
+      const previews = rig.holds[0]!.previews;
+      expect(previews.length).toBeGreaterThan(5);
+      expect(previews.at(-1)!.x).toBeCloseTo(120, 0);
+      expect(previews.at(-1)!.y).toBeCloseTo(60, 0);
+      expect(previews[0]!.x).toBeGreaterThan(DRAG_DEAD_ZONE_PX);
+      expect(rig.controller.stats.drags).toBe(1);
+      rig.run([open([320, 360])], FIST_RELEASE_FRAMES + 1);
+      expect(rig.holds[0]).toMatchObject({ commits: 1, cancels: 0 });
+      expect(rig.controller.stats).toMatchObject({ commits: 1, cancels: 0 });
+      expect(rig.last.gesture).toBe('none');
+      rig.run([open([320, 360])], 6);
+      expect(rig.holds[0]!.commits).toBe(1);
+
+      const still = holding();
+      still.run([fist(owner)], 10);
+      still.run([open(owner)], FIST_RELEASE_FRAMES + 1);
+      expect(still.holds[0]).toMatchObject({ commits: 0, cancels: 1 });
+      expect(still.controller.stats).toMatchObject({ commits: 0, cancels: 0 });
+      expect(still.cancelled).toEqual([]);
+    });
+
+    it('cancels when the hand is lost for longer than TRACKING_LOSS_MS, and continues after a shorter loss', () => {
+      const short = holding();
+      short.run([fist([300, 300])], 8);
+      short.run([], 3);
+      short.run([fist([340, 300])], 5);
+      expect(short.holds[0]!.cancels).toBe(0);
+      expect(short.last.gesture).toBe('hold');
+      expect(short.controller.stats.dragLosses).toBe(1);
+
+      const long = holding();
+      long.run([fist([300, 300])], 8);
+      long.run([], Math.ceil(TRACKING_LOSS_MS / FRAME_MS) + 2);
+      expect(long.holds[0]).toMatchObject({ cancels: 1, commits: 0 });
+      expect(long.cancelled).toEqual(['loss']);
+      expect(long.controller.stats.cancels).toBe(1);
+      expect(long.last.hands).toHaveLength(0);
+    });
+
+    it('cancels and reports external when the scene says the hold is no longer valid, and stays inert until the fist opens', () => {
+      const rig = holding();
+      rig.holds[0]!.valid = false;
+      rig.run([fist([320, 300])], 10);
+      expect(rig.holds[0]!.cancels).toBe(1);
+      expect(rig.cancelled).toEqual(['external']);
+      expect(rig.view(0)!.state).toBe('locked');
+      rig.run([open([320, 300])], FIST_RELEASE_FRAMES + 1);
+      expect(rig.view(0)!.state).not.toBe('locked');
+      expect(rig.holds[0]!.commits).toBe(0);
+    });
+
+    it('reset puts a running hold back without reporting', () => {
+      const rig = holding();
+      rig.run([fist([320, 300])], 10);
+      rig.controller.reset();
+      expect(rig.holds[0]!.cancels).toBe(1);
+      expect(rig.cancelled).toEqual([]);
+      expect(rig.run([], 1).gesture).toBe('none');
+    });
+  });
+
+  describe('fist and pinch', () => {
+    it('never lets a fist-like frame count toward a pinch, even with the thumb on the index finger', () => {
+      const rig = makeRig({ pick: () => part('o1', 'p1', 'Arm') });
+      rig.run([open(owner)], 6);
+      // Two frames are enough for a pinch (PINCH_ENGAGE_FRAMES) and too few for a fist: nothing may start.
+      rig.run([fist(owner, true)], FIST_ENGAGE_FRAMES - 1);
+      expect(rig.log).toEqual([]);
+      expect(rig.controller.stats.hands[0].pinching).toBe(false);
+      rig.run([fist(owner, true)], 10);
+      expect(rig.log).toEqual(['activate o1', 'beginHold o1']);
+      expect(rig.grabs).toHaveLength(0);
+      expect(rig.controller.stats.hands[0].pinching).toBe(false);
+    });
+
+    it('cancels a pinch that has not moved when the fist engages: nothing is committed, and the fist takes over', () => {
+      const rig = makeRig();
+      rig.run([open(owner)], 6);
+      rig.run([pinching(owner)], 3);
+      expect(rig.view(0)!.state).toBe('grab');
+      expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1']);
+      // The pinch midpoint drifts while the hand closes; that does not count as a move.
+      rig.run([fist(owner, true)], FIST_ENGAGE_FRAMES);
+      expect(rig.grabs[0]).toMatchObject({ commits: 0, cancels: 1 });
+      expect(rig.controller.stats).toMatchObject({ commits: 0, cancels: 0 });
+      expect(rig.cancelled).toEqual([]);
+      expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1', 'grab.cancel', 'activate o1', 'beginHold o1']);
+      expect(rig.view(0)!.state).toBe('hold');
+      // Opening the fist does not start a pinch by itself, and the hold ends without a commit.
+      rig.run([open(owner)], FIST_RELEASE_FRAMES + 1);
+      expect(rig.holds[0]).toMatchObject({ commits: 0, cancels: 1 });
+      expect(rig.view(0)!.state).not.toBe('locked');
+    });
+
+    it('cancels an orbit that has not moved the same way', () => {
+      const rig = makeRig({ pick: () => EMPTY_TARGET });
+      rig.run([open(owner)], 6);
+      rig.run([pinching(owner)], 3);
+      expect(rig.view(0)!.state).toBe('orbit');
+      rig.run([fist(owner, true)], FIST_ENGAGE_FRAMES);
+      expect(rig.orbits[0]!.ends).toBe(1);
+      expect(rig.view(0)!.state).toBe('fist');
+    });
+
+    it('lets a pinch that has moved block the fist', () => {
+      const rig = makeRig();
+      rig.run([open(owner)], 6);
+      rig.run([pinching(owner)], 3);
+      rig.run([pinching([320, 300])], 20);
+      expect(rig.grabs[0]!.previews.length).toBeGreaterThan(0);
+      rig.run([fist([320, 300], true)], 10);
+      expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1']);
+      expect(rig.grabs[0]!.cancels).toBe(0);
+      expect(rig.view(0)!.state).toBe('grab');
+    });
+
+    it('with fistEnabled false leaves the pinch exactly as without fists: a fist with the thumb on the index finger is a pinch', () => {
+      const rig = makeRig({ fistEnabled: false, pick: () => part('o1', 'p1', 'Arm') });
+      rig.run([open(owner)], 6);
+      rig.run([fist(owner, true)], 10);
+      expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1']);
+      expect(rig.view(0)!.state).toBe('grab');
+      expect(rig.holds).toHaveLength(0);
+      // The curl is still computed for the debug line, but no fist state is.
+      expect(rig.controller.stats.hands[0].curl).toBeCloseTo(0.65, 2);
+      expect(rig.controller.stats.hands[0].fist).toBe(false);
+    });
+  });
+
+  describe('another gesture runs', () => {
+    it('is inert while the other hand grabs: locked, 另一手操作中, no hold', () => {
+      const rig = makeRig({ pick: () => part('o1', 'p1', 'Arm') });
+      rig.run([open(owner), open(second)], 6);
+      rig.run([pinching(owner), open(second)], 3);
+      rig.run([pinching(owner), fist(second)], FIST_ENGAGE_FRAMES + 1);
+      expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1']);
+      expect(rig.view(1)!.state).toBe('locked');
+      expect(rig.view(1)!.badge).toBe('手勢：另一手操作中');
+      expect(rig.view(0)!.state).toBe('grab');
+      expect(rig.controller.stats.inert).toBe(1);
+      expect(rig.controller.twoHand).toBeNull();
+      expect(rig.last.link).toBeNull();
+      // It stays inert until the fist opens, and acts again afterwards.
+      rig.run([pinching(owner), open(second)], FIST_RELEASE_FRAMES + 1);
+      expect(rig.view(1)!.state).not.toBe('locked');
+    });
+
+    it('is inert while the other hand turns the view', () => {
+      const rig = makeRig({ pick: point => (point.x > 500 ? EMPTY_TARGET : part('o1', 'p1', 'Arm')) });
+      rig.run([open(second), open(owner)], 6);
+      rig.run([pinching(second), open(owner)], 3);
+      expect(rig.view(0)!.state).toBe('orbit');
+      rig.run([pinching(second), fist(owner)], FIST_ENGAGE_FRAMES + 1);
+      expect(rig.log).toEqual(['beginOrbit']);
+      expect(rig.view(1)!.badge).toBe('手勢：另一手操作中');
+      expect(rig.holds).toHaveLength(0);
+    });
+
+  });
+
+  describe('gates (requirement 94)', () => {
+    const AGENT: Gate = { level: 'view-only', reason: 'agent' };
+    const TRY_ON: Gate = { level: 'off', reason: 'try-on' };
+
+    it('holds and moves at full control and while the exploded view is open', () => {
+      for (const gate of [FULL, VIEW_ONLY]) {
+        const rig = makeRig();
+        rig.controller.setGate(gate);
+        rig.run([open(owner)], 4);
+        rig.run([fist(owner)], FIST_ENGAGE_FRAMES);
+        expect(rig.view(0)!.state).toBe('hold');
+        rig.run([fist([320, 300])], 20);
+        expect(rig.holds[0]!.previews.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('holds nothing during an agent run, with try-on or while tracking is too slow, and shows a locked hand', () => {
+      for (const gate of [AGENT, TRY_ON, OFF]) {
+        const rig = makeRig();
+        rig.controller.setGate(gate);
+        rig.run([open(owner)], 4);
+        rig.run([fist(owner)], FIST_ENGAGE_FRAMES + 2);
+        expect(rig.log).toEqual([]);
+        expect(rig.view(0)!.state).toBe('locked');
+      }
+    });
+
+    it('cancels a running hold when the fist is no longer allowed, but not when the exploded view opens', () => {
+      const rig = holding();
+      rig.run([fist([320, 300])], 10);
+      rig.controller.setGate(VIEW_ONLY);
+      expect(rig.holds[0]!.cancels).toBe(0);
+      expect(rig.last.gesture).toBe('hold');
+      rig.controller.setGate(FULL);
+      rig.controller.setGate(AGENT);
+      expect(rig.holds[0]!.cancels).toBe(1);
+      expect(rig.cancelled).toEqual(['gate']);
+      // The held fist does nothing until it opens, even when control returns.
+      rig.controller.setGate(FULL);
+      const log = [...rig.log];
+      rig.run([fist([360, 300])], 10);
+      expect(rig.log).toEqual(log);
+      expect(rig.view(0)!.state).toBe('locked');
+      rig.run([open([360, 300])], FIST_RELEASE_FRAMES + 1);
+      expect(rig.view(0)!.state).not.toBe('locked');
+    });
+
+    it('cancels a hold when hand control turns off', () => {
+      const rig = holding();
+      rig.run([fist([320, 300])], 10);
+      rig.controller.setGate(OFF);
+      expect(rig.holds[0]!.cancels).toBe(1);
+      expect(rig.cancelled).toEqual(['gate']);
+    });
+  });
+
+  describe('pulling the object apart with the other hand', () => {
+    it('joins a hold with a pinch as an explode: join state, 手勢：拉開 {n}%, gesture explode, a link from the palm to the pinch', () => {
+      const rig = pulling();
+      expect(rig.view(1)!.state).toBe('join');
+      expect(rig.view(1)!.badge).toBe('手勢：拉開 30%');
+      expect(rig.view(0)!.state).toBe('hold');
+      expect(rig.last.gesture).toBe('explode');
+      expect(rig.last.link).toEqual({ from: rig.view(0)!.palm, to: rig.view(1)!.cursor });
+      expect(rig.controller.stats.twoHand).toEqual({ explode: 1 });
+      expect(rig.controller.stats.inert).toBe(0);
+      expect(rig.controller.twoHand).toMatchObject({ gesture: 'explode', startValue: 0.3 });
+      // The span is measured from the palm centre to the pinch cursor.
+      expect(rig.controller.twoHand!.startSpan).toBeCloseTo(pairSpan(rig.view(0)!.palm, rig.view(1)!.cursor), 3);
+      // Joining alone changes nothing: the hands are inside the dead zone.
+      expect(rig.explodes).toEqual([]);
+      expect(rig.log).toEqual(['activate o1', 'beginHold o1']);
+    });
+
+    it('sets the amount from the change in distance, starting from explodeAmount(), and only when the rounded value changes', () => {
+      const rig = pulling();
+      pull(rig, second[0], 900);
+      expect(rig.controller.twoHand!.span).toBeGreaterThan(rig.controller.twoHand!.startSpan + 100);
+      expect(rig.explodes.length).toBeGreaterThan(2);
+      expect(rig.explodes.at(-1)).toBe(expectedAmount(rig, 0.3));
+      expect(rig.explodes.at(-1)!).toBeGreaterThan(0.3);
+      expect(rig.explodes.some((value, index) => index > 0 && value === rig.explodes[index - 1])).toBe(false);
+      expect(rig.view(1)!.badge).toBe(`手勢：拉開 ${Math.round(rig.explodes.at(-1)! * 100)}%`);
+      // Back together: the amount falls, clamped at 0.
+      pull(rig, 900, 380);
+      expect(rig.explodes.at(-1)).toBe(expectedAmount(rig, 0.3));
+      expect(rig.explodes.at(-1)!).toBeLessThan(0.3);
+      expect(Math.min(...rig.explodes)).toBeGreaterThanOrEqual(0);
+      expect(Math.max(...rig.explodes)).toBeLessThanOrEqual(1);
+    });
+
+    it('goes from assembled to fully exploded by half the viewport height of spreading', () => {
+      const rig = pulling({ explode: 0 });
+      pull(rig, second[0], 700 + EXPLODE_DEAD_ZONE_PX + EXPLODE_FULL_FRACTION * rig.state.viewportHeight + 25);
+      expect(rig.explodes.at(-1)).toBe(1);
+    });
+
+    it('ignores a change smaller than the dead zone', () => {
+      const rig = pulling();
+      pull(rig, second[0], second[0] + EXPLODE_DEAD_ZONE_PX - 4);
+      expect(rig.explodes).toEqual([]);
+      pull(rig, second[0] + EXPLODE_DEAD_ZONE_PX - 4, second[0] - EXPLODE_DEAD_ZONE_PX + 4);
+      expect(rig.explodes).toEqual([]);
+    });
+
+    it('ignores the angle: moving around the fist at the same distance changes nothing', () => {
+      const rig = pulling();
+      const centre = rig.view(0)!.palm;
+      const radius = pairSpan(centre, rig.view(1)!.cursor);
+      for (let degrees = 0; degrees <= 60; degrees += 5) {
+        const radians = (degrees * Math.PI) / 180;
+        rig.run([fist(owner), palmHand(centre.x + radius * Math.cos(radians), centre.y + radius * Math.sin(radians) + PALM_DY, 'pinch')], 6);
+      }
+      expect(rig.explodes).toEqual([]);
+    });
+
+    it('holds the object still during the pull, and continues from where it is, re-based, after the joining hand lets go', () => {
+      const rig = makeRig();
+      rig.state.explode = 0.3;
+      rig.run([open(owner), open(second)], 4);
+      rig.run([fist(owner), open(second)], FIST_ENGAGE_FRAMES);
+      rig.run([fist([260, 300]), open(second)], 30);
+      const hold = rig.holds[0]!;
+      expect(hold.previews.length).toBeGreaterThan(0);
+      rig.run([fist([260, 300]), pinching(second)], 3);
+      expect(rig.last.gesture).toBe('explode');
+      const before = hold.previews.length;
+      // The fist keeps moving during the pull: the object does not follow.
+      rig.run([fist([330, 380]), pinching(second)], 40);
+      expect(hold.previews).toHaveLength(before);
+      pull(rig, second[0], 850, [330, 380]);
+      expect(rig.explodes.length).toBeGreaterThan(0);
+      rig.run([fist([330, 380]), palmHand(850, second[1], 'open')], 4);
+      expect(hold.rebases).toBe(1);
+      expect(rig.last.gesture).toBe('hold');
+      expect(rig.last.link).toBeNull();
+      expect(rig.view(1)!.state).not.toBe('join');
+      expect(hold.previews.length).toBeGreaterThan(before);
+      expect(Math.hypot(hold.previews[before]!.x, hold.previews[before]!.y)).toBeLessThan(20);
+      rig.run([fist([400, 380]), palmHand(850, second[1], 'open')], 40);
+      expect(hold.previews.at(-1)!.x).toBeCloseTo(70, 0);
+      expect(hold.cancels).toBe(0);
+    });
+
+    it('starts the next pull from the amount the previous one left', () => {
+      const rig = pulling();
+      pull(rig, second[0], 850);
+      const left = rig.state.explode;
+      expect(left).not.toBe(0.3);
+      rig.run([fist(owner), palmHand(850, second[1], 'open')], 4);
+      rig.run([fist(owner), palmHand(850, second[1], 'pinch')], 3);
+      expect(rig.controller.twoHand).toMatchObject({ gesture: 'explode', startValue: left });
+      expect(rig.view(1)!.badge).toBe(`手勢：拉開 ${Math.round(left * 100)}%`);
+    });
+
+    it('ends everything when the fist opens, commits a moved hold and leaves the pinch inert', () => {
+      const rig = makeRig();
+      rig.run([open(owner), open(second)], 4);
+      rig.run([fist(owner), open(second)], FIST_ENGAGE_FRAMES);
+      rig.run([fist([320, 300]), open(second)], 30);
+      rig.run([fist([320, 300]), pinching(second)], 3);
+      rig.run([open([320, 300]), pinching(second)], FIST_RELEASE_FRAMES + 1);
+      expect(rig.holds[0]!.commits).toBe(1);
+      expect(rig.last.gesture).toBe('none');
+      expect(rig.last.link).toBeNull();
+      expect(rig.view(1)!.state).toBe('locked');
+      const calls = rig.explodes.length;
+      rig.run([open([320, 300]), palmHand(800, second[1], 'pinch')], 20);
+      expect(rig.explodes).toHaveLength(calls);
+    });
+
+    it('keeps working while the exploded view is open, and everything ends when the agent starts', () => {
+      const exploded = makeRig();
+      exploded.controller.setGate(VIEW_ONLY);
+      exploded.run([open(owner), open(second)], 4);
+      exploded.run([fist(owner), open(second)], FIST_ENGAGE_FRAMES);
+      exploded.run([fist(owner), pinching(second)], 3);
+      expect(exploded.last.gesture).toBe('explode');
+      pull(exploded, second[0], 900);
+      expect(exploded.explodes.length).toBeGreaterThan(0);
+
+      const running = pulling();
+      running.controller.setGate(VIEW_ONLY);
+      expect(running.last.gesture).toBe('explode');
+      expect(running.holds[0]!.cancels).toBe(0);
+      running.controller.setGate({ level: 'view-only', reason: 'agent' });
+      expect(running.holds[0]!.cancels).toBe(1);
+      expect(running.cancelled).toEqual(['gate']);
+      running.run([fist(owner), pinching(second)], 1);
+      expect(running.last.gesture).toBe('none');
+      expect(running.view(1)!.state).toBe('locked');
+    });
+
+    it('does not set the amount while the port cannot say how tall the view is', () => {
+      const rig = pulling();
+      rig.state.viewportHeight = 0;
+      pull(rig, second[0], 900);
+      expect(rig.explodes).toEqual([]);
+    });
+
+    it('is inert for a fist as the joining hand (the rule has no row for it)', () => {
+      const rig = holding({}, [second]);
+      rig.run([fist(owner), fist(second)], FIST_ENGAGE_FRAMES + 1);
+      expect(rig.controller.twoHand).toBeNull();
+      expect(rig.view(1)!.state).toBe('locked');
+      expect(rig.view(1)!.badge).toBe('手勢：另一手操作中');
+      expect(rig.holds).toHaveLength(1);
+    });
+  });
+});
+
+describe('decideFist', () => {
+  const p = part('o1', 'p1', 'p1', 'Demo');
+  const gate = (level: Gate['level'], reason: Gate['reason']): Gate => ({ level, reason });
+  it('holds the object of the part under the palm at full control and while exploded, and nothing otherwise', () => {
+    const hold = { kind: 'hold', objectId: 'o1', hit: { x: 0, y: 0, z: 0 } };
+    expect(decideFist(p, { objectCount: 1, gate: gate('full', null) })).toEqual(hold);
+    expect(decideFist(p, { objectCount: 1, gate: gate('view-only', 'exploded') })).toEqual(hold);
+    expect(decideFist(p, { objectCount: 1, gate: gate('view-only', 'agent') })).toEqual({ kind: 'none' });
+    expect(decideFist(p, { objectCount: 1, gate: gate('off', 'try-on') })).toEqual({ kind: 'none' });
+    expect(decideFist(p, { objectCount: 1, gate: gate('off', 'slow') })).toEqual({ kind: 'none' });
+  });
+  it('holds nothing over empty space, over an on-screen target, or with no objects', () => {
+    expect(decideFist(EMPTY_TARGET, { objectCount: 1, gate: FULL })).toEqual({ kind: 'none' });
+    expect(decideFist({ kind: 'screen', id: 'btn', label: '按鈕' }, { objectCount: 1, gate: FULL })).toEqual({ kind: 'none' });
+    expect(decideFist(p, { objectCount: 0, gate: FULL })).toEqual({ kind: 'none' });
+  });
+});
+
+describe('fist texts and marks', () => {
+  const base = { gesture: 'none' as const, value: null };
+  it('writes the badges: 握拳, 握住 with the object name, 拉開 with the percentage', () => {
+    expect(badgeText({ ...base, state: 'fist', target: EMPTY_TARGET })).toBe('手勢：握拳');
+    expect(badgeText({ ...base, state: 'hold', target: EMPTY_TARGET, objectName: 'Demo' })).toBe('手勢：握住 Demo');
+    expect(badgeText({ ...base, state: 'hold', target: EMPTY_TARGET, objectName: 'ABCDEFGHIJKLM' })).toBe('手勢：握住 ABCDEFGHIJKL…');
+    expect(badgeText({ ...base, state: 'hold', target: EMPTY_TARGET })).toBe('手勢：握住');
+    expect(badgeText({ state: 'join', target: EMPTY_TARGET, gesture: 'explode', value: 45 })).toBe('手勢：拉開 45%');
+    expect(badgeText({ state: 'join', target: EMPTY_TARGET, gesture: 'explode', value: 0 })).toBe('手勢：拉開 0%');
+    expect(badgeText({ state: 'join', target: EMPTY_TARGET, gesture: 'zoom', value: null })).toBe('手勢：雙手縮放');
+  });
+  it('writes the exploded line of requirement 94 when fists are on, and the P0 line otherwise', () => {
+    const input = { tracker: 'ready' as const, gate: VIEW_ONLY, cancelledAt: null, now: 0, handSeen: true };
+    expect(handStatus({ ...input, fistEnabled: true })).toEqual({
+      state: 'exploded', text: '爆炸圖開啟中，捏合只能轉動視角，握拳仍可移動整個物件；收回後即可抓取零件。',
+    });
+    expect(handStatus({ ...input, fistEnabled: false })).toEqual({ state: 'exploded', text: '爆炸圖開啟中，手勢只能轉動視角；收回後即可抓取零件。' });
+    expect(handStatus(input).text).toBe('爆炸圖開啟中，手勢只能轉動視角；收回後即可抓取零件。');
+    // The agent line does not change.
+    expect(handStatus({ ...input, gate: { level: 'view-only', reason: 'agent' }, fistEnabled: true }).text).toBe('代理執行中，手勢只能轉動視角。');
+  });
+  it('adds the curl ratio and the fist state of both hands to the debug line once a hand has been seen', () => {
+    const stats = createStats();
+    const tracking = { delegate: 'GPU' as const, fps: 22, inferenceMs: 48, hands: 2, pinchMm: [24, 61], gesture: 'hold' as const };
+    expect(debugLine(stats, tracking)).not.toContain('曲度');
+    stats.hands[0] = { pinchM: 0.06, pinching: false, target: 'o1:p1', curl: 0.65, fist: true };
+    stats.hands[1] = { pinchM: 0.05, pinching: false, target: '', curl: 1.841, fist: false };
+    expect(debugLine(stats, tracking)).toContain('手勢 hold · 曲度 0.65／1.84 · 握拳 是／否 · 拖曳');
+    stats.hands[1] = { pinchM: null, pinching: false, target: '', curl: null, fist: false };
+    expect(debugLine(stats, tracking)).toContain('曲度 0.65／—');
+  });
+  it('draws a hollow rounded square for the fist and a filled one while it holds, and nothing for other marks', () => {
+    const recorder = () => {
+      const calls: string[] = [];
+      const ctx = new Proxy({} as Record<string, unknown>, {
+        get: (target, key: string) => (key in target ? target[key] : (...args: unknown[]) => { calls.push(`${key}(${args.map(String).join(',')})`); }),
+        set: (target, key: string, value) => { target[key] = value; calls.push(`${key}=${String(value)}`); return true; },
+      });
+      return { ctx: ctx as unknown as CanvasRenderingContext2D, calls };
+    };
+    const hollow = recorder();
+    drawSquare(hollow.ctx, { x: 100, y: 200 }, overlayStyle({ state: 'fist' }));
+    expect(hollow.calls.some(call => call.startsWith('roundRect(85,185,30,30'))).toBe(true);
+    expect(hollow.calls.some(call => call.startsWith('fill('))).toBe(false);
+    expect(hollow.calls).toContain(`strokeStyle=${HAND_COLOUR}`);
+    const filled = recorder();
+    drawSquare(filled.ctx, { x: 100, y: 200 }, overlayStyle({ state: 'hold' }));
+    expect(filled.calls.some(call => call.startsWith('fill('))).toBe(true);
+    for (const state of ['hover', 'grab', 'tracked', 'locked'] as const) {
+      const none = recorder();
+      drawSquare(none.ctx, { x: 100, y: 200 }, overlayStyle({ state }));
+      expect(none.calls).toEqual([]);
+    }
+    // The ring helper draws nothing for the square marks, so a hand never shows both.
+    const ring = recorder();
+    drawRing(ring.ctx, { x: 100, y: 200 }, overlayStyle({ state: 'hold' }));
+    expect(ring.calls).toEqual([]);
   });
 });
 
