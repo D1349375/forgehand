@@ -1191,3 +1191,142 @@ summary {
 .agent-log-item.failed .agent-result-state {
   color:#f0b8a3
 }
+.joints-panel h2 {
+  font-size:16px;
+  margin:2px 0 12px
+}
+.joint-list {
+  list-style:none;
+  padding:0;
+  margin:12px 0 0;
+  max-height:200px;
+  overflow-y:auto;
+  border:1px solid var(--border)
+}
+.joint-list li+li {
+  border-top:1px solid #172a34
+}
+.joint-list button {
+  width:100%;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  text-align:left;
+  border:0;
+  background:transparent;
+  color:#aecbd6;
+  padding:9px 12px;
+  font-size:12px;
+  cursor:pointer
+}
+.joint-list button:hover {
+  background:#122631
+}
+.joint-list button.selected {
+  background:#1f1630;
+  color:#ecd5ff;
+  box-shadow:inset 3px 0 0 #c77dff
+}
+.joint-list small {
+  display:block;
+  font-size:9px;
+  color:#6e91a0;
+  margin-top:3px
+}
+.joint-state {
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  font-size:10px;
+  white-space:nowrap;
+  color:#9fc0cc
+}
+.joint-state.confirmed {
+  color:#bfe8cf
+}
+.joint-state.problem {
+  color:#f0b8a3
+}
+.notice.info {
+  border-color:#3d6b7a;
+  background:#0f2530;
+  color:#c7dde6
+}
+.joint-card {
+  border-top:1px solid var(--border);
+  padding-top:14px;
+  margin-top:14px
+}
+.joint-card-head {
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:10px;
+  font-size:12px;
+  color:#deebf1;
+  overflow-wrap:anywhere
+}
+.joint-recommendation {
+  margin:10px 0 0;
+  padding-left:10px;
+  border-left:2px solid #6c4a8a
+}
+.joint-recommendation ul,.joint-findings {
+  margin:6px 0 0;
+  padding-left:16px;
+  font-size:11px;
+  line-height:1.7;
+  color:#aecbd6
+}
+.joint-fields {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px 10px;
+  margin-top:12px
+}
+.joint-derived {
+  margin:12px 0 0;
+  font-size:11px;
+  line-height:1.7;
+  color:#c9b3dd;
+  overflow-wrap:anywhere
+}
+.joint-findings {
+  list-style:none;
+  padding-left:0
+}
+.joint-findings li span {
+  display:inline-block;
+  width:16px
+}
+.joint-findings li.error {
+  color:#f0b8a3
+}
+.joint-findings li.warning {
+  color:#ebc8a3
+}
+.text-field select {
+  width:100%;
+  background:#081520;
+  border:1px solid #2b4652;
+  color:#deebf1;
+  padding:7px 8px;
+  font-size:12px
+}
+.printer-panel {
+  padding:16px 24px
+}
+.printer-panel summary {
+  cursor:pointer;
+  font-size:14px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center
+}
+.printer-fields {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+  margin:14px 0 6px
+}

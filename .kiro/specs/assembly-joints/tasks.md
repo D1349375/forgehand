@@ -124,7 +124,7 @@ Findings and recommendations for every joint, the BOM and assembly notes, and th
 
 ## Task 4 — Joints in the workbench: scene, mouse join, panels and card
 
-`[ ]`
+`[x]`
 
 Joints become visible and usable with the mouse: marks on the parts, the 接合 panel with the mouse join and the joint card, the 材料 select, the 列印設定 panel, the print preview, and assembly moves with their notice.
 

@@ -17,14 +17,12 @@ const statusText: Record<AgentRunStatus, string> = {
  */
 export function AgentPanel({ agent, disabled = false }: { agent: AgentRun; disabled?: boolean }) {
   const [draft, setDraft] = useState('');
-  const [sent, setSent] = useState('');
   const running = agent.status === 'running';
   const blocked = disabled && !running;
 
   const submit = () => {
     const text = draft.trim();
     if (!text || running || disabled) return;
-    setSent(text);
     setDraft('');
     void agent.run(text);
   };
@@ -47,7 +45,7 @@ export function AgentPanel({ agent, disabled = false }: { agent: AgentRun; disab
       <span className={`status-dot ${running ? 'pulsing' : ''}`} /><span>{statusText[agent.status]}</span>
     </div>
     {blocked && <p className="small-muted" data-testid="agent-blocked">生成或修改進行中，完成或取消後才能交給代理。</p>}
-    {sent && agent.status !== 'idle' && <p className="agent-sent"><span>你的指示</span>{sent}</p>}
+    {agent.instruction && agent.status !== 'idle' && <p className="agent-sent"><span>你的指示</span>{agent.instruction}</p>}
     {agent.log.length > 0 && <ol className="agent-log" aria-label="執行進度" data-testid="agent-log">
       {agent.log.map(entry => <li key={entry.id} className={`agent-log-item ${entry.kind} ${entry.ok === false ? 'failed' : ''}`}>
         {entry.label && <strong>{entry.label}</strong>}
