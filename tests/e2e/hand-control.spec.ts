@@ -951,9 +951,18 @@ test.describe('T7 fist to hold, move and explode an object', () => {
     const palm = await pointWithPalmOn(page, 'housing', offset);
     const cursor = shift(palm, -offset.x, -offset.y);
     const batteryBefore = (await projectOf(page, 'battery'))!;
+    // A failed attempt on a slow camera ends with the hand hidden, which rightly cancels its half-made grab; the counters are
+    // therefore compared with their values at the start of the attempt that succeeded.
+    const counters = async () => {
+      const text = (await page.getByTestId('hand-debug').textContent()) ?? '';
+      const match = /拖曳 (\d+)／完成 (\d+)／取消 (\d+)/.exec(text);
+      return match ? match.slice(1, 4).join('/') : text;
+    };
+    let countersAtStart = '';
     await attempts(page, cursor, MOUSE_ONLY, async () => {
       await hideHand(page);
       await expect(overlay(page)).toHaveAttribute('data-hand-state', 'none', { timeout: 45_000 });
+      countersAtStart = await counters();
       await showHands(page, [{ at: cursor, pinchM: OPEN }]);
       await expect(overlay(page)).toHaveAttribute('data-hand-target', `${objectId}:housing`, { timeout: 45_000 });
       await showHands(page, [{ at: cursor, pinchM: PINCH }]);
@@ -972,7 +981,8 @@ test.describe('T7 fist to hold, move and explode an object', () => {
     expect(await modelRows(page)).toEqual(before);
     expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
     await expect(undoButton(page)).toBeDisabled();
-    await expect(page.getByTestId('hand-debug')).toContainText('拖曳 0／完成 0／取消 0');
+    await expect(page.getByTestId('hand-debug')).toContainText('完成 0／');
+    expect(await counters()).toBe(countersAtStart);
     expect(calls).toEqual([]);
   });
 

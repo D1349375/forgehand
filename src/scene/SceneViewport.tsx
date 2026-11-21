@@ -2,18 +2,21 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { assemblyOf } from '../../shared/assembly';
 import { localFace } from '../../shared/contact';
 import type { FaceId, Joint } from '../../shared/joint';
 import type { ModelSpec } from '../../shared/model';
-import type { ObjectTransform } from '../../shared/workspace';
+import type { ObjectTransform, Workspace } from '../../shared/workspace';
 import type { ArmSample } from '../try-on/arm-pose';
 import { createArmPreview } from './arm-preview';
 import { computeExplosion, groupProgress, worldMatrices } from './explode';
-import type { GrabSession, HoldSession, OrbitSession } from '../hands/controller';
+import type { AssembleSession, GrabSession, HoldSession, OrbitSession } from '../hands/controller';
 import type { Point } from '../hands/types';
 import { buildModel, disposeObject, modelBounds, objectsBounds } from './geometry';
-import { createGrabSession, createHoldSession, createOrbitSession, grabStillValid, type LiveGrab, type LiveHold } from './hand-sessions';
-import { buildPartMarks, markId, markKey, type PartMarks } from './joint-marks';
+import {
+  createAssembleSession, createGrabSession, createHoldSession, createOrbitSession, grabStillValid, type AssembleCue, type AssembleResult, type LiveGrab, type LiveHold,
+} from './hand-sessions';
+import { buildPartMarks, glowMarks, markId, markKey, type PartMarks } from './joint-marks';
 import { planSceneSync, type SceneSyncPlan } from './scene-sync';
 import { applyPartStyle, hologramPart } from './style';
 
@@ -22,11 +25,11 @@ export interface Vector { x: number; y: number; z: number }
 export interface SceneObjectInput { id: string; model: ModelSpec; transform: ObjectTransform }
 export interface SceneHandle {
   reset(): void; zoomIn(): void; zoomOut(): void;
+  /** The unit direction from the view's target to its camera (the export image looks along its negative), or null before the view exists. */
+  viewDirection(): Vector | null;
   /** Viewport client coordinates of a part's centre (used by tests and tooling); `objectId` defaults to the active object. */
   projectPart(id: string, objectId?: string): { x: number; y: number } | null;
   /** Viewport client coordinates of the centre of a part's contact face (used by tests and tooling), or null for an unknown part or a face that is not a contact face. */
-  /** The unit direction from the view's target to its camera (the export image looks along its negative), or null before the view exists. */
-  viewDirection(): Vector | null;
   projectFace(objectId: string, partId: string, face: FaceId): { x: number; y: number } | null;
   /** The nearest part under a client point, or null (also for a point outside the viewport). Used by hand control for hover and grabbing. */
   hitTest(point: Point): { objectId: string; partId: string; name: string; objectName: string; hit: Vector } | null;
@@ -39,6 +42,12 @@ export interface SceneHandle {
    * the exploded view (only the object's root moves) and not because another hold runs.
    */
   beginObjectHold(objectId: string, hit: Vector): HoldSession | null;
+  /**
+   * Starts the second fist's hold of another object while `owner` (a hold from `beginObjectHold`) runs, and the snap between the two
+   * assemblies (assembly-joints Task 6). Null when `owner` is not a running hold, the object is the owner's or in its assembly, the mouse or
+   * the gizmo is busy, or the `workspace` prop is missing.
+   */
+  beginAssemble(owner: HoldSession, objectId: string, hit: Vector): AssembleSession | null;
 }
 interface Props {
   objects: readonly SceneObjectInput[];
@@ -53,6 +62,13 @@ interface Props {
   onTransform?: (objectId: string, partId: string, position: Vector, rotation: Vector, kind: 'translate' | 'rotate') => void;
   /** A hand hold moved a whole object: called once on release with the new position (the 物件 panel's path, one undo step). */
   onObjectMove?: (objectId: string, position: Vector) => void;
+  /**
+   * The workspace behind `objects` and `joints`: a fist hold moves the whole assembly of its object, and the two-fist join reads the model
+   * data for its snap. Without it a hold moves its own object only and there is no two-fist join.
+   */
+  workspace?: Workspace;
+  /** Two fists released an assemble: one join or the moves of both objects, to commit as one undo step. Returns whether it was applied; when not, the roots go back. */
+  onAssemble?: (result: AssembleResult) => boolean;
   onError?: (message: string) => void;
   onReady?: (info: { objects: number; parts: number; renderMs: number }) => void;
   /** The workspace's joints; only written to data attributes here (the drawings come from `marks`). */
@@ -119,6 +135,8 @@ interface View {
   previewed: Set<string>;
   /** The 可以接合 sprite, while shown. */
   cue: THREE.Sprite | null;
+  /** The cue of a ready two-fist join (the mouse join comes through the `joinPreview` prop): glowing faces and the label position. */
+  handJoin: { key: string; glow: PartMarks[]; label: Vector } | null;
   /** The printable mesh of the print preview and the surface it hides. */
   printed: { objectId: string; partId: string; group: THREE.Group; hidden: THREE.Object3D | null } | null;
   reset: () => void;
@@ -260,6 +278,14 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
 
   useImperativeHandle(ref, () => ({
     reset: () => view.current?.reset(),
+    viewDirection() {
+      const current = view.current;
+      if (!current) return null;
+      const direction = current.camera.position.clone().sub(current.controls.target);
+      if (direction.lengthSq() < 1e-12) return null;
+      direction.normalize();
+      return { x: direction.x, y: direction.y, z: direction.z };
+    },
     zoomIn: () => zoom(0.8),
     zoomOut: () => zoom(1.25),
     projectPart(id, objectId) {
@@ -278,14 +304,6 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       const current = view.current;
       const entry = current?.entries.get(objectId);
       const node = entry?.parts.get(partId);
-    viewDirection() {
-      const current = view.current;
-      if (!current) return null;
-      const direction = current.camera.position.clone().sub(current.controls.target);
-      if (direction.lengthSq() < 1e-12) return null;
-      direction.normalize();
-      return { x: direction.x, y: direction.y, z: direction.z };
-    },
       const part = entry?.model.parts.find(candidate => candidate.id === partId);
       const local = part ? localFace(part, face) : null;
       if (!current || !node || !local) return null;
@@ -342,27 +360,89 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       const current = view.current;
       const entry = current?.entries.get(objectId);
       if (!current || !entry) return null;
-      // Unlike a part grab, a hold is allowed in the exploded view: it moves only the object's root, which the explode animation never
-      // touches. Another hold may run too (a second hand can hold a second object).
-      if (current.mouseBusy || current.gizmo.dragging) return null;
-      current.gizmo.enabled = false;
-      const session: LiveHold = createHoldSession({
-        objectId, root: entry.root, camera: current.camera,
-        viewportHeight: () => current.renderer.domElement.getBoundingClientRect().height,
-        stored: { ...entry.transform.position },
-        storedNow: () => ({ ...(current.entries.get(objectId)?.transform.position ?? entry.transform.position) }),
-        hit,
-        onCommit: position => callbacks.current.onObjectMove?.(objectId, position),
+      return startHold(current, entry, hit, position => callbacks.current.onObjectMove?.(objectId, position));
+    },
+    beginAssemble(owner, objectId, hit) {
+      const current = view.current;
+      const workspace = callbacks.current.workspace;
+      const entry = current?.entries.get(objectId);
+      const ownerHold = current ? [...current.holds].find(hold => hold === owner) : undefined;
+      if (!current || !workspace || !entry || !ownerHold) return null;
+      // Side b must be another object that is not already part of side a's assembly.
+      const ownerMembers = assemblyOf(workspace, ownerHold.objectId);
+      if (ownerHold.objectId === objectId || ownerMembers.includes(objectId)) return null;
+      // The assemble commits through `onAssemble`: this hold never calls `onObjectMove`.
+      const joiner = startHold(current, entry, hit, () => {});
+      if (!joiner) return null;
+      const roots = new Map<string, THREE.Object3D>();
+      for (const id of [...ownerMembers, ...assemblyOf(workspace, objectId)]) {
+        const member = current.entries.get(id);
+        if (member) roots.set(id, member.root);
+      }
+      return createAssembleSession({
+        workspace, owner: ownerHold, joiner, roots,
+        stored: id => current.entries.get(id)?.transform ?? null,
+        onCue: cue => showHandJoin(cue),
+        onAssemble: result => callbacks.current.onAssemble?.(result) ?? false,
         onChange: current.invalidate,
-        onEnd: () => {
-          current.holds.delete(session);
-          current.gizmo.enabled = current.holds.size === 0 && current.grab === null;
-        },
       });
-      current.holds.add(session);
-      return session;
     },
   }), []);
+
+  /**
+   * Starts a fist hold of one object: its root and, when the `workspace` prop is there, the roots of the rest of its assembly move with it
+   * (requirement 87). Unlike a part grab, a hold is allowed in the exploded view: it moves only object roots, which the explode animation
+   * never touches. Another hold may run too (a second hand can hold a second object).
+   */
+  function startHold(current: View, entry: Entry, hit: Vector, onCommit: (position: Vector) => void): LiveHold | null {
+    if (current.mouseBusy || current.gizmo.dragging) return null;
+    const objectId = entry.id;
+    const workspace = callbacks.current.workspace;
+    const followers = (workspace ? assemblyOf(workspace, objectId) : []).flatMap(id => {
+      const member = id === objectId ? undefined : current.entries.get(id);
+      return member ? [{
+        root: member.root, stored: { ...member.transform.position },
+        storedNow: () => ({ ...(current.entries.get(id)?.transform.position ?? member.transform.position) }),
+      }] : [];
+    });
+    current.gizmo.enabled = false;
+    const session: LiveHold = createHoldSession({
+      objectId, root: entry.root, camera: current.camera,
+      viewportHeight: () => current.renderer.domElement.getBoundingClientRect().height,
+      stored: { ...entry.transform.position },
+      storedNow: () => ({ ...(current.entries.get(objectId)?.transform.position ?? entry.transform.position) }),
+      followers,
+      hit,
+      onCommit,
+      onChange: current.invalidate,
+      onEnd: () => {
+        current.holds.delete(session);
+        current.gizmo.enabled = current.holds.size === 0 && current.grab === null;
+      },
+    });
+    current.holds.add(session);
+    return session;
+  }
+
+  /** The cue of a ready two-fist join: the two faces glow and the label stands at side a's face. `null` clears it. */
+  function showHandJoin(cue: AssembleCue | null) {
+    const current = view.current;
+    if (!current) return;
+    if (!cue) {
+      if (!current.handJoin) return;
+      current.handJoin = null;
+      syncMarks();
+      applyJoinPreview();
+      return;
+    }
+    const workspace = callbacks.current.workspace;
+    const key = JSON.stringify([cue.a, cue.b]);
+    const changed = current.handJoin?.key !== key;
+    // The glow is rebuilt only when the pair changes; the label follows side a's face every frame.
+    current.handJoin = { key, glow: changed && workspace ? glowMarks(workspace, cue.a, cue.b) : (current.handJoin?.glow ?? []), label: cue.label };
+    if (changed) syncMarks();
+    applyJoinPreview();
+  }
 
   function zoom(factor: number) {
     const current = view.current;
@@ -469,7 +549,7 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
     const { marks = [], showJoints = true, joinPreview } = callbacks.current;
     const wanted = new Map<string, PartMarks>();
     if (showJoints) for (const item of marks) wanted.set(markId(item), item);
-    for (const glow of joinPreview?.glow ?? []) wanted.set(markId(glow), glow);
+    for (const glow of joinPreview?.glow ?? current.handJoin?.glow ?? []) wanted.set(markId(glow), glow);
     for (const [id, node] of current.markNodes) {
       const item = wanted.get(id);
       const part = item ? current.entries.get(item.objectId)?.parts.get(item.partId) : undefined;
@@ -506,7 +586,9 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       placeRoot(entry.root, transform);
       current.previewed.add(id);
     }
-    const label = preview?.ready ? preview.label : null;
+    // A ready two-fist join shows the same cue as a ready mouse join; the two never run together.
+    const ready = preview?.ready ?? current.handJoin !== null;
+    const label = preview ? (preview.ready ? preview.label : null) : (current.handJoin?.label ?? null);
     if (label && current.entries.size > 0) {
       const cue = current.cue ?? (current.cue = createCue());
       const { radius } = objectsBounds([...current.entries.values()].map(entry => entry.root));
@@ -517,7 +599,7 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       disposeCue(current.cue);
       current.cue = null;
     }
-    current.renderer.domElement.dataset.snap = preview?.ready ? 'ready' : 'none';
+    current.renderer.domElement.dataset.snap = ready ? 'ready' : 'none';
     current.invalidate();
   }
 
@@ -719,7 +801,7 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
     });
     const current: View = { scene, camera, controls, gizmo, renderer, objects: objectsGroup, entries: new Map(), surfaces: [], raycaster: new THREE.Raycaster(),
       mouseBusy: false, grab: null, holds: new Set(), activeId: null, viewChanged: false, explodeShown: 0,
-      markNodes: new Map(), previewed: new Set(), cue: null, printed: null, reset: () => fit(), invalidate };
+      markNodes: new Map(), previewed: new Set(), cue: null, handJoin: null, printed: null, reset: () => fit(), invalidate };
     renderer.domElement.dataset.explode = '0.000';
     view.current = current;
     const resize = () => {

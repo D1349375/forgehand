@@ -6,13 +6,14 @@ import { decideFist, decidePinch } from './decide';
 import { explodeAmount, zoomRatio } from './drag';
 import { fistStep, initialFistState, type FistEvent, type FistState } from './fist';
 import { fistAllowed, type Gate } from './gate';
-import { joinGesture, type JoinRule, type OwnerGesture, type TwoHandGesture } from './join';
+import { joinGesture, type JoinContext, type JoinRule, type OwnerGesture, type TwoHandGesture } from './join';
 import { OneEuroFilter2D } from './one-euro';
 import { angleDelta, pairAngle, pairSpan } from './pair';
 import { initialPinchState, pinchStep, type PinchEvent, type PinchInput, type PinchState } from './pinch';
 import { assignHands, dedupeHands } from './slots';
 import {
-  createStats, recordCancel, recordCommit, recordDrag, recordDragGap, recordDragLoss, recordHand, recordInert, recordJoin, type HandStats,
+  createStats, recordAssemble, recordCancel, recordCommit, recordDrag, recordDragGap, recordDragLoss, recordHand, recordInert, recordJoin, recordJoined,
+  recordSnap, type HandStats,
 } from './stats';
 import { initialSettleState, settleStep, type SettleState } from './targets';
 import { badgeText } from './text';
@@ -40,6 +41,32 @@ export interface HandPort {
   setExplode?(amount: number): void;
   /** Task 7: height of the camera view in client pixels, the scale of the explode pull (requirement 93). Without it a pull changes nothing. */
   viewportHeight?(): number;
+  /**
+   * assembly-joints Task 6: the second fist holds another object while `owner` (the first fist's hold) runs; both holds move their
+   * assemblies and the scene looks for a join. Null when the scene refuses; the fist is then inert. Without it there is no assemble.
+   */
+  beginAssemble?(owner: HoldSession, objectId: string, hit: Vector): AssembleSession | null;
+  /** assembly-joints Task 6: whether two objects are already connected through joints (a fist on one of them cannot join them). */
+  sameAssembly?(a: string, b: string): boolean;
+}
+
+/** What one frame of snap detection found (requirement 63): the best pair within the engage limits, and the time it took. */
+export interface AssemblePreview {
+  /** The snap is ready: the faces glow, the joining object shows at its aligned pose, and releasing creates a joint. */
+  ready: boolean;
+  metrics: { gapMm: number; angleDeg: number; overlapMm2: number } | null;
+  detectMs: number;
+}
+
+/**
+ * Two holds moving two assemblies at once (assembly-joints design 10.3). The controller passes both palm offsets every frame; the
+ * owner is not frozen. `preview` returns null when the scene says the session is no longer valid. `commit(true)` creates a joint when
+ * the snap is ready and otherwise commits the moves; `commit(false)` never creates a joint. Both end the session.
+ */
+export interface AssembleSession {
+  preview(ownerOffset: Point, joinerOffset: Point, now: number): AssemblePreview | null;
+  commit(allowJoin: boolean): void;
+  cancel(): void;
 }
 
 /** Moving a whole object by hand (Task 7): the same shape as a part grab, committed through the object's transform. */
@@ -110,6 +137,12 @@ interface Joiner {
   zoom: number;
   /** The explode amount last sent to the port, rounded to 0.01 (Task 7). */
   explode: number;
+  /** The assemble session of a two-fist join (assembly-joints Task 6); null for every other gesture. */
+  assemble: AssembleSession | null;
+  /** Where the joining fist's palm was when it engaged: its offsets are measured from here. */
+  ref: Point;
+  /** The latest preview said the snap is ready. */
+  ready: boolean;
 }
 
 interface Session {
@@ -216,10 +249,25 @@ export class HandController {
       return;
     }
     const joiner = session.joiner;
-    if (joiner && this.join(session.kind, { kind: joiner.input, target: joiner.target }, this.gate) !== joiner.gesture) {
+    if (joiner && this.join(session.kind, { kind: joiner.input, target: joiner.target }, this.gate, this.contextOf(session)) !== joiner.gesture) {
+      if (joiner.assemble) {
+        // A gate change away from full control cancels an assemble: both objects go back (requirement 62).
+        this.cancelSession('gate');
+        this.blocked[session.owner] = 'passive';
+        this.blocked[joiner.slot] = 'passive';
+        return;
+      }
       this.leaveJoiner();
       this.blocked[joiner.slot] = 'passive';
     }
+  }
+
+  /** What the join rule may ask about the running gesture: the held object, and whether two objects are one assembly. */
+  private contextOf(session: Session): JoinContext {
+    return {
+      ownerObjectId: session.kind === 'hold' && session.target.kind === 'part' ? session.target.objectId : null,
+      sameAssembly: (a, b) => this.port.sameAssembly?.(a, b) ?? a === b,
+    };
   }
 
   /** Cancel and forget: 手勢 off, camera off, page hidden. Does not report through `onCancelled`. */
@@ -227,7 +275,7 @@ export class HandController {
     const session = this.session;
     if (session?.scene) {
       if (isEditing(session.kind)) {
-        (session.scene as GrabSession | HoldSession).cancel();
+        this.cancelScene(session);
         recordCancel(this.stats);
       } else {
         (session.scene as OrbitSession).end();
@@ -397,6 +445,7 @@ export class HandController {
       slot, gesture, input, target,
       startSpan: pairSpan(owner, joinerPoint), span: pairSpan(owner, joinerPoint),
       lastAngle: pairAngle(owner, joinerPoint), angle: 0, startValue, zoom: 1, explode: Math.round(startValue * 100) / 100,
+      assemble: null, ref: { ...this.tracks[slot].palm }, ready: false,
     };
     recordJoin(this.stats, gesture);
   }
@@ -470,9 +519,18 @@ export class HandController {
     const target = this.port.pick(track.palm);
     const session = this.session;
     if (session) {
-      // Another hand's gesture runs: the fist joins it only if the rule has a row for it (none in this spec), else it is inert.
-      const gesture = session.owner !== slot && !session.joiner ? this.join(session.kind, { kind: 'fist', target }, this.gate) : null;
-      if (gesture) {
+      // Another hand's gesture runs: the fist joins it only if the rule has a row for it (the assemble row of a hold), else it is inert.
+      const gesture = session.owner !== slot && !session.joiner ? this.join(session.kind, { kind: 'fist', target }, this.gate, this.contextOf(session)) : null;
+      if (gesture === 'assemble' && target.kind === 'part') {
+        // The scene may refuse (an object it does not know, the mouse busy): the fist is inert then.
+        const assemble = this.port.beginAssemble?.(session.scene as HoldSession, target.objectId, target.hit) ?? null;
+        if (assemble) {
+          this.startJoiner(session, slot, gesture, 'fist', target);
+          session.joiner!.assemble = assemble;
+          recordAssemble(this.stats);
+          return;
+        }
+      } else if (gesture) {
         this.startJoiner(session, slot, gesture, 'fist', target);
         return;
       }
@@ -508,7 +566,10 @@ export class HandController {
 
   private onFistRelease(slot: HandSlot, moved: boolean): void {
     const session = this.session;
-    if (session?.owner === slot && session.kind === 'hold') {
+    if (session?.joiner?.assemble && (session.owner === slot || session.joiner.slot === slot)) {
+      // Either fist opening ends the assemble for both hands (requirement 61); the other fist is inert until it opens.
+      this.commitSession(true);
+    } else if (session?.owner === slot && session.kind === 'hold') {
       if (moved || session.moved) this.commitSession();
       else this.cancelQuietly();
     } else if (session?.joiner?.slot === slot) {
@@ -520,7 +581,12 @@ export class HandController {
   private onFistLost(slot: HandSlot, now: number): void {
     this.blocked[slot] = null;
     const session = this.session;
-    if (session?.owner === slot && session.kind === 'hold') {
+    if (session?.joiner?.assemble && (session.owner === slot || session.joiner.slot === slot)) {
+      // Either hand lost: both holds follow ON_TRACKING_LOSS, and a joint is never created (requirement 62).
+      this.noteGap(session, now);
+      if (ON_TRACKING_LOSS === 'cancel') this.cancelSession('loss');
+      else this.commitSession(false);
+    } else if (session?.owner === slot && session.kind === 'hold') {
       this.noteGap(session, now);
       if (ON_TRACKING_LOSS === 'cancel') this.cancelSession('loss');
       else this.commitSession();
@@ -545,26 +611,40 @@ export class HandController {
     }
   }
 
-  private commitSession(): void {
+  /** `allowJoin` matters to an assemble only: false (a lost hand that is kept) commits the moves and never creates a joint. */
+  private commitSession(allowJoin = true): void {
     const session = this.session;
     if (!session) return;
-    (session.scene as GrabSession).commit();
+    const joiner = session.joiner;
+    if (joiner?.assemble) {
+      if (allowJoin && joiner.ready) recordJoined(this.stats);
+      joiner.assemble.commit(allowJoin);
+    } else {
+      (session.scene as GrabSession).commit();
+    }
     recordCommit(this.stats);
     this.endSession(session);
+  }
+
+  /** The scene's cancel of the running gesture: both holds of an assemble, the one session of anything else. */
+  private cancelScene(session: Session): void {
+    const assemble = session.joiner?.assemble;
+    if (assemble) assemble.cancel();
+    else (session.scene as GrabSession | HoldSession).cancel();
   }
 
   /** A cancel that is a tap or a quiet end, not counted and not reported. */
   private cancelQuietly(): void {
     const session = this.session;
     if (!session) return;
-    (session.scene as GrabSession).cancel();
+    this.cancelScene(session);
     this.endSession(session);
   }
 
   private cancelSession(reason: CancelReason): void {
     const session = this.session;
     if (!session) return;
-    (session.scene as GrabSession).cancel();
+    this.cancelScene(session);
     recordCancel(this.stats);
     this.endSession(session);
     this.onCancelled?.(reason);
@@ -575,7 +655,7 @@ export class HandController {
     const session = this.session;
     if (!session) return;
     if (session.kind === 'orbit') (session.scene as OrbitSession).end();
-    else if (isEditing(session.kind)) (session.scene as GrabSession | HoldSession).cancel();
+    else if (isEditing(session.kind)) this.cancelScene(session);
     this.endSession(session);
   }
 
@@ -593,6 +673,11 @@ export class HandController {
   private leaveJoiner(): void {
     const session = this.session;
     if (!session?.joiner) return;
+    // An assemble has no "leave": its two holds end together, and nothing is committed.
+    if (session.joiner.assemble) {
+      this.cancelQuietly();
+      return;
+    }
     session.joiner = null;
     session.ref = this.ownerPoint(session);
     session.scene?.rebase();
@@ -635,6 +720,9 @@ export class HandController {
       }
     }
     const joined = this.session?.joiner;
+    if (this.session && joined?.assemble && this.present[joined.slot] && this.present[this.session.owner]) {
+      this.stepAssemble(this.session, joined, now);
+    }
     if (this.session && joined && this.present[joined.slot] && this.present[this.session.owner]) {
       const from = this.ownerPoint(this.session);
       const to = this.joinerPoint(joined);
@@ -673,6 +761,31 @@ export class HandController {
     }
   }
 
+  /**
+   * One frame of a running assemble: both fists move their assemblies (the owner does not freeze, unlike the other two-hand gestures),
+   * and the scene tells whether the faces snap. A palm that has not left its dead zone offsets nothing.
+   */
+  private stepAssemble(session: Session, joiner: Joiner, now: number): void {
+    const assemble = joiner.assemble!;
+    const owner = this.tracks[session.owner];
+    const second = this.tracks[joiner.slot];
+    const ownerOffset = owner.fist.moved ? { x: owner.palm.x - session.ref.x, y: owner.palm.y - session.ref.y } : { x: 0, y: 0 };
+    const joinerOffset = second.fist.moved ? { x: second.palm.x - joiner.ref.x, y: second.palm.y - joiner.ref.y } : { x: 0, y: 0 };
+    const result = assemble.preview(ownerOffset, joinerOffset, now);
+    if (!result) {
+      // The scene changed under one of the holds: both objects go back, and both fists stay inert until they open.
+      const slot = joiner.slot;
+      this.cancelSession('external');
+      this.blocked[session.owner] = 'passive';
+      this.blocked[slot] = 'passive';
+      return;
+    }
+    joiner.ready = result.ready;
+    recordSnap(this.stats, {
+      gapMm: result.metrics?.gapMm ?? null, angleDeg: result.metrics?.angleDeg ?? null, overlapMm2: result.metrics?.overlapMm2 ?? null, detectMs: result.detectMs,
+    });
+  }
+
   // ---- the overlay frame -------------------------------------------------------------------------------------------------
 
   private visible(track: Track, now: number): boolean {
@@ -685,7 +798,7 @@ export class HandController {
     return session.joiner ? session.joiner.gesture : session.kind;
   }
 
-  private stateOf(slot: HandSlot, track: Track): { state: HandState; target: Target; inert: boolean; objectName?: string } {
+  private stateOf(slot: HandSlot, track: Track): { state: HandState; target: Target; inert: boolean; objectName?: string; ready?: boolean } {
     const settled = track.settle.settled;
     const session = this.session;
     if (session?.owner === slot) {
@@ -696,7 +809,14 @@ export class HandController {
       }
       return { state: 'hover', target: settled, inert: false };
     }
-    if (session?.joiner?.slot === slot) return { state: 'join', target: settled, inert: false };
+    if (session?.joiner?.slot === slot) {
+      const joiner = session.joiner;
+      // The joining fist of an assemble holds the second object (requirement 63): the same state as the owner's hold, and a ready snap says so.
+      if (joiner.assemble) {
+        return { state: 'hold', target: settled, inert: false, objectName: joiner.target.kind === 'part' ? joiner.target.objectName : undefined, ready: joiner.ready };
+      }
+      return { state: 'join', target: settled, inert: false };
+    }
     const blocked = this.blocked[slot];
     if (blocked) return { state: 'locked', target: settled, inert: blocked === 'inert' };
     // A closed fist that holds nothing; grey and dashed instead when the gate does not allow fists (an agent run).
@@ -713,16 +833,17 @@ export class HandController {
     for (const slot of [0, 1] as const) {
       const track = this.tracks[slot];
       if (!this.visible(track, now)) continue;
-      const { state, target, inert, objectName } = this.stateOf(slot, track);
+      const { state, target, inert, objectName, ready } = this.stateOf(slot, track);
       // The joining hand of a pull shows the explode percentage (requirement 95).
       const value = state === 'join' && this.session?.joiner?.gesture === 'explode' ? Math.round(this.session.joiner.explode * 100) : null;
       views.push({
         slot, state, targetKey: targetKey(track.settle.settled), points: track.points, cursor: track.cursor, palm: track.palm,
-        badge: badgeText({ state, target, gesture, value, objectName, inert }),
+        badge: badgeText({ state, target, gesture, value, objectName, inert, ready }),
       });
     }
     const session = this.session;
-    const link = session?.joiner ? { from: { ...this.ownerPoint(session) }, to: { ...this.joinerPoint(session.joiner) } } : null;
+    // While an assemble is ready the label 可以接合 replaces the link line (requirement 58).
+    const link = session?.joiner && !(session.joiner.assemble && session.joiner.ready) ? { from: { ...this.ownerPoint(session) }, to: { ...this.joinerPoint(session.joiner) } } : null;
     const frame: OverlayFrame = { hands: views, gesture, link, arc: null };
     if (remember) this.signature = this.signatureOf(frame);
     return frame;

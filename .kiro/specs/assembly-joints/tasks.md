@@ -215,7 +215,7 @@ The agent can create, change and remove joints and set materials, sees joints an
 
 ## Task 6 — Two-fist join
 
-`[ ]`
+`[x]`
 
 Two fists hold two objects; bringing them together snaps the faces and shows 可以接合; releasing creates the joint. Every fist hold moves the whole assembly. This task extends `hand-manipulation`'s code from its Task 7.
 
