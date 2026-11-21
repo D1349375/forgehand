@@ -10,7 +10,7 @@ import { ok } from '../../server/tools/helpers';
 const TOOLS = [
   'generate_design', 'edit_design', 'select_parts', 'get_project_state', 'explode_view',
   'set_active_object', 'set_transform', 'remove_object',
-  'create_joint', 'update_joint', 'remove_joint', 'set_material', 'wear_on_arm', 'prepare_export',
+  'create_joint', 'update_joint', 'remove_joint', 'set_material', 'wear_on_arm', 'set_camera_image', 'prepare_export',
 ];
 
 const fakeTool = (over: Partial<ToolDefinition<Record<string, never>>> = {}): ToolDefinition<Record<string, never>> => ({
@@ -66,7 +66,7 @@ describe('createToolRegistry', () => {
 });
 
 describe('default registry', () => {
-  it('holds exactly the fourteen working tools, all project-scope server tools, in the order the model sees them', () => {
+  it('holds exactly the fifteen working tools, all project-scope server tools, in the order the model sees them', () => {
     expect(listTools().map(tool => tool.name)).toEqual(TOOLS);
     expect(listTools({ scope: 'project', side: 'server' }).map(tool => tool.name)).toEqual(TOOLS);
     expect(listTools({ scope: 'home' })).toEqual([]);
@@ -92,6 +92,7 @@ describe('default registry', () => {
       remove_joint: '移除接合',
       set_material: '設定材料',
       wear_on_arm: '護臂試戴',
+      set_camera_image: '鏡頭畫面',
       prepare_export: '準備匯出',
     });
   });
@@ -121,6 +122,7 @@ describe('default registry', () => {
       remove_joint: 'writes-scene',
       set_material: 'writes-scene',
       wear_on_arm: 'uses-camera',
+      set_camera_image: 'uses-camera',
       prepare_export: 'read-only',
     });
   });
@@ -142,6 +144,7 @@ describe('argsShapeText', () => {
     expect(shape('remove_joint')).toBe('jointId: string');
     expect(shape('set_material')).toBe('objectId: string, material: string | null');
     expect(shape('wear_on_arm')).toBe('enabled: boolean');
+    expect(shape('set_camera_image')).toBe('visible: boolean');
     expect(shape('prepare_export')).toBe('scope: string | null, objectId: string | null');
   });
 
@@ -154,7 +157,7 @@ describe('generated tool list in AGENT_INSTRUCTIONS', () => {
   const section = AGENT_INSTRUCTIONS.split('Available tools:\n')[1]!.split('\nRules:')[0]!;
   const lines = section.split('\n').filter(line => line.trim());
 
-  it('lists exactly the fourteen tools, in registration order, as `- name(args): description`', () => {
+  it('lists exactly the fifteen tools, in registration order, as `- name(args): description`', () => {
     expect(lines).toEqual(listTools({ scope: 'project', side: 'server' })
       .map(tool => `- ${tool.name}(${argsShapeText(tool.args)}): ${tool.description}`));
     expect(lines.map(line => /^- (\w+)\(/.exec(line)![1])).toEqual(TOOLS);
@@ -166,8 +169,8 @@ describe('generated tool list in AGENT_INSTRUCTIONS', () => {
     expect(line).toContain("not the user's design");
   });
 
-  it('has one line per tool, fourteen in all', () => {
-    expect(lines).toHaveLength(14);
+  it('has one line per tool, fifteen in all', () => {
+    expect(lines).toHaveLength(15);
   });
   it('does not mention tools that are not registered', () => {
     expect(AGENT_INSTRUCTIONS).not.toContain('estimate_weight_cost');

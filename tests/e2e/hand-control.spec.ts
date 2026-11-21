@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { serializeSseEvent, type StateChange, type ToolResult } from '../../shared/agent';
 import { demoModel } from '../../shared/demo';
 import type { ModelSpec } from '../../shared/model';
 import { fakeHandsLog, hideHand, installFakeHands, palmOffset, showHand, showHands, handsUrl, type FakeHand } from './fake-hands';
@@ -213,6 +214,74 @@ test.describe('T3 both hands, the hidden camera image and the status line', () =
     await expect(hideImageButton(page)).toHaveAttribute('aria-pressed', 'false');
     await expect(video).toHaveAttribute('data-image-hidden', 'false');
     await expect(video).toHaveCSS('opacity', '1');
+  });
+
+  /** Routes `/api/agent` to a scripted stream in which `set_camera_image` asks for the given image state. No model back end is involved. */
+  async function routeCameraImageRun(page: Page, hidden: boolean, reply: string) {
+    const stateChange: StateChange = { activeObjectId: null, object: null, selection: null, explode: null, tryOn: null, cameraHidden: hidden };
+    const summary = hidden ? '已隱藏鏡頭畫面（手部追蹤持續進行）。' : '已顯示鏡頭畫面。';
+    const result: ToolResult = {
+      tool: 'set_camera_image', ok: true, summary,
+      detail: { visible: !hidden, cameraOn: true, message: summary }, stateChange,
+    };
+    const body = [
+      serializeSseEvent('tool', { tool: 'set_camera_image', label: '鏡頭畫面', argsJson: JSON.stringify({ visible: !hidden }) }),
+      serializeSseEvent('result', result),
+      serializeSseEvent('state', stateChange),
+      serializeSseEvent('final', { reply }),
+      serializeSseEvent('done', {}),
+    ].join('');
+    await page.route('**/api/agent', route => route.fulfill({ status: 200, contentType: 'text/event-stream', body }));
+  }
+  async function askAgent(page: Page, instruction: string, reply: string) {
+    await page.getByLabel('任務指示', { exact: true }).fill(instruction);
+    await page.getByRole('button', { name: /^執行/ }).click();
+    await expect(page.getByTestId('agent-reply')).toContainText(reply);
+  }
+
+  test('the agent hides and shows the camera image while the camera is on, without an undo step', async ({ page }) => {
+    const hiddenReply = '已把鏡頭畫面藏起來。';
+    const shownReply = '已顯示鏡頭畫面。';
+    await routeCameraImageRun(page, true, hiddenReply);
+    await page.getByRole('button', { name: '載入示範模型', exact: true }).first().click();
+    await expect(page.getByTestId('scene-canvas')).toHaveAttribute('data-model-name', demoModel.name);
+    await openCamera(page);
+    await framesAbove(page, 0);
+    const video = page.getByLabel('即時攝影機背景');
+    await expect(hideImageButton(page)).toHaveAttribute('aria-pressed', 'false');
+    await expect(video).toHaveAttribute('data-image-hidden', 'false');
+    await expect(page.getByRole('button', { name: '復原', exact: true })).toBeDisabled();
+
+    await askAgent(page, '把鏡頭畫面藏起來', hiddenReply);
+    await expect(video).toHaveAttribute('data-image-hidden', 'true');
+    await expect(hideImageButton(page)).toHaveAttribute('aria-pressed', 'true');
+    await expect(video).toHaveCSS('opacity', '0');
+    // Tracking keeps going behind the hidden image, and the event is not an undo step.
+    const counted = await frames(page);
+    await framesAbove(page, counted);
+    await expect(page.getByRole('button', { name: '復原', exact: true })).toBeDisabled();
+
+    await page.unroute('**/api/agent');
+    await routeCameraImageRun(page, false, shownReply);
+    await askAgent(page, '顯示鏡頭畫面', shownReply);
+    await expect(video).toHaveAttribute('data-image-hidden', 'false');
+    await expect(hideImageButton(page)).toHaveAttribute('aria-pressed', 'false');
+    await expect(video).toHaveCSS('opacity', '1');
+  });
+
+  test('a cameraHidden event while the camera is off is ignored and the image is shown when the camera starts', async ({ page }) => {
+    const reply = '已處理。';
+    await routeCameraImageRun(page, true, reply);
+    await page.getByRole('button', { name: '載入示範模型', exact: true }).first().click();
+    await expect(page.getByTestId('scene-canvas')).toHaveAttribute('data-model-name', demoModel.name);
+    await expect(hideImageButton(page)).toHaveCount(0);
+    await askAgent(page, '把鏡頭畫面藏起來', reply);
+    await expect(hideImageButton(page)).toHaveCount(0);
+    await openCamera(page);
+    await framesAbove(page, 0);
+    await expect(hideImageButton(page)).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByLabel('即時攝影機背景')).toHaveAttribute('data-image-hidden', 'false');
+    await expect(page.getByLabel('即時攝影機背景')).toHaveCSS('opacity', '1');
   });
 });
 

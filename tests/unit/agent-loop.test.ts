@@ -535,6 +535,8 @@ describe('server/agent.ts runAgent loop', () => {
     expect(AGENT_INSTRUCTIONS).toContain('get_project_state');
     expect(AGENT_INSTRUCTIONS).toContain('explode_view');
     expect(AGENT_INSTRUCTIONS).toContain('wear_on_arm');
+    expect(AGENT_INSTRUCTIONS).toContain('set_camera_image');
+    expect(AGENT_INSTRUCTIONS).toContain('- set_camera_image only shows or hides the camera image; it changes no object.');
     expect(AGENT_INSTRUCTIONS).toContain('Only the following controlled solid primitives');
     expect(AGENT_INSTRUCTIONS).toContain('Model schema version is');
     expect(AGENT_INSTRUCTIONS).toContain('Each part has a stable');

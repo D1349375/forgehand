@@ -62,7 +62,7 @@ export function switchTo(state: AgentWorkingState, target: SceneObject): string 
  * `applyWorkspaceChange` never sees an invalid one.
  */
 export function checkedChange(state: AgentWorkingState, tool: string, change: StateChange): ToolResult | null {
-  const { tryOn: _tryOn, exportDialog: _exportDialog, ...workspaceChange } = change;
+  const { tryOn: _tryOn, exportDialog: _exportDialog, cameraHidden: _cameraHidden, ...workspaceChange } = change;
   try {
     applyWorkspaceChange(state.workspace, workspaceChange);
     return null;

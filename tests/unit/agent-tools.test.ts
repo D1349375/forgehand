@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { demoModel } from '../../shared/demo';
 import { applyWorkspaceChange } from '../../shared/workspace';
+import { SetCameraImageDetailSchema, StateChangeSchema } from '../../shared/agent';
 import { runTool } from '../../server/agent-tools';
+import { checkedChange } from '../../server/tools/helpers';
 import type { ModelProvider } from '../../server/provider';
 import { noModel, sceneObject, stateOver, withModel, workspaceOf } from './agent-fixtures';
 
@@ -138,6 +140,44 @@ describe('agent local tools', () => {
     });
   });
 
+  describe('set_camera_image', () => {
+    it('hides the image when visible is false and the camera is on', async () => {
+      const result = await runTool(call('set_camera_image', { visible: false }), withModel({ cameraOn: true }), provider, signal);
+      expect(result.ok).toBe(true);
+      expect(result.summary).toBe('已隱藏鏡頭畫面（手部追蹤持續進行）。');
+      expect(result.stateChange).toEqual({ activeObjectId: null, object: null, selection: null, explode: null, tryOn: null, cameraHidden: true });
+      expect(SetCameraImageDetailSchema.parse(result.detail)).toEqual({ visible: false, cameraOn: true, message: result.summary });
+    });
+    it('shows the image when visible is true and the camera is on', async () => {
+      const result = await runTool(call('set_camera_image', { visible: true }), withModel({ cameraOn: true }), provider, signal);
+      expect(result.ok).toBe(true);
+      expect(result.summary).toBe('已顯示鏡頭畫面。');
+      expect(result.stateChange).toEqual({ activeObjectId: null, object: null, selection: null, explode: null, tryOn: null, cameraHidden: false });
+      expect(SetCameraImageDetailSchema.parse(result.detail)).toEqual({ visible: true, cameraOn: true, message: '已顯示鏡頭畫面。' });
+    });
+    it.each([[true], [false]])('asks the user to turn the camera on when it is off (visible %s): ok:false and no state change', async (visible) => {
+      const result = await runTool(call('set_camera_image', { visible }), withModel({ cameraOn: false }), provider, signal);
+      expect(result.ok).toBe(false);
+      expect(result.summary).toBe('請先開啟攝影機。');
+      expect(result.stateChange).toBeNull();
+      expect(SetCameraImageDetailSchema.parse(result.detail)).toMatchObject({ visible, cameraOn: false, message: '請先開啟攝影機。' });
+    });
+    it('needs no model: it works on an empty workspace', async () => {
+      const result = await runTool(call('set_camera_image', { visible: false }), noModel({ cameraOn: true }), provider, signal);
+      expect(result.ok).toBe(true);
+      expect(result.stateChange?.cameraHidden).toBe(true);
+    });
+    it('carries a state change the schema accepts, and checkedChange accepts it like tryOn', async () => {
+      const state = twoObjects({ cameraOn: true });
+      const result = await runTool(call('set_camera_image', { visible: false }), state, provider, signal);
+      expect(StateChangeSchema.safeParse(result.stateChange).success).toBe(true);
+      expect(checkedChange(state, 'set_camera_image', result.stateChange!)).toBeNull();
+      // The workspace itself does not change.
+      const { tryOn: _tryOn, cameraHidden: _cameraHidden, ...change } = result.stateChange!;
+      expect(applyWorkspaceChange(state.workspace, change).after).toEqual(state.workspace);
+    });
+  });
+
   describe('workspace changes', () => {
     it.each([
       ['select_parts', { partIds: ['housing'] }],
@@ -188,6 +228,11 @@ describe('agent local tools', () => {
       ['wear_on_arm: not an object', rawCall('wear_on_arm', 'true')],
       ['wear_on_arm: missing enabled', call('wear_on_arm', {})],
       ['wear_on_arm: wrong type', call('wear_on_arm', { enabled: 'yes' })],
+      ['set_camera_image: not an object', rawCall('set_camera_image', 'false')],
+      ['set_camera_image: bad JSON', rawCall('set_camera_image', '{visible:')],
+      ['set_camera_image: missing visible', call('set_camera_image', {})],
+      ['set_camera_image: wrong type', call('set_camera_image', { visible: 'no' })],
+      ['set_camera_image: stray key', call('set_camera_image', { visible: true, extra: 1 })],
     ])('%s returns INVALID_ARGS without touching state or the provider', async (_label, badCall) => {
       const state = withModel();
       const before = structuredClone(state);

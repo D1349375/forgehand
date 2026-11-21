@@ -56,6 +56,8 @@ export const StateChangeSchema = z.strictObject({
   tryOn: z.boolean().nullable(),
   /** Session state like `tryOn`: asks the browser to open the export dialog with this scope. Absent or null means no change. */
   exportDialog: ExportScopeSchema.nullable().optional(),
+  /** Session state like `tryOn`: true hides the camera image, false shows it. Absent or null means no change. */
+  cameraHidden: z.boolean().nullable().optional(),
 });
 export type StateChange = z.infer<typeof StateChangeSchema>;
 
@@ -186,6 +188,13 @@ export const WearOnArmDetailSchema = z.strictObject({
   message: z.string().trim().min(1).max(500),
 });
 export type WearOnArmDetail = z.infer<typeof WearOnArmDetailSchema>;
+
+export const SetCameraImageDetailSchema = z.strictObject({
+  visible: z.boolean(),
+  cameraOn: z.boolean(),
+  message: z.string().trim().min(1).max(500),
+});
+export type SetCameraImageDetail = z.infer<typeof SetCameraImageDetailSchema>;
 
 export const ToolErrorDetailSchema = z.strictObject({
   code: z.string().min(1).max(64),
