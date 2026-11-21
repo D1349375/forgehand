@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Euler, Matrix4, PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX } from '../../src/hands/constants';
-import { dragPosition, explodeAmount, orbitOffset, zoomRatio } from '../../src/hands/drag';
+import { dragPosition, explodeAmount, orbitOffset, rotateAboutView, zoomRatio } from '../../src/hands/drag';
 import type { Point, Vector } from '../../src/hands/types';
 
 const VIEWPORT_HEIGHT = 800;
@@ -258,5 +258,104 @@ describe('explodeAmount', () => {
     expect(value).toBe(0.31);
     expect(Math.round(value * 100)).toBeCloseTo(value * 100, 10);
     expect(amount(0.333, 300, 300)).toBe(0.33);
+  });
+});
+
+describe('rotateAboutView (Task 8, requirement 96)', () => {
+  const DEG = Math.PI / 180;
+  const ASPECT = 1.5;
+  /** A part whose origin sits on the camera's optical axis, so a turn about the view axis is an exact turn on screen. */
+  function rig(options: { cameraAt?: Vector3; parentRotation?: [number, number, number]; startDeg?: [number, number, number] } = {}) {
+    const camera = cameraAt(options.cameraAt ?? new Vector3(3, 2, 4));
+    const parentWorld = rigid(new Vector3(1, 0.5, -2), options.parentRotation ?? [10, 35, -20]);
+    // The stored local position that puts the part's origin at the world origin, where the camera looks.
+    const position = new Vector3(0, 0, 0).applyMatrix4(new Matrix4().copy(parentWorld).invert());
+    const startDeg = options.startDeg ?? [15, -25, 40];
+    const start = new Euler(startDeg[0] * DEG, startDeg[1] * DEG, startDeg[2] * DEG, 'XYZ');
+    const turn = (angleDeg: number) => rotateAboutView({ parentWorld, start, cameraWorld: camera.matrixWorld, angleDeg });
+    const euler = (rotation: Vector) => new Euler(rotation.x * DEG, rotation.y * DEG, rotation.z * DEG, 'XYZ');
+    /** A point of the part at `local` (in the part's own frame) on screen, relative to the part's origin; x right, y down. */
+    const onScreen = (rotation: Vector | null, local: Vector3) => {
+      const rotated = local.clone().applyEuler(rotation ? euler(rotation) : start);
+      const world = position.clone().add(rotated).applyMatrix4(parentWorld).project(camera);
+      return { x: world.x * ASPECT, y: -world.y };
+    };
+    return { camera, parentWorld, start, startDeg, turn, euler, onScreen, position };
+  }
+  const screenTurn = (from: { x: number; y: number }, to: { x: number; y: number }) => {
+    const delta = (Math.atan2(to.y, to.x) - Math.atan2(from.y, from.x)) / DEG;
+    return ((((delta + 180) % 360) + 360) % 360) - 180;
+  };
+
+  it('turns a projected point of the part the same way as the angle: clockwise on screen for a positive angle', () => {
+    const { turn, onScreen } = rig();
+    const q = new Vector3(0.12, -0.05, 0.08);
+    const before = onScreen(null, q);
+    expect(screenTurn(before, onScreen(turn(30), q))).toBeCloseTo(30, 1);
+    expect(screenTurn(before, onScreen(turn(-45), q))).toBeCloseTo(-45, 1);
+    expect(screenTurn(before, onScreen(turn(100), q))).toBeCloseTo(100, 1);
+    // A point on the other side of the origin turns the same way.
+    const other = new Vector3(-0.07, 0.1, -0.02);
+    expect(screenTurn(onScreen(null, other), onScreen(turn(30), other))).toBeCloseTo(30, 1);
+  });
+
+  it('turns about the camera forward axis under a rotated parent and a rotated object root, whatever the camera and the start rotation', () => {
+    for (const options of [
+      { cameraAt: new Vector3(0, 0, 5), parentRotation: [0, 0, 0] as [number, number, number], startDeg: [0, 0, 0] as [number, number, number] },
+      { cameraAt: new Vector3(-4, 1, 2), parentRotation: [70, -20, 45] as [number, number, number], startDeg: [-30, 80, 10] as [number, number, number] },
+      { cameraAt: new Vector3(2, 6, 1), parentRotation: [0, 90, 0] as [number, number, number], startDeg: [90, 0, 0] as [number, number, number] },
+    ]) {
+      const { camera, parentWorld, start, turn, euler } = rig(options);
+      const parentQ = new Quaternion().setFromRotationMatrix(parentWorld);
+      const before = parentQ.clone().multiply(new Quaternion().setFromEuler(start));
+      const forward = new Vector3();
+      camera.getWorldDirection(forward);
+      for (const angle of [30, -75, 160]) {
+        const after = parentQ.clone().multiply(new Quaternion().setFromEuler(euler(turn(angle))));
+        // The world rotation between the two poses is the turn about the view axis, to the rounding of 2 decimals.
+        const expected = new Quaternion().setFromAxisAngle(forward, angle * DEG);
+        expect(after.clone().multiply(before.clone().invert()).angleTo(expected)).toBeLessThan(0.02 * DEG * 3);
+      }
+    }
+  });
+
+  it('leaves the rotation alone at an angle of 0 (up to rounding) and does not need a position', () => {
+    const { turn, startDeg } = rig();
+    const same = turn(0);
+    expect(same.x).toBeCloseTo(startDeg[0], 1);
+    expect(same.y).toBeCloseTo(startDeg[1], 1);
+    expect(same.z).toBeCloseTo(startDeg[2], 1);
+  });
+
+  it('stays within ±180° for any angle, so the ±360° limit of a part always holds', () => {
+    for (const startDeg of [[170, 80, -175], [-359, 0, 0], [0, 0, 359]] as Array<[number, number, number]>) {
+      const { turn } = rig({ startDeg });
+      for (const angle of [-720, -190, -90, 0, 45, 179, 180, 361, 540, 2000]) {
+        const result = turn(angle);
+        for (const value of [result.x, result.y, result.z]) expect(Math.abs(value)).toBeLessThanOrEqual(180);
+      }
+    }
+  });
+
+  it('rounds to 2 decimals and never returns -0', () => {
+    const { turn } = rig();
+    for (const angle of [0.123, 7.777, -33.333, 91.011]) {
+      const result = turn(angle);
+      for (const value of [result.x, result.y, result.z]) {
+        expect(Number(value.toFixed(2))).toBe(value);
+        expect(Object.is(value, -0)).toBe(false);
+      }
+    }
+    const identity = rotateAboutView({ parentWorld: new Matrix4(), start: new Euler(0, 0, 0), cameraWorld: cameraAt(new Vector3(0, 0, 5)).matrixWorld, angleDeg: 0 });
+    expect(identity).toEqual({ x: 0, y: 0, z: 0 });
+  });
+
+  it('turns a part of an unrotated parent about the world Z axis for a camera looking down −Z, by the angle', () => {
+    const camera = cameraAt(new Vector3(0, 0, 5));
+    const result = rotateAboutView({ parentWorld: new Matrix4(), start: new Euler(0, 0, 0), cameraWorld: camera.matrixWorld, angleDeg: 30 });
+    // Forward is −Z; a positive turn about it is a negative right-handed turn about +Z.
+    expect(result.x).toBeCloseTo(0, 5);
+    expect(result.y).toBeCloseTo(0, 5);
+    expect(result.z).toBeCloseTo(-30, 5);
   });
 });

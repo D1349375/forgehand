@@ -147,6 +147,32 @@ export function drawBadge(ctx: CanvasRenderingContext2D, text: string, cursor: P
   return box;
 }
 
+const ARC_RADIUS = 34;
+/**
+ * The angle of a two-hand rotate (requirement 98): an arc around the owner's cursor from `fromDeg` to `toDeg` (screen angles, positive
+ * clockwise because y grows down, as `pairAngle`), with a short tick at its end. Draws nothing for an angle of 0.
+ */
+export function drawArc(ctx: CanvasRenderingContext2D, arc: { centre: Point; fromDeg: number; toDeg: number }, colour: string = LINK_COLOUR): void {
+  if (arc.toDeg === arc.fromDeg) return;
+  const from = (arc.fromDeg * Math.PI) / 180;
+  const to = (arc.toDeg * Math.PI) / 180;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  // Canvas angles also grow clockwise on screen, so a positive turn is the forward direction.
+  ctx.arc(arc.centre.x, arc.centre.y, ARC_RADIUS, from, to, to < from);
+  ctx.moveTo(arc.centre.x + Math.cos(to) * (ARC_RADIUS - 6), arc.centre.y + Math.sin(to) * (ARC_RADIUS - 6));
+  ctx.lineTo(arc.centre.x + Math.cos(to) * (ARC_RADIUS + 6), arc.centre.y + Math.sin(to) * (ARC_RADIUS + 6));
+  ctx.strokeStyle = OUTLINE_COLOUR;
+  ctx.lineWidth = 3 + OUTLINE_EXTRA;
+  ctx.stroke();
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** The line between the two hands while a two-hand gesture runs. */
 export function drawLink(ctx: CanvasRenderingContext2D, link: { from: Point; to: Point }, colour: string = LINK_COLOUR): void {
   ctx.save();

@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { drawBadge, drawHand, drawLink, drawRing, drawSquare, type Box } from './skeleton';
+import { drawArc, drawBadge, drawHand, drawLink, drawRing, drawSquare, type Box } from './skeleton';
 import { overlayStyle } from './style';
 import type { OverlayFrame } from './types';
 
@@ -80,6 +80,7 @@ export const HandOverlay = forwardRef<HandOverlayHandle>(function HandOverlay(_p
           if (hand.state !== 'none') drawHand(ctx, hand.points, overlayStyle(hand));
         }
         if (frame.link) drawLink(ctx, frame.link);
+        if (frame.arc) drawArc(ctx, frame.arc);
         for (const hand of frame.hands) {
           if (hand.state === 'none') continue;
           drawRing(ctx, hand.cursor, overlayStyle(hand));

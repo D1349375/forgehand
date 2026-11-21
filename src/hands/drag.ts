@@ -1,4 +1,4 @@
-import { Matrix4, Spherical, Vector3 } from 'three';
+import { Euler, Matrix4, Quaternion, Spherical, Vector3 } from 'three';
 import { DRAG_GAIN } from './constants';
 import { beyondDeadZone } from './pair';
 import type { Point, Vector } from './types';
@@ -80,4 +80,27 @@ export function explodeAmount(input: { start: number; startSpan: number; span: n
   const { start, startSpan, span, deadZonePx, viewportHeight, fullFraction } = input;
   const change = beyondDeadZone(span - startSpan, deadZonePx) / Math.max(fullFraction * viewportHeight, 1e-6);
   return Math.min(1, Math.max(0, Math.round((start + change) * 100) / 100)) || 0;
+}
+const round2 = (value: number) => Number(value.toFixed(2)) || 0;
+const RAD_TO_DEG = 180 / Math.PI;
+/**
+ * The new local rotation of a part turned about the camera's view axis through its own origin (requirement 96), in XYZ Euler degrees
+ * rounded to 2 decimals. `start` is the part's local rotation (radians) when the turn began, `parentWorld` the live world matrix of its
+ * parent and `cameraWorld` the camera's. The axis is the camera's forward direction; a positive angle turns the part clockwise on
+ * screen, the way a positive change of `pairAngle` (screen y grows down) turns the vector between the hands. The result is
+ * `parentQ⁻¹ · turn · parentQ · startQ`, so it lies within ±180° and the ±360° limit of a part always holds. The position is not touched.
+ */
+export function rotateAboutView(input: { parentWorld: Matrix4; start: Euler; cameraWorld: Matrix4; angleDeg: number }): Vector {
+  const parentQ = new Quaternion();
+  input.parentWorld.decompose(new Vector3(), parentQ, new Vector3());
+  const right = new Vector3();
+  const up = new Vector3();
+  const back = new Vector3();
+  input.cameraWorld.extractBasis(right, up, back);
+  const forward = back.normalize().negate();
+  const turn = new Quaternion().setFromAxisAngle(forward, (input.angleDeg * Math.PI) / 180);
+  const world = parentQ.clone().multiply(new Quaternion().setFromEuler(input.start));
+  const local = parentQ.clone().invert().multiply(turn).multiply(world);
+  const euler = new Euler().setFromQuaternion(local, 'XYZ');
+  return { x: round2(euler.x * RAD_TO_DEG), y: round2(euler.y * RAD_TO_DEG), z: round2(euler.z * RAD_TO_DEG) };
 }

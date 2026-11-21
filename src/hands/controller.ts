@@ -1,6 +1,6 @@
 import {
-  EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, FIST_ENABLED, FIST_ENGAGE_RATIO, HAND_LOST_MS, ON_TRACKING_LOSS, TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX,
-  ZOOM_DEAD_ZONE_PX,
+  EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, FIST_ENABLED, FIST_ENGAGE_RATIO, HAND_LOST_MS, ON_TRACKING_LOSS, ROTATE_DEAD_ZONE_DEG, TRACKING_LOSS_MS,
+  TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX,
 } from './constants';
 import { decideFist, decidePinch } from './decide';
 import { explodeAmount, zoomRatio } from './drag';
@@ -8,7 +8,7 @@ import { fistStep, initialFistState, type FistEvent, type FistState } from './fi
 import { fistAllowed, type Gate } from './gate';
 import { joinGesture, type JoinContext, type JoinRule, type OwnerGesture, type TwoHandGesture } from './join';
 import { OneEuroFilter2D } from './one-euro';
-import { angleDelta, pairAngle, pairSpan } from './pair';
+import { angleDelta, beyondDeadZone, pairAngle, pairSpan } from './pair';
 import { initialPinchState, pinchStep, type PinchEvent, type PinchInput, type PinchState } from './pinch';
 import { assignHands, dedupeHands } from './slots';
 import {
@@ -82,8 +82,13 @@ export interface HoldSession {
 export interface GrabSession {
   /** Shows the part moved by the cursor offset since the last re-base; false means the session is no longer valid. */
   preview(offset: Point): boolean;
-  /** The current preview becomes the start of the next offsets. */
+  /** The current preview becomes the start of the next offsets (and the start of the next rotation). */
   rebase(): void;
+  /**
+   * Two-hand rotate (requirement 96): shows the part turned by `angleDeg` about the view axis, from its rotation when the turn began
+   * (the session start, or the last re-base); 0 shows that rotation. False means the session is no longer valid. Without it a part cannot be turned.
+   */
+  rotate?(angleDeg: number): boolean;
   commit(): void;
   cancel(): void;
 }
@@ -131,6 +136,10 @@ interface Joiner {
   lastAngle: number;
   /** Degrees accumulated since the joiner engaged. */
   angle: number;
+  /** The pair angle when the joiner engaged: where the arc of a rotate starts. */
+  startAngle: number;
+  /** The rotation last sent to the grab session: `angle` less the dead zone (zero until the hands leave it). */
+  rotated: number;
   /** The explode amount when the joiner engaged (zero for the other gestures). */
   startValue: number;
   /** The zoom ratio last sent to the orbit session (1 until the hands leave the dead zone). */
@@ -156,6 +165,8 @@ interface Session {
   /** The owner's point the offsets are measured from: the engage point, or the point at the last re-base. */
   ref: Point;
   moved: boolean;
+  /** A two-hand rotate turned the grabbed part (even if it has been turned back): the owner's release commits although it never moved. */
+  turned: boolean;
   /** When the owner's hand first went missing during this session. */
   missingSince: number | null;
   joiner: Joiner | null;
@@ -402,7 +413,7 @@ export class HandController {
           this.blocked[slot] = 'passive';
           return;
         case 'press':
-          this.session = { owner: slot, kind: 'press', scene: null, pressId: action.id, target: settled, ref: track.cursor, moved: false, missingSince: null, joiner: null };
+          this.session = { owner: slot, kind: 'press', scene: null, pressId: action.id, target: settled, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null };
           return;
         case 'grab': {
           this.port.select(action.objectId, action.partId);
@@ -411,7 +422,7 @@ export class HandController {
             this.blocked[slot] = 'passive';
             return;
           }
-          this.session = { owner: slot, kind: 'grab', scene, target: settled, ref: track.cursor, moved: false, missingSince: null, joiner: null };
+          this.session = { owner: slot, kind: 'grab', scene, target: settled, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null };
           return;
         }
         case 'orbit': {
@@ -420,7 +431,7 @@ export class HandController {
             this.blocked[slot] = 'passive';
             return;
           }
-          this.session = { owner: slot, kind: 'orbit', scene, target: EMPTY_TARGET, ref: track.cursor, moved: false, missingSince: null, joiner: null };
+          this.session = { owner: slot, kind: 'orbit', scene, target: EMPTY_TARGET, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null };
           return;
         }
       }
@@ -444,7 +455,8 @@ export class HandController {
     session.joiner = {
       slot, gesture, input, target,
       startSpan: pairSpan(owner, joinerPoint), span: pairSpan(owner, joinerPoint),
-      lastAngle: pairAngle(owner, joinerPoint), angle: 0, startValue, zoom: 1, explode: Math.round(startValue * 100) / 100,
+      lastAngle: pairAngle(owner, joinerPoint), angle: 0, startAngle: pairAngle(owner, joinerPoint), rotated: 0,
+      startValue, zoom: 1, explode: Math.round(startValue * 100) / 100,
       assemble: null, ref: { ...this.tracks[slot].palm }, ready: false,
     };
     recordJoin(this.stats, gesture);
@@ -544,7 +556,7 @@ export class HandController {
     this.port.activate?.(action.objectId);
     const scene = this.port.beginHold?.(action.objectId, action.hit) ?? null;
     if (!scene) return;
-    this.session = { owner: slot, kind: 'hold', scene, target, ref: track.palm, moved: false, missingSince: null, joiner: null };
+    this.session = { owner: slot, kind: 'hold', scene, target, ref: track.palm, moved: false, turned: false, missingSince: null, joiner: null };
   }
 
   /** Puts an engaged pinch of this hand away without committing anything: its own session ends, or it leaves the gesture it joined. */
@@ -599,7 +611,8 @@ export class HandController {
 
   private finishOnRelease(session: Session, tap: boolean): void {
     if (session.kind === 'grab') {
-      if (!tap) this.commitSession();
+      // A part that was turned by the other hand is committed although the owner never left its dead zone (requirement 97).
+      if (!tap || session.turned) this.commitSession();
       else this.cancelQuietly();
     } else if (session.kind === 'orbit') {
       (session.scene as OrbitSession).end();
@@ -738,7 +751,23 @@ export class HandController {
           (this.session.scene as OrbitSession).zoom?.(ratio);
         }
       }
-      if (joined.gesture === 'explode' && this.session.kind === 'hold') {
+      if (joined.gesture === 'rotate' && this.session.kind === 'grab') {
+        // The accumulated turn less the dead zone, so leaving the dead zone does not jump (requirement 96). The part's move holds still.
+        const rotated = beyondDeadZone(joined.angle, ROTATE_DEAD_ZONE_DEG);
+        if (rotated !== joined.rotated) {
+          joined.rotated = rotated;
+          if (rotated !== 0) this.session.turned = true;
+          const grab = this.session.scene as GrabSession;
+          if (grab.rotate && !grab.rotate(rotated)) {
+            const slot = joined.slot;
+            const owner = this.session.owner;
+            this.cancelSession('external');
+            this.blocked[owner] = 'passive';
+            this.blocked[slot] = 'passive';
+          }
+        }
+      }
+      if (this.session && joined.gesture === 'explode' && this.session.kind === 'hold') {
         const viewportHeight = this.port.viewportHeight?.() ?? 0;
         if (viewportHeight > 0) {
           const amount = explodeAmount({
@@ -835,7 +864,9 @@ export class HandController {
       if (!this.visible(track, now)) continue;
       const { state, target, inert, objectName, ready } = this.stateOf(slot, track);
       // The joining hand of a pull shows the explode percentage (requirement 95).
-      const value = state === 'join' && this.session?.joiner?.gesture === 'explode' ? Math.round(this.session.joiner.explode * 100) : null;
+      // The joining hand of a turn shows the signed angle so far in degrees (requirement 98).
+      const joiner = state === 'join' ? this.session?.joiner : null;
+      const value = joiner?.gesture === 'explode' ? Math.round(joiner.explode * 100) : joiner?.gesture === 'rotate' ? Math.round(joiner.rotated) : null;
       views.push({
         slot, state, targetKey: targetKey(track.settle.settled), points: track.points, cursor: track.cursor, palm: track.palm,
         badge: badgeText({ state, target, gesture, value, objectName, inert, ready }),
@@ -844,7 +875,12 @@ export class HandController {
     const session = this.session;
     // While an assemble is ready the label 可以接合 replaces the link line (requirement 58).
     const link = session?.joiner && !(session.joiner.assemble && session.joiner.ready) ? { from: { ...this.ownerPoint(session) }, to: { ...this.joinerPoint(session.joiner) } } : null;
-    const frame: OverlayFrame = { hands: views, gesture, link, arc: null };
+    // While a rotate turns the part, an arc at the owner's cursor shows the angle (requirement 98).
+    const turning = session?.joiner?.gesture === 'rotate' && session.joiner.rotated !== 0 ? session.joiner : null;
+    const arc = session && turning
+      ? { centre: { ...this.ownerPoint(session) }, fromDeg: turning.startAngle, toDeg: turning.startAngle + turning.rotated }
+      : null;
+    const frame: OverlayFrame = { hands: views, gesture, link, arc };
     if (remember) this.signature = this.signatureOf(frame);
     return frame;
   }

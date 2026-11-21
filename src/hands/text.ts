@@ -64,8 +64,8 @@ export function shortenName(name: string, max: number = BADGE_NAME_MAX): string 
  * The short badge next to a hand (requirement 16), so colour is never the only signal.
  * `target` is the settled target, or for a grab the grabbed part. `inert` marks a pinch that
  * may not act because the other hand's gesture runs. `gesture` tells the joining hand's badge (zoom, explode); `value` is the
- * explode percentage of the pull (requirement 95); `objectName` is the held object's name; `ready` is the snap of an assemble: the joining
- * fist's badge then reads 可以接合 instead of the held object. Rotate (Task 8) is not read yet.
+ * explode percentage of the pull (requirement 95) or the signed angle of a rotate in degrees (requirement 98); `objectName` is the held
+ * object's name; `ready` is the snap of an assemble: the joining fist's badge then reads 可以接合 instead of the held object.
  */
 export function badgeText(view: { state: HandState; target: Target; gesture: GestureKind; value: number | null; objectName?: string; inert?: boolean; ready?: boolean }): string {
   const name = view.target.kind === 'empty' ? '' : shortenName(view.target.label);
@@ -78,6 +78,7 @@ export function badgeText(view: { state: HandState; target: Target; gesture: Ges
     case 'join':
       if (view.gesture === 'zoom') return '手勢：雙手縮放';
       if (view.gesture === 'explode') return view.value === null ? '手勢：拉開' : `手勢：拉開 ${view.value}%`;
+      if (view.gesture === 'rotate') return view.value === null ? '手勢：雙手旋轉' : `手勢：雙手旋轉 ${view.value}°`;
       return '手勢：雙手操作';
     case 'fist': return '手勢：握拳';
     case 'hold':

@@ -5,7 +5,7 @@ import type { JointSide } from '../../shared/joint';
 import { findObject, type ObjectTransform, type Workspace } from '../../shared/workspace';
 import { ORBIT_DEG_PER_PX } from '../hands/constants';
 import type { AssemblePreview, AssembleSession, GrabSession, HoldSession, OrbitSession } from '../hands/controller';
-import { dragPosition, orbitOffset } from '../hands/drag';
+import { dragPosition, orbitOffset, rotateAboutView } from '../hands/drag';
 import type { Vector } from '../hands/types';
 import type { SceneSyncPlan } from './scene-sync';
 
@@ -30,8 +30,8 @@ export interface GrabInput {
   /** The world point under the cursor at engage. */
   hit: Vector;
   gain?: number;
-  /** Called once, and only when the rounded position differs from the stored one. */
-  onCommit(position: Vector, rotation: Vector, kind: 'translate' | 'rotate'): void;
+  /** Called once, and only when the rounded position or rotation differs from the stored one; kind says which (or oth). */
+  onCommit(position: Vector, rotation: Vector, kind: 'translate' | 'rotate' | 'both'): void;
   /** The scene needs a new frame. */
   onChange(): void;
   /** The session is over, whichever way. */
@@ -52,12 +52,21 @@ const round5 = (value: number) => Number(value.toFixed(5));
 const rounded = (v: Vector): Vector => ({ x: round5(v.x), y: round5(v.y), z: round5(v.z) });
 const same = (a: Vector, b: Vector) => a.x === b.x && a.y === b.y && a.z === b.z;
 
-/** Moves one part node through the camera plane (design §7.2). Only this node moves; its children follow in world space. */
+/**
+ * Moves one part node through the camera plane (design §7.2). Only this node moves; its children follow in world space. A second hand
+ * can also turn the node about the camera's view axis (`rotate`, requirement 96): the position then holds still, and a commit reports
+ * what changed, `translate`, `rotate` or `both`.
+ */
 export function createGrabSession(input: GrabInput): LiveGrab {
   const { node, camera, stored } = input;
   const storedRounded = rounded(stored.position);
   let start: Vector = { ...stored.position };
   let current: Vector = { ...stored.position };
+  /** The rotation (degrees) a turn starts from: the stored one, or the shown one at the last re-base. `rotation` is what is shown now. */
+  let startRotation: Vector = { ...stored.rotation };
+  let rotation: Vector = { ...stored.rotation };
+  /** The node's rotation is written only once a turn has been shown, so a plain move never touches what the scene built. */
+  let rotationShown = false;
   let hit: Vector = { ...input.hit };
   let valid = true;
   let done = false;
@@ -66,8 +75,9 @@ export function createGrabSession(input: GrabInput): LiveGrab {
     node.parent?.updateWorldMatrix(true, false);
     return node.parent ? node.parent.matrixWorld : new THREE.Matrix4();
   };
-  const show = (position: Vector) => {
+  const show = (position: Vector, turn: Vector = rotation) => {
     node.position.set(position.x, position.y, position.z);
+    if (rotationShown) node.rotation.set(THREE.MathUtils.degToRad(turn.x), THREE.MathUtils.degToRad(turn.y), THREE.MathUtils.degToRad(turn.z), 'XYZ');
     node.updateMatrixWorld(true);
     input.onChange();
   };
@@ -89,6 +99,20 @@ export function createGrabSession(input: GrabInput): LiveGrab {
       show(current);
       return true;
     },
+    rotate(angleDeg) {
+      if (done || !valid) return false;
+      camera.updateMatrixWorld();
+      // 0 is the rotation the turn started from, exactly (an Euler round trip could write the same turn as other numbers).
+      rotation = angleDeg === 0
+        ? { ...startRotation }
+        : rotateAboutView({
+          parentWorld: parentWorld(), cameraWorld: camera.matrixWorld, angleDeg,
+          start: new THREE.Euler(THREE.MathUtils.degToRad(startRotation.x), THREE.MathUtils.degToRad(startRotation.y), THREE.MathUtils.degToRad(startRotation.z), 'XYZ'),
+        });
+      rotationShown = true;
+      show(current);
+      return true;
+    },
     rebase() {
       if (done) return;
       // The grabbed point moved with the part, so the depth of the next offsets follows it.
@@ -97,19 +121,25 @@ export function createGrabSession(input: GrabInput): LiveGrab {
       const after = new THREE.Vector3(current.x, current.y, current.z).applyMatrix4(world);
       hit = { x: hit.x + after.x - before.x, y: hit.y + after.y - before.y, z: hit.z + after.z - before.z };
       start = { ...current };
+      // The next turn starts from the rotation shown now.
+      startRotation = { ...rotation };
     },
     commit() {
       if (done) return;
       const position = rounded(current);
       try {
-        if (valid && !same(position, storedRounded)) input.onCommit(position, { ...stored.rotation }, 'translate');
+        if (valid) {
+          const moved = !same(position, storedRounded);
+          const turned = !same(rotation, stored.rotation);
+          if (moved || turned) input.onCommit(position, turned ? { ...rotation } : { ...stored.rotation }, moved && turned ? 'both' : turned ? 'rotate' : 'translate');
+        }
       } finally {
         finish();
       }
     },
     cancel() {
       if (done) return;
-      show(stored.position);
+      show(stored.position, stored.rotation);
       finish();
     },
     reapply() {

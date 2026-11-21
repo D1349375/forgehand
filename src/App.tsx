@@ -50,6 +50,12 @@ type Pending = { result: GenerationResult; startedAt: number };
 type Conflict = { result: EditResult; parts: Part[]; startedAt: number; objectId: string };
 type Busy = null | 'generate' | 'edit';
 const MM = 1000;
+/** What the notice says after the gizmo or a hand grab changed a part (design §7.5): `both` is a hand move and turn in one grab. */
+const TRANSFORM_NOTICE = {
+  translate: '已移動零件，可按「復原」回到上一步。',
+  rotate: '已旋轉零件，可按「復原」回到上一步。',
+  both: '已移動並旋轉零件，可按「復原」回到上一步。',
+} as const;
 const armStatusText: Record<ArmTrackingStatus, string> = {
   off: '正在開啟攝影機。',
   loading: '正在載入手部追蹤模型（第一次約 20–30 秒）。',
@@ -566,9 +572,9 @@ export default function App() {
     if (amount > 0) setTransformMode(null);
   }
   /** The gizmo and a hand grab share this path: one commit, one undo step. */
-  function onTransform(objectId: string, id: string, position: Vector, rotation: Vector, kind: 'translate' | 'rotate') {
+  function onTransform(objectId: string, id: string, position: Vector, rotation: Vector, kind: keyof typeof TRANSFORM_NOTICE) {
     if (agentActive || objectId !== store.current().activeObjectId) return;
-    updatePart(id, { position, rotation }, kind === 'rotate' ? '已旋轉零件，可按「復原」回到上一步。' : '已移動零件，可按「復原」回到上一步。');
+    updatePart(id, { position, rotation }, TRANSFORM_NOTICE[kind]);
   }
   /** A fist moved a whole object: the 物件 panel's path, one undo step (an object joined to others moves with its assembly). */
   function onObjectMove(objectId: string, position: Vector) {
