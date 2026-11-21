@@ -61,6 +61,20 @@ Objects in the workspace can be joined, so a design says how its parts are fixed
 - **Materials**: each object has a 材料 (PLA, PETG, ABS, TPU, nylon, resin, aluminium or steel). It decides which glue and which method the recommendation prefers. A part marked as an internal component is treated as a bought part and never gets holes.
 - **Printer profile**: 列印設定 holds the tolerances of your printer in millimetres (sliding and press fit per side, hole and depth compensation, extra clearance for PETG). The values are starting points. Print a tolerance test piece first, then adjust them; the holes, markers and checks follow at once. The profile is stored in your browser, not in the design.
 
+## Export
+
+Press 匯出套件 to turn the workspace (or one assembly) into a kit you can print and assemble. The dialog builds every file in your browser, lists the problems it found, and 下載完整套件 saves one zip (each file can also be saved on its own).
+
+- **What the kit contains**: one binary STL per print piece (`stl/P01-….stl`, in millimetres, resting flat with its top facing up), `kit.3mf` for slicers, `bom.csv` and `bom.md` (print pieces, parts to buy, machined parts, standard parts such as screws and inserts), `assembly.html` (an assembly sheet with the numbered steps, printable to A4), `exploded.png` (the exploded image with step numbers) and `workspace.glb` (the assembled design with part names and colours, for Blender or another glTF viewer).
+- **3MF and GLB**: `kit.3mf` lays the pieces out flat on one plate, with identical pieces repeated, so a slicer can print them as they are. `workspace.glb` keeps the assembled view.
+- **Print pieces**: parts that touch or overlap are fused into one print piece, because a printer cannot make them separately. A joint between two parts keeps them apart: each side becomes its own piece with the joint's holes, pockets and bosses cut in. Bought components (internal parts) and metal parts are not printed; they appear in the BOM. Identical pieces share one file and are counted in the BOM.
+- **Problems are listed, not hidden**: the dialog and `bom.md` list joints that are unconfirmed or failing, parts that are too large for a common print bed, loose pieces and bought components that sit inside a solid part. Fix them and the kit is rebuilt.
+- **Print a tolerance test first**: hole and fit sizes follow your 列印設定 (printer profile). Print the two small blocks of a screw joint, check that the insert and the screw fit, and adjust 列印設定 before printing the whole design.
+- **Ask the agent**: 「幫我匯出可以列印的套件」 makes the agent open the export dialog and summarise the kit and its problems. The agent cannot save files; you press 下載完整套件 yourself.
+- **Local only**: export makes no network request and uploads nothing. The files exist only in your browser until you save them.
+
+The kit is a concept design: sizes and bought parts come from the model, so check them before you buy or print.
+
 ## Run it locally
 
 Requires Node.js 22.12+ and one model back end: a signed-in [Codex CLI](https://github.com/openai/codex) (default), Claude Code CLI (`MODEL_PROVIDER=claude`), or an OpenAI API key (`MODEL_PROVIDER=openai`).
@@ -87,11 +101,12 @@ The e2e suite starts its own server on ports 5197/8797 (override with `E2E_PORT`
 
 ## Privacy
 
-The camera image stays in your browser. Hand tracking runs on your machine whenever the camera is on; turning the camera on downloads the MediaPipe hand and pose model files from Google's public model storage, and the video and the hand landmarks never leave the browser. Model back ends receive text, not video.
+The camera image stays in your browser. Hand tracking runs on your machine whenever the camera is on; turning the camera on downloads the MediaPipe hand and pose model files from Google's public model storage, and the video and the hand landmarks never leave the browser. Model back ends receive text, not video. Export runs locally: the kit is built in your browser and nothing is uploaded.
 
 ## Credits
 
 - [manifold-3d](https://github.com/elalish/manifold) 3.2.1 (Apache-2.0) builds the printable geometry of joint parts (holes, pockets and bosses). It loads only when a printable part is built, and its WebAssembly file ships with the app, so nothing is fetched from the network.
+- [fflate](https://github.com/101arrowz/fflate) 0.8.3 (MIT) writes the zip files of the export kit (the download and the 3MF package). It ships with the app and runs in your browser.
 
 ## License
 

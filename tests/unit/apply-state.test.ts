@@ -89,6 +89,39 @@ describe('applyStateEvent', () => {
     expect(effects!.after.objects[0]!.transform).toEqual(moved);
   });
 
+  it('exportDialog is returned as a session effect: no undo step, no workspace change, old payloads still parse', () => {
+    const ws = twoObjects();
+    const scope = { scope: 'assembly', objectId: 'b' };
+    const effects = applyStateEvent(change({ exportDialog: scope }), ws)!;
+    expect(effects.exportDialog).toEqual(scope);
+    expect(effects.recordUndo).toBe(false);
+    expect(effects.before).toBe(ws);
+    expect(effects.after.objects).toBe(ws.objects);
+    expect(effects.after.joints).toBe(ws.joints);
+    expect(effects).not.toHaveProperty('tryOn');
+    // null and absent mean no change.
+    expect(applyStateEvent(change({ exportDialog: null }), ws)).not.toHaveProperty('exportDialog');
+    expect(applyStateEvent(change(), ws)).not.toHaveProperty('exportDialog');
+    expect(applyStateEvent(change({ exportDialog: { scope: 'workspace', objectId: null } }), ws)!.exportDialog)
+      .toEqual({ scope: 'workspace', objectId: null });
+    // With other effects in one event, each keeps its own rule.
+    const both = applyStateEvent(change({ tryOn: true, explode: 0.5, exportDialog: scope }), ws)!;
+    expect(both).toMatchObject({ tryOn: true, exportDialog: scope, recordUndo: false });
+    expect(both.after.display.explode).toBe(0.5);
+    // A payload from before this field existed (no exportDialog key at all) parses.
+    const old = { activeObjectId: null, object: null, selection: null, explode: null, tryOn: null };
+    expect(applyStateEvent(old, ws)).not.toBeNull();
+  });
+
+  it.each([
+    ['an unknown scope', { scope: 'everything', objectId: null }],
+    ['a missing object id', { scope: 'workspace' }],
+    ['a bad object id', { scope: 'assembly', objectId: 'not a valid id' }],
+    ['an extra key', { scope: 'workspace', objectId: null, extra: 1 }],
+  ])('returns null for an exportDialog with %s', (_label, exportDialog) => {
+    expect(applyStateEvent(change({ exportDialog }), twoObjects())).toBeNull();
+  });
+
   it('a joint change that the workspace rejects is dropped', () => {
     const joined = twoBoxes({ joint: true });
     expect(applyStateEvent(change({ joint: { op: 'remove', jointId: 'nope' } }), joined)).toBeNull();

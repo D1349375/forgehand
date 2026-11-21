@@ -559,6 +559,14 @@ describe('server/agent.ts runAgent loop', () => {
       "- Metal and plastic parts are fastened mechanically (screws or pins), not glued alone. Hole sizes come from the user's printer profile, which you cannot change.",
       '- set_transform on a jointed object moves its whole assembly. An object leaves its assembly only when its joint is removed (remove_joint, only when the user asks).',
     ]) expect(AGENT_INSTRUCTIONS).toContain(line);
+    // Export rule (spec export, design 8): the agent only prepares; the user downloads.
+    expect(AGENT_INSTRUCTIONS).toContain('- prepare_export(');
+    for (const phrase of [
+      'You cannot save or download files.',
+      'call prepare_export, then tell the user to press 下載完整套件 in the export dialog.',
+      'mention the problems prepare_export returns and offer to fix them.',
+      'STEP files, drawings, print-service orders and slicing are not supported.',
+    ]) expect(AGENT_INSTRUCTIONS).toContain(phrase);
     // Every existing rule stays.
     expect(AGENT_INSTRUCTIONS).toContain('- Prefer local tools (select_parts, explode_view, get_project_state) when they suffice.');
     for (const name of ['set_active_object', 'set_transform', 'remove_object']) expect(AGENT_INSTRUCTIONS).toContain('- ' + name + '(');

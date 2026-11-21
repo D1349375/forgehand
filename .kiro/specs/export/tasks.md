@@ -181,7 +181,7 @@ The 匯出套件 button, the export dialog with progress, findings, the summary 
 
 ## Task 5 — Agent tool, README and manual checks
 
-`[ ]`
+`[x]`
 
 The agent can prepare an export: `prepare_export` summarises the kit and opens the dialog, and the user downloads. README explains the kit. The task ends with the manual checks in a real slicer and one real print.
 

@@ -220,4 +220,48 @@ test.describe('匯出套件', () => {
     await button(page, '關閉匯出').click();
     await expect(dialog(page)).toHaveCount(0);
   });
+  test('代理的 prepare_export 以指定範圍開啟匯出對話框，不是復原步驟，也不自動下載', async ({ page }) => {
+    const ids = await loadTwoDemos(page);
+    // Loading a demo model is an undo step, so 復原 is enabled here; the export must not add another one.
+    const undo = button(page, '復原');
+    await expect(undo).toBeEnabled();
+    const objectsBefore = await objectRows(page);
+    // A routed stream like the server's: tool, result and a `state` frame that only carries `exportDialog`.
+    const change: StateChange = {
+      activeObjectId: null, object: null, selection: null, explode: null, tryOn: null,
+      exportDialog: { scope: 'assembly', objectId: ids.b },
+    };
+    const result: ToolResult = {
+      tool: 'prepare_export', ok: true,
+      summary: '已開啟匯出視窗：列印零件 1 個（相連的零件會合併成一個列印件，實際數量以匯出視窗為準），外購件 1 個，標準件 0 項。請使用者按「下載完整套件」。',
+      detail: null, stateChange: change,
+    };
+    const reply = '匯出視窗已開啟，請按「下載完整套件」。';
+    const body = [
+      serializeSseEvent('status', { note: '正在準備匯出。' }),
+      serializeSseEvent('tool', { tool: 'prepare_export', label: '準備匯出', argsJson: JSON.stringify({ scope: 'assembly', objectId: ids.b }) }),
+      serializeSseEvent('result', result),
+      serializeSseEvent('state', change),
+      serializeSseEvent('final', { reply }),
+      serializeSseEvent('done', {}),
+    ].join('');
+    await page.route('**/api/agent', route => route.fulfill({ status: 200, contentType: 'text/event-stream', body }));
+    let downloads = 0;
+    page.on('download', () => { downloads += 1; });
+    await page.getByLabel('任務指示', { exact: true }).fill('幫我匯出可以列印的套件');
+    await button(page, '執行').click();
+    await expect(page.getByTestId('agent-reply')).toContainText(reply);
+    // The dialog opened with the scope the agent chose, and prepared as usual.
+    await expect(dialog(page)).toHaveAttribute('data-export-state', 'ready', { timeout: 120_000 });
+    await expect(page.getByLabel('匯出範圍', { exact: true })).toHaveValue('assembly');
+    expect(await filesOf(page)).not.toHaveLength(0);
+    // Not an undo step, no workspace change, and nothing downloaded without the user's click.
+    expect(await objectRows(page)).toEqual(objectsBefore);
+    expect(downloads).toBe(0);
+    await button(page, '關閉匯出').click();
+    await expect(dialog(page)).toHaveCount(0);
+    // One 復原 undoes the second demo load, so the export left no step of its own on top of it.
+    await undo.click();
+    await expect(canvas(page)).toHaveAttribute('data-object-count', '1');
+  });
 });

@@ -168,6 +168,7 @@ export default function App() {
   const agent = useAgentRun({
     applyWorkspace: applyAgentWorkspace,
     setTryingOn,
+    openExport: scope => setExportRequest(scope),
     getSnapshot: () => ({ workspace: store.current(), tryOn: tryingOn, cameraOn: camera === 'on', printer }),
     getTurns: () => agentTurns.current,
     pushTurn: turn => { agentTurns.current = [...agentTurns.current, turn].slice(-HISTORY_TURN_LIMIT); },
