@@ -25,6 +25,8 @@ export interface SceneHandle {
   /** Viewport client coordinates of a part's centre (used by tests and tooling); `objectId` defaults to the active object. */
   projectPart(id: string, objectId?: string): { x: number; y: number } | null;
   /** Viewport client coordinates of the centre of a part's contact face (used by tests and tooling), or null for an unknown part or a face that is not a contact face. */
+  /** The unit direction from the view's target to its camera (the export image looks along its negative), or null before the view exists. */
+  viewDirection(): Vector | null;
   projectFace(objectId: string, partId: string, face: FaceId): { x: number; y: number } | null;
   /** The nearest part under a client point, or null (also for a point outside the viewport). Used by hand control for hover and grabbing. */
   hitTest(point: Point): { objectId: string; partId: string; name: string; objectName: string; hit: Vector } | null;
@@ -276,6 +278,14 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       const current = view.current;
       const entry = current?.entries.get(objectId);
       const node = entry?.parts.get(partId);
+    viewDirection() {
+      const current = view.current;
+      if (!current) return null;
+      const direction = current.camera.position.clone().sub(current.controls.target);
+      if (direction.lengthSq() < 1e-12) return null;
+      direction.normalize();
+      return { x: direction.x, y: direction.y, z: direction.z };
+    },
       const part = entry?.model.parts.find(candidate => candidate.id === partId);
       const local = part ? localFace(part, face) : null;
       if (!current || !node || !local) return null;

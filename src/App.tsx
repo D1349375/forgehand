@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { BufferGeometry } from 'three';
 import { assemblyOf } from '../shared/assembly';
 import { realignJoint } from '../shared/contact';
@@ -8,6 +8,7 @@ import { newJoint, recommendJoint } from '../shared/joint-rules';
 import type { Joint } from '../shared/joint';
 import type { MaterialId } from '../shared/materials';
 import { validateGenerationResult, validateModel, type GenerationResult, type ModelSpec, type Part } from '../shared/model';
+import type { ExportScope } from '../shared/export-plan';
 import type { PrinterProfile } from '../shared/printer';
 import {
   MAX_OBJECTS, WorkspaceError, activeObject, addObject, createObject, emptyWorkspace, findObject, joinObjects, jointsRemovedBy, removeJoint, removeObject, replaceModel,
@@ -60,6 +61,9 @@ const armStatusText: Record<ArmTrackingStatus, string> = {
 declare global { interface Window { __forgehandScene?: SceneHandle | null } }
 
 /** `localStorage`, or `null` where the browser refuses access (the printer setting then lasts for the session). */
+/** The export dialog and everything behind it (fflate, the CSG module, the GLB writer) load only when the dialog first opens. */
+const ExportDialog = lazy(() => import('./export/ExportDialog'));
+
 function browserStorage(): Storage | null {
   try { return window.localStorage; } catch { return null; }
 }
@@ -86,6 +90,8 @@ export default function App() {
   /** The printer's tolerances: a browser setting, not part of the workspace and never an undo step. */
   const [printer, setPrinter] = useState(() => loadPrinterProfile(browserStorage()));
   /** 顯示接合: session state. */
+  /** 匯出套件: the open export dialog and its scope. Session state, never part of the workspace and never an undo step. */
+  const [exportRequest, setExportRequest] = useState<ExportScope | null>(null);
   const [showJoints, setShowJoints] = useState(true);
   const [openJointId, setOpenJointId] = useState<string | null>(null);
   const [mouseJoin, setMouseJoin] = useState<MouseJoinState>({ step: 'off' });
@@ -748,7 +754,7 @@ export default function App() {
             {camera === 'on' && <button className={`button ${cameraHidden ? 'active' : ''}`} type="button" aria-pressed={cameraHidden} onClick={() => setCameraHidden(hidden => !hidden)}>隱藏鏡頭畫面</button>}
             <label className="contrast-toggle"><input type="checkbox" checked={contrast} onChange={e => setContrast(e.target.checked)} />提高背景對比</label>
           </div>
-          <div className="button-group"><button className="button" onClick={undo} disabled={!store.canUndo || agentActive} title="Ctrl+Z">復原</button><button className="button" onClick={redo} disabled={!store.canRedo || agentActive} title="Ctrl+Shift+Z">重做</button><button className="icon-button" onClick={() => sceneRef.current?.zoomOut()} aria-label="縮小" disabled={!active}>−</button><button className="icon-button" onClick={() => sceneRef.current?.zoomIn()} aria-label="放大" disabled={!active}>＋</button><button className="button" onClick={() => sceneRef.current?.reset()} disabled={!active}>重設視角</button></div>
+          <div className="button-group"><button className="button" onClick={undo} disabled={!store.canUndo || agentActive} title="Ctrl+Z">復原</button><button className="button" onClick={redo} disabled={!store.canRedo || agentActive} title="Ctrl+Shift+Z">重做</button><button className="icon-button" onClick={() => sceneRef.current?.zoomOut()} aria-label="縮小" disabled={!active}>−</button><button className="icon-button" onClick={() => sceneRef.current?.zoomIn()} aria-label="放大" disabled={!active}>＋</button><button className="button" onClick={() => sceneRef.current?.reset()} disabled={!active}>重設視角</button><button className="button" type="button" onClick={() => setExportRequest({ scope: 'workspace', objectId: null })} disabled={workspace.objects.length === 0}>匯出套件</button></div>
         </div>
         {handControlOn && handControl.status.state !== 'hidden' && <p className={`notice hand-status ${['error', 'slow'].includes(handControl.status.state) ? 'warning' : ''}`} role="status" data-testid="hand-status" data-state={handControl.status.state}>{handControl.status.text}</p>}
         {handControlOn && handDebug && <HandDebugPanel source={tracking.source} debug={handControl.debug} minFps={minFps} lossMs={lossMs} />}
@@ -807,6 +813,9 @@ export default function App() {
           <h2>零件</h2>
           <ul className="part-picker" aria-label="零件清單">{active.model.parts.map(part => <li key={part.id}><button type="button" aria-pressed={selected.includes(part.id)} disabled={agentActive} className={selected.includes(part.id) ? 'selected' : ''} onClick={event => pick(active.id, part.id, event.shiftKey)}>
             <span className="color-chip" style={{ background: part.color }} /><span>{part.name}<small>{part.id}{part.parentId ? ` · 屬於 ${active.model.parts.find(p => p.id === part.parentId)?.name ?? part.parentId}` : ''}</small></span></button></li>)}</ul>
+        {exportRequest && <Suspense fallback={<p className="notice" role="status">正在載入匯出功能…</p>}>
+          <ExportDialog workspace={workspace} printer={printer} request={exportRequest} viewDirection={() => sceneRef.current?.viewDirection() ?? null} onClose={() => setExportRequest(null)} />
+        </Suspense>}
           {!selectedParts.length && <p className="small-muted">點選畫面中的零件或上方清單即可選取；Shift 可多選，Esc 取消選取。</p>}
           {adjustError && <p className="notice warning" role="alert">{adjustError}</p>}
           {single && <div className="part-editor" data-testid="part-editor">

@@ -1339,3 +1339,96 @@ summary {
   gap:10px;
   margin:14px 0 6px
 }
+.export-dialog {
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  padding:18px 20px
+}
+.export-dialog:focus {
+  outline:none
+}
+.export-dialog h2 {
+  margin:0;
+  font-size:21px;
+  letter-spacing:.5px
+}
+.export-dialog .notice {
+  margin-top:0
+}
+.export-dialog p {
+  margin:0;
+  font-size:12px;
+  line-height:1.8
+}
+.export-progress {
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:8px
+}
+.export-progress progress {
+  width:100%
+}
+.export-summary {
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  color:#deebf1
+}
+.export-findings {
+  list-style:none;
+  margin:0;
+  padding:0;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  font-size:12px;
+  line-height:1.7;
+  color:#aecbd6
+}
+.export-findings .finding {
+  display:grid;
+  grid-template-columns:20px 34px minmax(0,1fr);
+  align-items:start;
+  gap:4px;
+  overflow-wrap:anywhere
+}
+.export-findings .finding-word {
+  font-size:11px;
+  font-weight:700
+}
+.export-findings .finding.error {
+  color:#f0b8a3
+}
+.export-findings .finding.warning {
+  color:#ebc8a3
+}
+.export-hints summary {
+  cursor:pointer;
+  font-size:12px;
+  color:#85cbd6;
+  margin-bottom:6px
+}
+.export-files {
+  list-style:none;
+  margin:0;
+  padding:0;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  font-size:12px
+}
+.export-files li {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto auto;
+  align-items:center;
+  gap:10px
+}
+.export-path {
+  overflow-wrap:anywhere;
+  color:#deebf1
+}
+.export-close {
+  align-self:flex-start
+}
