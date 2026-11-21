@@ -155,7 +155,7 @@ export default function App() {
   const agent = useAgentRun({
     applyWorkspace: applyAgentWorkspace,
     setTryingOn,
-    getSnapshot: () => ({ workspace: store.current(), tryOn: tryingOn, cameraOn: camera === 'on' }),
+    getSnapshot: () => ({ workspace: store.current(), tryOn: tryingOn, cameraOn: camera === 'on', printer }),
     getTurns: () => agentTurns.current,
     pushTurn: turn => { agentTurns.current = [...agentTurns.current, turn].slice(-HISTORY_TURN_LIMIT); },
   });
@@ -464,8 +464,16 @@ export default function App() {
     timingRef.current = built ? { objectId: built.id, startedAt: performance.now() } : null;
     if (after.display.explode > 0) setTransformMode(null);
     if (after.objects.length > before.objects.length) { setMode('edit'); setMessage('代理已建立新物件，可按「復原」回到上一步。'); }
-    else if (after.objects.length < before.objects.length) setMessage('代理已刪除物件，可按「復原」回到上一步。');
-    else if (built) setMessage('代理已修改物件，可按「復原」回到上一步。');
+    else if (after.objects.length < before.objects.length) setMessage('代理已刪除物件，可按「復原」回到上一步。' + cascadeNotice(before, after));
+    else if (built) setMessage('代理已修改物件，可按「復原」回到上一步。' + cascadeNotice(before, after));
+    else if (after.joints.some(joint => !before.joints.some(old => old.id === joint.id))) {
+      // A joint the agent created: open its card, as a mouse join does.
+      setOpenJointId(after.joints.find(joint => !before.joints.some(old => old.id === joint.id))!.id); setCardError('');
+      setMessage('代理已建立接合，可按「復原」回到上一步。');
+    }
+    else if (after.joints.length < before.joints.length) setMessage('代理已刪除接合。');
+    else if (after.joints !== before.joints) setMessage('代理已更新接合。');
+    else if (after.objects.some(object => object.material !== before.objects.find(old => old.id === object.id)?.material)) setMessage('代理已設定材料。');
     else setMessage('代理已調整物件位置，可按「復原」回到上一步。');
   }
   /** Local, immediate change; validated exactly like AI output before display. */

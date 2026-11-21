@@ -1,4 +1,5 @@
 import type { ToolCall, ToolResult } from '../shared/agent';
+import type { PrinterProfile } from '../shared/printer';
 import type { Workspace } from '../shared/workspace';
 import type { ModelProvider } from './provider';
 import { fail } from './tools/helpers';
@@ -21,6 +22,8 @@ export interface AgentWorkingState {
   workspace: Workspace;
   tryOn: boolean;
   cameraOn: boolean;
+  /** The user's printer tolerances for the joint checks; the default profile when absent. */
+  printer?: PrinterProfile;
 }
 
 /** Sources of ids and time for tools that create objects; tests inject fixed ones. */

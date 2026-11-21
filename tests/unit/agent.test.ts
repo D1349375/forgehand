@@ -159,13 +159,14 @@ describe('agent contract', () => {
     const rotation = { x: 0, y: 0, z: 0 };
     it('describe the workspace: objects, active id and the target object', () => {
       const detail = {
-        objects: [{ id: 'obj-1', name: '殼', partCount: 2, position, rotation, active: true }],
+        objects: [{ id: 'obj-1', name: '殼', partCount: 2, position, rotation, active: true, material: null }],
+        joints: [],
         activeObjectId: 'obj-1',
         target: { objectId: 'obj-1', parts: [], selection: [], explode: 0 },
         tryOn: false,
       };
       expect(GetProjectStateDetailSchema.parse(detail)).toEqual(detail);
-      expect(GetProjectStateDetailSchema.parse({ objects: [], activeObjectId: null, target: null, tryOn: false }).target).toBeNull();
+      expect(GetProjectStateDetailSchema.parse({ objects: [], joints: [], activeObjectId: null, target: null, tryOn: false }).target).toBeNull();
     });
     it('carry the object id on every writing tool', () => {
       expect(GenerateDesignDetailSchema.parse({ source: 's', providerModel: 'm', status: 'ready', objectId: 'obj-1' }).objectId).toBe('obj-1');
@@ -238,7 +239,7 @@ describe('agent contract', () => {
       const base = { instruction: 'x', requestId: 'r', tryOn: false, cameraOn: false, history: [] };
       expect(() => AgentRequestSchema.parse({ ...base, workspace: emptyWorkspace() })).not.toThrow();
       expect(() => AgentRequestSchema.parse(base)).toThrow();
-      expect(Object.keys(AgentRequestSchema.shape)).toEqual(['instruction', 'requestId', 'workspace', 'tryOn', 'cameraOn', 'history']);
+      expect(Object.keys(AgentRequestSchema.shape)).toEqual(['instruction', 'requestId', 'workspace', 'tryOn', 'cameraOn', 'history', 'printer']);
     });
   });
 

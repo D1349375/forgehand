@@ -7,7 +7,7 @@ export interface StateEffects {
   before: Workspace;
   /** The workspace the event leads to. */
   after: Workspace;
-  /** True only when the event changed an object (add, model, transform or remove); selection, explode and activation are not undo steps. */
+  /** True only when the event changed an object (add, model, transform, material or remove) or a joint (add, update or remove); selection, explode and activation are not undo steps. */
   recordUndo: boolean;
   /** Present only when the event sets the try-on flag. */
   tryOn?: boolean;
@@ -25,7 +25,7 @@ export function applyStateEvent(payload: unknown, workspace: Workspace): StateEf
   const { tryOn, ...change } = parsed.data;
   try {
     const { before, after } = applyWorkspaceChange(workspace, change);
-    const effects: StateEffects = { before, after, recordUndo: change.object !== null };
+    const effects: StateEffects = { before, after, recordUndo: change.object !== null || (change.joint ?? null) !== null };
     if (tryOn !== null) effects.tryOn = tryOn;
     return effects;
   } catch (cause) {

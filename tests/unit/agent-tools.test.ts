@@ -68,7 +68,7 @@ describe('agent local tools', () => {
       expect(detail.target.parts).toHaveLength(demoModel.parts.length);
       expect(detail.objects).toEqual([{
         id: 'obj-1', name: demoModel.name, partCount: demoModel.parts.length,
-        position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, active: true,
+        position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, active: true, material: null,
       }]);
       expect(result.stateChange).toBeNull();
     });

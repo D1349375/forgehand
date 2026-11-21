@@ -170,7 +170,7 @@ Joints become visible and usable with the mouse: marks on the parts, the 接合 
 
 ## Task 5 — Agent tools for joints and materials
 
-`[ ]`
+`[x]`
 
 The agent can create, change and remove joints and set materials, sees joints and materials in its state, asks about load and disassembly, and the browser applies its joint changes as undo steps.
 

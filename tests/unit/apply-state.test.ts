@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { demoModel } from '../../shared/demo';
 import { validateModel } from '../../shared/model';
-import { activeObject, setActiveObject, type ObjectTransform, type SceneObject } from '../../shared/workspace';
+import { activeObject, setActiveObject, type ObjectTransform, type SceneObject, type Workspace } from '../../shared/workspace';
 import { applyStateEvent } from '../../src/agent/apply-state';
+import { twoBoxes } from '../fixtures/joint-workspace';
 import { sceneObject, workspaceOf } from './agent-fixtures';
 
 const newModel = validateModel({ ...structuredClone(demoModel), name: '新的模型' });
@@ -58,6 +59,40 @@ describe('applyStateEvent', () => {
     for (const [label, payload, expected] of payloads) {
       expect(applyStateEvent(payload, ws)?.recordUndo, label).toBe(expected);
     }
+  });
+
+  it('a joint change records an undo step with and without an object change, a material change is one too', () => {
+    const joined = twoBoxes({ joint: true });
+    const unjoined = twoBoxes();
+    const joint = joined.joints[0]!;
+    const cases: [string, Workspace, Record<string, unknown>][] = [
+      ['joint add', unjoined, change({ joint: { op: 'add', joint } })],
+      ['joint update', joined, change({ joint: { op: 'update', joint: { ...joint, confirmed: true } } })],
+      ['joint remove', joined, change({ joint: { op: 'remove', jointId: joint.id } })],
+      ['transform with a joint add', unjoined, change({ object: { op: 'transform', objectId: 'b', transform: moved }, joint: { op: 'add', joint } })],
+      ['material', joined, change({ object: { op: 'material', objectId: 'a', material: 'abs' } })],
+    ];
+    for (const [label, ws, payload] of cases) {
+      const effects = applyStateEvent(payload, ws);
+      expect(effects, label).not.toBeNull();
+      expect(effects!.recordUndo, label).toBe(true);
+    }
+    expect(applyStateEvent(cases[0]![2], unjoined)!.after.joints).toEqual([joint]);
+    expect(applyStateEvent(cases[2]![2], joined)!.after.joints).toEqual([]);
+    expect(applyStateEvent(change({ joint: null }), joined)!.recordUndo).toBe(false);
+  });
+
+  it('an old payload without the joint key still parses and applies', () => {
+    const old = { activeObjectId: null, object: { op: 'transform', objectId: 'a', transform: moved }, selection: null, explode: null, tryOn: null };
+    const effects = applyStateEvent(old, twoObjects());
+    expect(effects?.recordUndo).toBe(true);
+    expect(effects!.after.objects[0]!.transform).toEqual(moved);
+  });
+
+  it('a joint change that the workspace rejects is dropped', () => {
+    const joined = twoBoxes({ joint: true });
+    expect(applyStateEvent(change({ joint: { op: 'remove', jointId: 'nope' } }), joined)).toBeNull();
+    expect(applyStateEvent(change({ joint: { op: 'add', joint: joined.joints[0]! } }), joined)).toBeNull(); // the same sides twice
   });
 
   it('model: replaces the model and marks the object edited, leaving the other object alone', () => {

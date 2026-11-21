@@ -1,7 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
+import { serializeSseEvent, type StateChange, type ToolResult } from '../../shared/agent';
+import { planJoin } from '../../shared/contact';
 import { demoModel } from '../../shared/demo';
 import type { Joint } from '../../shared/joint';
+import { newJoint } from '../../shared/joint-rules';
 import { validateModel, type ModelSpec } from '../../shared/model';
+import { DEFAULT_PRINTER_PROFILE } from '../../shared/printer';
+import { addObject, emptyWorkspace, setTransform } from '../../shared/workspace';
+import { fixtureObject } from '../fixtures/joint-workspace';
 // Assembly joints in the workbench, end to end: the mouse join, the joint card, undo and redo, assemblies,
 // the 材料 select, the printer profile and the print preview. `/api/*` is never called for a model; the Three.js scene,
 // raycasting and projection are real.
@@ -32,10 +38,20 @@ async function loadTwoDemos(page: Page): Promise<{ a: string; b: string }> {
   return { a: a![0], b: b![0] };
 }
 
-/** Client coordinates of a part's centre. The control column is tall and clicking its buttons scrolls the page, so scroll back to the canvas first. */
-async function project(page: Page, partId: string, objectId: string) {
-  await page.evaluate(() => window.scrollTo(0, 0));
+/**
+ * Client coordinates of a part's centre at the current scroll position. The page is never scrolled back: while a mouse
+ * join runs the canvas is pinned in view (see `.mouse-join-status` in styles.css), and outside a join `offset` is used.
+ */
+function project(page: Page, partId: string, objectId: string) {
   return page.evaluate(([part, object]) => window.__forgehandScene?.projectPart(part!, object), [partId, objectId]);
+}
+
+/** Where B's 外殼 is on screen relative to A's 外殼. Both are read at the same scroll position, so the page position cancels out. */
+async function offset(page: Page, ids: { a: string; b: string }) {
+  const a = await project(page, 'housing', ids.a);
+  const b = await project(page, 'housing', ids.b);
+  expect(a && b).toBeTruthy();
+  return { x: b!.x - a!.x, y: b!.y - a!.y };
 }
 
 async function clickPart(page: Page, partId: string, objectId: string) {
@@ -74,13 +90,13 @@ test('滑鼠接合：預覽、確認接合為一步復原，卡片顯示待確�
   const [, bBefore] = await objectRows(page);
   await expect(canvas(page)).toHaveAttribute('data-joint-count', '0');
   await expect(canvas(page)).toHaveAttribute('data-snap', 'none');
-  const housingBefore = await project(page, 'housing', ids.b);
+  const housingBefore = await offset(page, ids);
 
   await previewJoin(page, ids);
   // The preview shows B's assembly at the aligned pose; the stored transform is untouched until 確認接合.
   await expect.poll(async () => (await objectRows(page))[1]![1]).toEqual(bBefore![1]);
-  const housingPreview = await project(page, 'housing', ids.b);
-  expect(Math.abs(housingPreview!.x - housingBefore!.x) + Math.abs(housingPreview!.y - housingBefore!.y)).toBeGreaterThan(1);
+  const housingPreview = await offset(page, ids);
+  expect(Math.abs(housingPreview.x - housingBefore.x) + Math.abs(housingPreview.y - housingBefore.y)).toBeGreaterThan(1);
   await expect(canvas(page)).toHaveAttribute('data-joint-count', '0');
   await expect(button(page, '確認接合')).toBeEnabled();
   await expect(button(page, '新增接合')).toHaveCount(0);
@@ -161,7 +177,7 @@ test('接合卡片：負重與拆裝改變建議，自選方式即確認，每�
 
 test('取消接合與 Esc 讓一切回到原位，換一組面在只有一組時停用', async ({ page }) => {
   const ids = await loadTwoDemos(page);
-  const before = await project(page, 'housing', ids.b);
+  const before = await offset(page, ids);
 
   await previewJoin(page, ids);
   await expect(button(page, '換一組面')).toBeDisabled();
@@ -169,22 +185,48 @@ test('取消接合與 Esc 讓一切回到原位，換一組面在只有一組時
   await expect(status(page)).toHaveCount(0);
   await expect(canvas(page)).toHaveAttribute('data-snap', 'none');
   await expect(canvas(page)).toHaveAttribute('data-joint-count', '0');
-  const afterCancel = await project(page, 'housing', ids.b);
-  expect(afterCancel!.x).toBeCloseTo(before!.x, 1);
-  expect(afterCancel!.y).toBeCloseTo(before!.y, 1);
+  const afterCancel = await offset(page, ids);
+  expect(afterCancel.x).toBeCloseTo(before.x, 1);
+  expect(afterCancel.y).toBeCloseTo(before.y, 1);
 
   await previewJoin(page, ids);
   await page.keyboard.press('Escape');
   await expect(status(page)).toHaveCount(0);
   await expect(canvas(page)).toHaveAttribute('data-snap', 'none');
-  const afterEscape = await project(page, 'housing', ids.b);
-  expect(afterEscape!.x).toBeCloseTo(before!.x, 1);
+  const afterEscape = await offset(page, ids);
+  expect(afterEscape.x).toBeCloseTo(before.x, 1);
+  expect(afterEscape.y).toBeCloseTo(before.y, 1);
 
   // While a join runs a click chooses a part and never selects it.
   await button(page, '新增接合').click();
   await clickPart(page, 'battery', ids.a);
   await expect(canvas(page)).toHaveAttribute('data-selected-ids', '');
   await button(page, '取消接合').click();
+});
+
+test('新增接合不會讓頁面跳動，接合期間畫布固定在視窗內，可直接點選零件', async ({ page }) => {
+  const ids = await loadTwoDemos(page);
+  const start = button(page, '新增接合');
+  // The 接合 panel is far below the canvas: reach the button the way a user does and check that the canvas is out of view there.
+  await start.scrollIntoViewIfNeeded();
+  const viewportHeight = await page.evaluate(() => window.innerHeight);
+  const away = (await canvas(page).boundingBox())!;
+  expect(away.y + away.height).toBeLessThan(0);
+  const scrollBefore = await page.evaluate(() => window.scrollY);
+  // A real mouse click: no Playwright scroll, so any change of the scroll position comes from the page itself.
+  const box = (await start.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(status(page)).toContainText('點選第一個要接合的零件。');
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+  const pinned = (await canvas(page).boundingBox())!;
+  expect(pinned.y).toBeGreaterThanOrEqual(0);
+  expect(pinned.y + pinned.height).toBeLessThanOrEqual(viewportHeight);
+  // The first click on a part works without scrolling anywhere.
+  await clickPart(page, 'battery', ids.a);
+  await expect(status(page)).toContainText('點選另一個物件上要接合的零件。');
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+  await page.keyboard.press('Escape');
+  await expect(status(page)).toHaveCount(0);
 });
 
 test('一個零件沒有平面（球）時給出提示，並留在第一步', async ({ page }) => {
@@ -321,4 +363,62 @@ test('列印件預覽：載入後顯示在零件上，再按一次關閉；改�
   await expect(canvas(page)).toHaveAttribute('data-print-preview', `${ids.a}:battery`, { timeout: 60_000 });
   await field(page, '材料').selectOption({ label: 'PETG' });
   await expect(canvas(page)).toHaveAttribute('data-print-preview', '');
+});
+
+test('代理建立接合：state 框建立接合並開啟卡片，請求帶著列印設定，一次復原', async ({ page }) => {
+  const ids = await loadTwoDemos(page);
+  const before = await objectRows(page);
+  // The server's plan, computed with the shared functions on the page's own placement: A's 側邊電池 to B's 外殼, B moved onto A.
+  let ws = emptyWorkspace();
+  for (const [id, position, rotation] of before) ws = addObject(ws, fixtureObject(id, demoModel, { position, rotation }));
+  const plan = planJoin(ws, { objectId: ids.a, partId: 'battery' }, { objectId: ids.b, partId: 'housing' });
+  if (!plan.ok || !plan.move) throw new Error('the demo pair should need a move to join');
+  const moved = setTransform(ws, plan.move.objectId, plan.move.transform);
+  const joint = newJoint(moved, { id: 'agent-joint', createdAt: '2026-11-25T10:00:00.000Z', a: plan.a, b: plan.b }, DEFAULT_PRINTER_PROFILE);
+  const change: StateChange = {
+    activeObjectId: null, object: { op: 'transform', objectId: plan.move.objectId, transform: plan.move.transform },
+    joint: { op: 'add', joint }, selection: null, explode: null, tryOn: null,
+  };
+  const summary = '已建立接合，建議方式已選好，尚未確認。';
+  const result: ToolResult = { tool: 'create_joint', ok: true, summary, detail: { jointId: joint.id }, stateChange: change };
+  const reply = '已為兩個物件建立接合，請告訴我負重與拆裝需求。';
+  const body = [
+    serializeSseEvent('status', { note: '正在建立接合。' }),
+    serializeSseEvent('tool', { tool: 'create_joint', label: '建立接合', argsJson: '{"a":{"objectId":"a"},"b":{"objectId":"b"}}' }),
+    serializeSseEvent('result', result),
+    serializeSseEvent('state', change),
+    serializeSseEvent('final', { reply }),
+    serializeSseEvent('done', {}),
+  ].join('');
+  let requestBody: { printer?: unknown; workspace?: { joints?: unknown[] } } | null = null;
+  await page.route('**/api/agent', route => {
+    requestBody = route.request().postDataJSON();
+    return route.fulfill({ status: 200, contentType: 'text/event-stream', body });
+  });
+
+  await page.getByLabel('任務指示', { exact: true }).fill('把兩個物件接合起來');
+  await button(page, '執行').click();
+  await expect(page.getByTestId('agent-reply')).toContainText(reply);
+
+  // The request carries the printer profile of the browser and a version-2 workspace without joints.
+  expect(requestBody!.printer).toEqual(DEFAULT_PRINTER_PROFILE);
+  expect(requestBody!.workspace!.joints).toEqual([]);
+  // The joint exists, B moved onto A, and the card of the new joint is open.
+  await expect(canvas(page)).toHaveAttribute('data-joint-count', '1');
+  const [stored] = await jointList(page);
+  expect(stored).toEqual(joint);
+  expect(stored!.confirmed).toBe(false);
+  await expect.poll(async () => (await objectRows(page))[1]![1]).toEqual(plan.move.transform.position);
+  await expect(card(page)).toBeVisible();
+  await expect(card(page)).toHaveAttribute('data-joint-id', 'agent-joint');
+  await expect(card(page)).toContainText('待確認');
+  await expect(page.getByText('代理已建立接合，可按「復原」回到上一步。')).toBeVisible();
+
+  // One 復原 removes the joint and puts B back.
+  await undo(page).click();
+  await expect(canvas(page)).toHaveAttribute('data-joint-count', '0');
+  await expect.poll(async () => (await objectRows(page))[1]![1]).toEqual(before[1]![1]);
+  await expect(card(page)).toHaveCount(0);
+  await redo(page).click();
+  await expect(canvas(page)).toHaveAttribute('data-joint-count', '1');
 });
