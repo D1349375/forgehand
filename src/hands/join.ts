@@ -27,11 +27,13 @@ export type JoinRule = (owner: OwnerGesture, joiner: JoinInput, gate: Gate, cont
  *   orbit + pinch -> zoom, while hand control is not off (Task 6);
  *   hold + pinch -> explode, at full control or while the exploded view is open (Task 7);
  *   hold + fist over a part of another object, not in the held object's assembly -> assemble, at full control only (assembly-joints Task 6).
- * Rotate (Task 8) follows. The joining hand's own target is read by the assemble row only.
+ *   grab + pinch -> rotate, at full control only (Task 8).
+ * The joining hand's own target is read by the assemble row only.
  */
 export const joinGesture: JoinRule = (owner, joiner, gate, context) => {
   if (owner === 'orbit' && joiner.kind === 'pinch' && gate.level !== 'off') return 'zoom';
   if (owner === 'hold' && joiner.kind === 'pinch' && fistAllowed(gate)) return 'explode';
+  if (owner === 'grab' && joiner.kind === 'pinch' && gate.level === 'full') return 'rotate';
   if (owner === 'hold' && joiner.kind === 'fist' && joiner.target.kind === 'part' && gate.level === 'full' && context && context.ownerObjectId !== null) {
     const held = context.ownerObjectId;
     const other = joiner.target.objectId;

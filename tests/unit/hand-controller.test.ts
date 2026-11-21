@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  CANCEL_NOTICE_MS, DRAG_DEAD_ZONE_PX, EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, FIST_ENGAGE_FRAMES, FIST_RELEASE_FRAMES, HAND_LOST_MS, TRACKING_LOSS_MS,
-  TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX,
+  CANCEL_NOTICE_MS, DRAG_DEAD_ZONE_PX, EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, FIST_ENGAGE_FRAMES, FIST_RELEASE_FRAMES, HAND_LOST_MS, ROTATE_DEAD_ZONE_DEG,
+  TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX,
 } from '../../src/hands/constants';
 import { HandController, type GrabSession, type HandPort, type HoldSession, type OrbitSession } from '../../src/hands/controller';
 import { decideFist, decidePinch } from '../../src/hands/decide';
@@ -10,7 +10,7 @@ import type { Gate } from '../../src/hands/gate';
 import { joinGesture, type JoinRule } from '../../src/hands/join';
 import { handSample } from '../../src/hands/mapping';
 import { angleDelta, beyondDeadZone, pairAngle, pairSpan } from '../../src/hands/pair';
-import { badgeBox, drawBadge, drawLink, drawRing, drawSquare, type Box } from '../../src/hands/skeleton';
+import { badgeBox, drawArc, drawBadge, drawLink, drawRing, drawSquare, type Box } from '../../src/hands/skeleton';
 import { createStats } from '../../src/hands/stats';
 import { HAND_COLOUR, LINK_COLOUR, overlayStyle } from '../../src/hands/style';
 import { badgeText, debugLine, handStatus, shortenName } from '../../src/hands/text';
@@ -51,12 +51,14 @@ const part = (objectId: string, partId: string, label = partId, objectName?: str
 
 class FakeGrab implements GrabSession {
   previews: Point[] = [];
+  rotates: number[] = [];
   valid = true;
   commits = 0;
   cancels = 0;
   rebases = 0;
   constructor(private readonly log: string[]) {}
   preview(offset: Point) { this.previews.push(offset); return this.valid; }
+  rotate(angleDeg: number) { this.rotates.push(angleDeg); return this.valid; }
   rebase() { this.rebases++; this.log.push('grab.rebase'); }
   commit() { this.commits++; this.log.push('grab.commit'); }
   cancel() { this.cancels++; this.log.push('grab.cancel'); }
@@ -214,14 +216,15 @@ describe('pair geometry', () => {
 
 describe('joinGesture', () => {
   const AGENT: Gate = { level: 'view-only', reason: 'agent' };
-  it('has two rows so far: orbit + pinch is a zoom unless hand control is off (Task 6), hold + pinch is an explode at full control or while exploded (Task 7); every other input is null', () => {
+  it('has three rows for pinches and fists without the assemble context: orbit + pinch is a zoom unless hand control is off (Task 6), hold + pinch is an explode at full control or while exploded (Task 7), grab + pinch is a rotate at full control only (Task 8); every other input is null', () => {
     for (const owner of ['press', 'grab', 'orbit', 'hold'] as const) {
       for (const kind of ['pinch', 'fist'] as const) {
         for (const target of [EMPTY_TARGET, part('o1', 'p1')]) {
           for (const gate of [FULL, VIEW_ONLY, AGENT, OFF]) {
             const zoom = owner === 'orbit' && kind === 'pinch' && gate.level !== 'off';
             const explode = owner === 'hold' && kind === 'pinch' && (gate.level === 'full' || (gate.level === 'view-only' && gate.reason === 'exploded'));
-            expect(joinGesture(owner, { kind, target }, gate)).toBe(zoom ? 'zoom' : explode ? 'explode' : null);
+            const rotate = owner === 'grab' && kind === 'pinch' && gate.level === 'full';
+            expect(joinGesture(owner, { kind, target }, gate)).toBe(zoom ? 'zoom' : explode ? 'explode' : rotate ? 'rotate' : null);
           }
         }
       }
@@ -539,8 +542,8 @@ describe('HandController, two hands', () => {
     expect(rig.view(1)!.cursor.x).toBeGreaterThan(500);
   });
 
-  it('makes a second pinch inert while the first hand grabs: locked, 另一手操作中, no port call', () => {
-    const rig = makeRig({ pick: point => part('o1', point.x < 500 ? 'p1' : 'p2') });
+  it('makes a second pinch inert while the first hand grabs and the rule has no row for it: locked, 另一手操作中, no port call', () => {
+    const rig = makeRig({ join: () => null, pick: point => part('o1', point.x < 500 ? 'p1' : 'p2') });
     pinch(rig, [left]);
     const log = [...rig.log];
     rig.run([[...left, true], [...right, false]], 6);
@@ -569,14 +572,15 @@ describe('HandController, two hands', () => {
     expect(rig.controller.stats.inert).toBe(0);
   });
 
-  it('gives the gesture to slot 0 when both hands engage in the same frame', () => {
+  it('gives the gesture to slot 0 when both hands engage in the same frame, and slot 1 then joins it as a rotate', () => {
     const rig = makeRig({ pick: point => part('o1', point.x < 500 ? 'p1' : 'p2') });
     rig.run([[...left, false], [...right, false]], 6);
     rig.run([[...left, true], [...right, true]], 3);
     expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1']);
     expect(rig.view(0)!.state).toBe('grab');
-    expect(rig.view(1)!.state).toBe('locked');
-    expect(rig.controller.stats.inert).toBe(1);
+    expect(rig.view(1)!.state).toBe('join');
+    expect(rig.last.gesture).toBe('rotate');
+    expect(rig.controller.stats.inert).toBe(0);
   });
 
   it('gives slot 0 to the first hand in the frame when two new hands appear, whatever their position', () => {
@@ -601,7 +605,7 @@ describe('HandController, two hands', () => {
     it('starts the joiner: join state, the gesture on the frame, and a link from the owner to the joiner', () => {
       const rig = joined();
       expect(rig.view(1)!.state).toBe('join');
-      expect(rig.view(1)!.badge).toBe('手勢：雙手操作');
+      expect(rig.view(1)!.badge).toBe('手勢：雙手旋轉 0°');
       expect(rig.last.gesture).toBe('rotate');
       expect(rig.controller.stats.twoHand).toEqual({ rotate: 1 });
       expect(rig.controller.stats.inert).toBe(0);
@@ -901,24 +905,270 @@ describe('HandController, two-hand zoom (the real joinGesture)', () => {
     expect(rig.view(1)!.state).toBe('locked');
   });
 
-  it('leaves a grab with a second pinch inert: no zoom, locked, 另一手操作中', () => {
-    const rig = makeRig({ pick: () => part('o1', 'p1', 'Arm') });
-    rig.run([[...owner, false], [...start, false]], 6);
-    rig.run([[...owner, true], [...start, false]], 3);
-    rig.run([[...owner, true], [...start, true]], 3);
-    expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1']);
-    expect(rig.controller.twoHand).toBeNull();
-    expect(rig.last.gesture).toBe('grab');
-    expect(rig.view(1)!.state).toBe('locked');
-    expect(rig.view(1)!.badge).toBe('手勢：另一手操作中');
-    expect(rig.controller.stats.inert).toBe(1);
-    expect(rig.controller.stats.twoHand).toEqual({});
-  });
-
   it('writes the zoom badge only for the joining hand', () => {
     const base = { target: EMPTY_TARGET, value: null };
     expect(badgeText({ ...base, state: 'join', gesture: 'zoom' })).toBe('手勢：雙手縮放');
     expect(badgeText({ ...base, state: 'orbit', gesture: 'zoom' })).toBe('手勢：轉動視角');
+  });
+});
+
+describe('HandController, two-hand rotate (Task 8, the real joinGesture)', () => {
+  const owner: [number, number] = [500, 400];
+  const RADIUS = 250;
+  const onPart = () => part('o1', 'p1', 'Arm');
+  /** The second hand's place on its circle around the owner, at `degrees` (positive is clockwise on screen, y grows down). */
+  const at = (degrees: number, radius = RADIUS): [number, number] =>
+    [owner[0] + radius * Math.cos((degrees * Math.PI) / 180), owner[1] + radius * Math.sin((degrees * Math.PI) / 180)];
+
+  /** The owner pinches a part in the middle of the view and the second hand pinches 250 px to its right: they join as a rotate. */
+  function rotating(options: { pick?: (point: Point) => Target } = {}) {
+    const rig = makeRig({ pick: options.pick ?? onPart });
+    rig.run([[...owner, false], [...at(0), false]], 6);
+    rig.run([[...owner, true], [...at(0), false]], 3);
+    rig.run([[...owner, true], [...at(0), true]], 3);
+    return rig;
+  }
+  /** The second hand swings on its circle in steps of 10°, then settles (a hand that jumps beyond HAND_MATCH_PX in one frame is a new hand). */
+  function swing(rig: Rig, from: number, to: number, ownerAt: readonly [number, number] = owner, settle = 40) {
+    const step = to >= from ? 10 : -10;
+    for (let degrees = from + step; step > 0 ? degrees < to : degrees > to; degrees += step) rig.run([[...ownerAt, true], [...at(degrees), true]], 6);
+    rig.run([[...ownerAt, true], [...at(to), true]], settle);
+  }
+  const last = <T>(values: T[]): T => values[values.length - 1]!;
+
+  it('joins a grab with a pinch as a rotate: join state, 手勢：雙手旋轉 0°, gesture rotate, a link and no arc yet, whatever is under the second hand', () => {
+    const rig = rotating({ pick: point => (point.x < 600 ? onPart() : part('o1', 'p2', 'Cover')) });
+    expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1']);
+    expect(rig.view(0)!.state).toBe('grab');
+    expect(rig.view(0)!.badge).toBe('手勢：已抓取 Arm');
+    expect(rig.view(1)!.state).toBe('join');
+    expect(rig.view(1)!.badge).toBe('手勢：雙手旋轉 0°');
+    expect(rig.last.gesture).toBe('rotate');
+    expect(rig.last.link).not.toBeNull();
+    expect(rig.last.arc).toBeNull();
+    expect(rig.controller.stats.twoHand).toEqual({ rotate: 1 });
+    expect(rig.controller.stats.inert).toBe(0);
+    expect(rig.controller.twoHand!.gesture).toBe('rotate');
+    // Joining alone turns nothing: the hands are inside the dead zone.
+    expect(rig.grabs[0]!.rotates).toEqual([]);
+  });
+
+  it('turns the part clockwise for a clockwise swing of the vector and the other way for the other swing, by the angle less the dead zone', () => {
+    const rig = rotating();
+    swing(rig, 0, 30);
+    expect(rig.controller.twoHand!.angle).toBeCloseTo(30, 0);
+    const clockwise = last(rig.grabs[0]!.rotates);
+    expect(clockwise).toBeCloseTo(beyondDeadZone(rig.controller.twoHand!.angle, ROTATE_DEAD_ZONE_DEG), 6);
+    expect(clockwise).toBeCloseTo(25, 0);
+    expect(rig.view(1)!.badge).toBe('手勢：雙手旋轉 25°');
+    swing(rig, 30, -30);
+    expect(last(rig.grabs[0]!.rotates)).toBeCloseTo(-25, 0);
+    expect(rig.view(1)!.badge).toBe('手勢：雙手旋轉 -25°');
+    expect(rig.grabs[0]!.commits).toBe(0);
+    expect(rig.grabs[0]!.cancels).toBe(0);
+  });
+
+  it('ignores a turn smaller than the dead zone and does not jump when it leaves it', () => {
+    const rig = rotating();
+    swing(rig, 0, ROTATE_DEAD_ZONE_DEG - 1);
+    expect(rig.grabs[0]!.rotates).toEqual([]);
+    expect(rig.view(1)!.badge).toBe('手勢：雙手旋轉 0°');
+    expect(rig.last.arc).toBeNull();
+    swing(rig, ROTATE_DEAD_ZONE_DEG - 1, ROTATE_DEAD_ZONE_DEG + 8);
+    const sent = rig.grabs[0]!.rotates;
+    expect(sent.length).toBeGreaterThan(0);
+    // The first angle sent is small: the dead zone is taken off, so leaving it does not jump.
+    expect(Math.abs(sent[0]!)).toBeLessThan(3);
+    expect(last(sent)).toBeCloseTo(beyondDeadZone(rig.controller.twoHand!.angle, ROTATE_DEAD_ZONE_DEG), 6);
+    expect(last(sent)).toBeCloseTo(8, 0);
+    // Back inside the dead zone the part goes back to where the turn started.
+    swing(rig, ROTATE_DEAD_ZONE_DEG + 8, 2);
+    expect(last(rig.grabs[0]!.rotates)).toBe(0);
+  });
+
+  it('accumulates the angle across ±180° instead of wrapping back', () => {
+    const rig = rotating();
+    swing(rig, 0, 200);
+    expect(rig.controller.twoHand!.angle).toBeCloseTo(200, 0);
+    expect(last(rig.grabs[0]!.rotates)).toBeCloseTo(195, 0);
+    expect(rig.view(1)!.badge).toBe('手勢：雙手旋轉 195°');
+    swing(rig, 200, -170);
+    expect(rig.controller.twoHand!.angle).toBeCloseTo(-170, 0);
+    expect(last(rig.grabs[0]!.rotates)).toBeCloseTo(-165, 0);
+  });
+
+  it('holds the angle while the hands are closer than TWO_HAND_MIN_SPAN_PX, and reads it again when they part', () => {
+    const rig = rotating();
+    swing(rig, 0, 40);
+    const held = rig.controller.twoHand!.angle;
+    const sent = rig.grabs[0]!.rotates.length;
+    // In along the same direction, around the owner while close, and out again at the new direction.
+    for (let radius = 210; radius >= 45; radius -= 40) rig.run([[...owner, true], [...at(40, radius)!, true]], 6);
+    rig.run([[...owner, true], [...at(40, 45), true]], 20);
+    expect(rig.controller.twoHand!.span).toBeLessThan(TWO_HAND_MIN_SPAN_PX);
+    for (let degrees = 50; degrees <= 130; degrees += 10) rig.run([[...owner, true], [...at(degrees, 45), true]], 6);
+    rig.run([[...owner, true], [...at(130, 45), true]], 20);
+    // The filters lag a little on the way in and out, so the angle may drift by a degree or two, but not by the 90° swung while close.
+    expect(Math.abs(rig.controller.twoHand!.angle - held)).toBeLessThan(3);
+    for (let radius = 85; radius <= 250; radius += 40) rig.run([[...owner, true], [...at(130, radius), true]], 6);
+    rig.run([[...owner, true], [...at(130, 250), true]], 30);
+    // The 90° swung while close was not read; turning on from there is.
+    const back = rig.controller.twoHand!.angle;
+    expect(Math.abs(back - held)).toBeLessThan(3);
+    expect(rig.grabs[0]!.rotates.length).toBeGreaterThan(sent);
+    swing(rig, 130, 160);
+    expect(rig.controller.twoHand!.angle).toBeCloseTo(back + 30, 0);
+  });
+
+  it('holds the part still while rotating: the owner moving does not preview', () => {
+    const rig = rotating();
+    const previews = rig.grabs[0]!.previews.length;
+    swing(rig, 0, 30, [400, 450]);
+    expect(rig.grabs[0]!.rotates.length).toBeGreaterThan(0);
+    expect(rig.grabs[0]!.previews).toHaveLength(previews);
+    expect(rig.last.gesture).toBe('rotate');
+  });
+
+  it('draws an arc at the owner cursor from the start angle to the angle shown, and none inside the dead zone', () => {
+    const rig = rotating();
+    swing(rig, 0, 3);
+    expect(rig.last.arc).toBeNull();
+    swing(rig, 3, 40);
+    const arc = rig.last.arc!;
+    expect(arc).not.toBeNull();
+    expect(arc.centre).toEqual(rig.view(0)!.cursor);
+    expect(arc.fromDeg).toBeCloseTo(0, 0);
+    expect(arc.toDeg).toBeCloseTo(35, 0);
+    swing(rig, 40, -20);
+    expect(rig.last.arc!.toDeg).toBeCloseTo(-15, 0);
+  });
+
+  it('keeps the rotation and re-bases the move when the second hand lets go, then the owner moves the part on from there', () => {
+    const rig = rotating();
+    swing(rig, 0, 30);
+    const grab = rig.grabs[0]!;
+    // The owner moves while the second hand stays: the vector between the hands turns, so the part turns on a little, but does not move.
+    rig.run([[560, 400, true], [...at(30), true]], 30);
+    expect(grab.previews).toEqual([]);
+    const previews = grab.previews.length;
+    rig.run([[560, 400, true], [...at(30), false]], 4);
+    expect(grab.rebases).toBe(1);
+    // Whatever turn was shown when the second hand left stays: nothing sends 0 or anything else afterwards.
+    const sent = grab.rotates.length;
+    const turned = last(grab.rotates);
+    expect(turned).not.toBe(0);
+    expect(rig.last.gesture).toBe('grab');
+    expect(rig.last.link).toBeNull();
+    expect(rig.last.arc).toBeNull();
+    expect(rig.view(1)!.state).not.toBe('join');
+    // The owner has not moved since the re-base: the next preview starts near zero, and it ends where the owner went.
+    expect(grab.previews.length).toBeGreaterThan(previews);
+    expect(Math.hypot(grab.previews[previews]!.x, grab.previews[previews]!.y)).toBeLessThan(20);
+    rig.run([[640, 400, true], [...at(30), false]], 40);
+    expect(last(grab.previews).x).toBeCloseTo(80, 0);
+    expect(grab.rotates).toHaveLength(sent);
+    expect(grab.cancels).toBe(0);
+    rig.run([[640, 400, false], [...at(30), false]], 4);
+    expect(grab.commits).toBe(1);
+    expect(grab.cancels).toBe(0);
+  });
+
+  it('commits once when the owner lets go, although it never left its dead zone, and leaves the second hand inert', () => {
+    const rig = rotating();
+    swing(rig, 0, 30);
+    expect(rig.grabs[0]!.previews).toEqual([]);
+    rig.run([[...owner, false], [...at(30), true]], 4);
+    expect(rig.grabs[0]!.commits).toBe(1);
+    expect(rig.grabs[0]!.cancels).toBe(0);
+    expect(rig.controller.stats.commits).toBe(1);
+    expect(rig.last.gesture).toBe('none');
+    expect(rig.last.link).toBeNull();
+    expect(rig.view(1)!.state).toBe('locked');
+    rig.run([[...owner, false], [...at(60), true]], 20);
+    expect(rig.grabs[0]!.rotates.length).toBeGreaterThan(0);
+    expect(rig.grabs).toHaveLength(1);
+  });
+
+  it('cancels quietly, like a tap, when the second hand only stayed inside the dead zone', () => {
+    const rig = rotating();
+    swing(rig, 0, ROTATE_DEAD_ZONE_DEG - 2);
+    rig.run([[...owner, false], [...at(ROTATE_DEAD_ZONE_DEG - 2), true]], 4);
+    expect(rig.grabs[0]!.commits).toBe(0);
+    expect(rig.grabs[0]!.cancels).toBe(1);
+    expect(rig.cancelled).toEqual([]);
+  });
+
+  it('commits when the turn went out of the dead zone and came back: the scene sees there is nothing to write', () => {
+    const rig = rotating();
+    swing(rig, 0, 30);
+    swing(rig, 30, 0);
+    expect(last(rig.grabs[0]!.rotates)).toBe(0);
+    rig.run([[...owner, false], [...at(0), true]], 4);
+    expect(rig.grabs[0]!.commits).toBe(1);
+  });
+
+  it('cancels the grab and its rotation when the owner is lost for longer than TRACKING_LOSS_MS, and reports loss', () => {
+    const rig = rotating();
+    swing(rig, 0, 30);
+    rig.run([[...at(30), true]], Math.ceil(TRACKING_LOSS_MS / FRAME_MS) + 2);
+    expect(rig.grabs[0]!.cancels).toBe(1);
+    expect(rig.grabs[0]!.commits).toBe(0);
+    expect(rig.cancelled).toEqual(['loss']);
+    expect(rig.last.gesture).toBe('none');
+    expect(rig.view(1)!.state).toBe('locked');
+  });
+
+  it('cancels when the scene says the grab is no longer valid while turning, and keeps both pinches inert until they open', () => {
+    const rig = rotating();
+    rig.grabs[0]!.valid = false;
+    swing(rig, 0, 30);
+    expect(rig.grabs[0]!.cancels).toBe(1);
+    expect(rig.cancelled).toEqual(['external']);
+    expect(rig.last.gesture).toBe('none');
+    expect(rig.view(0)!.state).toBe('locked');
+    expect(rig.view(1)!.state).toBe('locked');
+  });
+
+  it('is cancelled with the grab when the gate leaves full control', () => {
+    const rig = rotating();
+    swing(rig, 0, 30);
+    rig.controller.setGate(VIEW_ONLY);
+    expect(rig.grabs[0]!.cancels).toBe(1);
+    expect(rig.grabs[0]!.commits).toBe(0);
+    expect(rig.cancelled).toEqual(['gate']);
+    rig.run([[...owner, true], [...at(30), true]], 3);
+    expect(rig.last.gesture).toBe('none');
+    expect(rig.view(1)!.state).toBe('locked');
+  });
+
+  it('does not exist without full control: at view-only the first pinch turns the view and the second hand zooms', () => {
+    const rig = makeRig({ pick: onPart });
+    rig.controller.setGate(VIEW_ONLY);
+    rig.run([[...owner, false], [...at(0), false]], 6);
+    rig.run([[...owner, true], [...at(0), false]], 3);
+    rig.run([[...owner, true], [...at(0), true]], 3);
+    expect(rig.log).toEqual(['beginOrbit']);
+    expect(rig.last.gesture).toBe('zoom');
+    expect(rig.controller.stats.twoHand).toEqual({ zoom: 1 });
+    expect(rig.grabs).toHaveLength(0);
+  });
+
+  it('leaves the second hand of an orbit a zoom: the rotate row is for grabs only', () => {
+    const orbit = makeRig({ pick: () => EMPTY_TARGET });
+    orbit.run([[...owner, false], [...at(0), false]], 6);
+    orbit.run([[...owner, true], [...at(0), false]], 3);
+    orbit.run([[...owner, true], [...at(0), true]], 3);
+    expect(orbit.last.gesture).toBe('zoom');
+    expect(orbit.view(1)!.badge).toBe('手勢：雙手縮放');
+  });
+
+  it('writes the rotate badge only for the joining hand, and the signed angle as given', () => {
+    const base = { target: EMPTY_TARGET };
+    expect(badgeText({ ...base, state: 'join', gesture: 'rotate', value: null })).toBe('手勢：雙手旋轉');
+    expect(badgeText({ ...base, state: 'join', gesture: 'rotate', value: 25 })).toBe('手勢：雙手旋轉 25°');
+    expect(badgeText({ ...base, state: 'join', gesture: 'rotate', value: -35 })).toBe('手勢：雙手旋轉 -35°');
+    expect(badgeText({ ...base, state: 'join', gesture: 'rotate', value: 0 })).toBe('手勢：雙手旋轉 0°');
+    expect(badgeText({ target: part('o1', 'p1', 'Arm'), state: 'grab', gesture: 'rotate', value: null })).toBe('手勢：已抓取 Arm');
   });
 });
 
@@ -1573,6 +1823,20 @@ describe('drawing helpers', () => {
     expect(calls).toContain('moveTo(1,2)');
     expect(calls).toContain('lineTo(30,40)');
     expect(calls).toContain(`strokeStyle=${LINK_COLOUR}`);
+  });
+  it('draws the rotate arc around the owner cursor, clockwise for a positive angle and the other way for a negative one, and nothing for 0', () => {
+    const clockwise = recorder();
+    drawArc(clockwise.ctx, { centre: { x: 100, y: 200 }, fromDeg: 0, toDeg: 30 });
+    const arcCall = clockwise.calls.find(call => call.startsWith('arc('))!;
+    expect(arcCall.startsWith('arc(100,200,')).toBe(true);
+    expect(arcCall.endsWith(',false)')).toBe(true);
+    expect(clockwise.calls).toContain(`strokeStyle=${LINK_COLOUR}`);
+    const back = recorder();
+    drawArc(back.ctx, { centre: { x: 100, y: 200 }, fromDeg: 10, toDeg: -20 });
+    expect(back.calls.find(call => call.startsWith('arc('))!.endsWith(',true)')).toBe(true);
+    const none = recorder();
+    drawArc(none.ctx, { centre: { x: 100, y: 200 }, fromDeg: 10, toDeg: 10 });
+    expect(none.calls).toEqual([]);
   });
 });
 

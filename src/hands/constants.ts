@@ -55,6 +55,8 @@ export const HAND_MATCH_PX = 160;
 export const TWO_HAND_MIN_SPAN_PX = 60;
 /** Two-hand zoom ignores a change in the distance between the cursors smaller than this (pixels), so hand tremor does not zoom. */
 export const ZOOM_DEAD_ZONE_PX = 12;
+/** Two-hand rotate ignores a turn of the vector between the cursors smaller than this (degrees), so hand tremor does not turn the part. */
+export const ROTATE_DEAD_ZONE_DEG = 5;
 
 /** Fists: holding, moving and pulling apart a whole object (requirements 89-95). `false` turns fists off completely and leaves the pinch exactly as without them. */
 export const FIST_ENABLED: boolean = true;

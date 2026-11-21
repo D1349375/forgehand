@@ -397,3 +397,145 @@ describe('hold session', () => {
     expect(grabStillValid({ ...none, move: ['object-1'] }, 'object-1', 'object-1')).toBe(false);
   });
 });
+
+describe('grab session, two-hand rotate (Task 8, requirements 96 and 97)', () => {
+  const DEG = Math.PI / 180;
+  /** The grab rig with the node already turned to the stored rotation, as the scene builds it. */
+  function turning() {
+    const rig = grab();
+    rig.b.rotation.set(0, rig.stored.rotation.y * DEG, 0);
+    rig.root.updateMatrixWorld(true);
+    return rig;
+  }
+  const worldQuaternion = (node: THREE.Object3D) => node.getWorldQuaternion(new THREE.Quaternion());
+  const FORWARD = new THREE.Vector3(0, 0, -1);
+
+  it('turns the node about the camera forward axis, keeps its position, and its children follow', () => {
+    const rig = turning();
+    const positionBefore = rig.b.position.clone();
+    const before = worldQuaternion(rig.b);
+    const childBefore = world(rig.c).sub(world(rig.b));
+    expect(rig.session.rotate!(40)).toBe(true);
+    const turn = worldQuaternion(rig.b).multiply(before.clone().invert());
+    expect(turn.angleTo(new THREE.Quaternion().setFromAxisAngle(FORWARD, 40 * DEG))).toBeLessThan(0.1 * DEG);
+    expect(rig.b.position.toArray()).toEqual(positionBefore.toArray());
+    expect(rig.onChange).toHaveBeenCalled();
+    // The child is at the same place in the part's frame, so it turned with it: its world offset from the part changed.
+    expect(world(rig.c).sub(world(rig.b)).distanceTo(childBefore)).toBeGreaterThan(0.005);
+    expect(world(rig.c).sub(world(rig.b)).length()).toBeCloseTo(childBefore.length(), 5);
+  });
+
+  it('holds the previewed position while it turns', () => {
+    const rig = turning();
+    rig.session.preview({ x: 60, y: -20 });
+    const moved = rig.b.position.clone();
+    rig.session.rotate!(25);
+    expect(rig.b.position.toArray()).toEqual(moved.toArray());
+    rig.session.preview({ x: 60, y: -20 });
+    expect(rig.b.position.distanceTo(moved)).toBeLessThan(1e-9);
+  });
+
+  it('commits a turn alone as rotate, with the stored position and a rotation rounded to 2 decimals', () => {
+    const rig = turning();
+    rig.session.rotate!(33.3333);
+    rig.session.commit();
+    expect(rig.onCommit).toHaveBeenCalledTimes(1);
+    const [position, rotation, kind] = rig.onCommit.mock.calls[0]!;
+    expect(kind).toBe('rotate');
+    expect(position).toEqual(rig.stored.position);
+    expect(rotation).not.toEqual(rig.stored.rotation);
+    for (const value of [rotation.x, rotation.y, rotation.z]) {
+      expect(Number(value.toFixed(2))).toBe(value);
+      expect(Math.abs(value)).toBeLessThanOrEqual(180);
+    }
+    // The committed rotation is what the node shows.
+    const shown = new THREE.Euler(rotation.x * DEG, rotation.y * DEG, rotation.z * DEG, 'XYZ');
+    expect(new THREE.Quaternion().setFromEuler(shown).angleTo(new THREE.Quaternion().setFromEuler(rig.b.rotation))).toBeLessThan(0.01 * DEG * 3);
+    expect(rig.onEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits a move and a turn together as both, a move alone as translate with the stored rotation', () => {
+    const both = turning();
+    both.session.preview({ x: 45, y: 10 });
+    both.session.rotate!(-20);
+    both.session.commit();
+    expect(both.onCommit).toHaveBeenCalledTimes(1);
+    const [position, rotation, kind] = both.onCommit.mock.calls[0]!;
+    expect(kind).toBe('both');
+    expect(position).not.toEqual(both.stored.position);
+    expect(rotation).not.toEqual(both.stored.rotation);
+    const moved = turning();
+    moved.session.preview({ x: 45, y: 10 });
+    moved.session.commit();
+    expect(moved.onCommit.mock.calls[0]![2]).toBe('translate');
+    expect(moved.onCommit.mock.calls[0]![1]).toEqual(moved.stored.rotation);
+  });
+
+  it('commits nothing when the turn came back to 0 and the part did not move', () => {
+    const rig = turning();
+    rig.session.rotate!(40);
+    rig.session.rotate!(0);
+    expect(rig.b.rotation.y).toBeCloseTo(rig.stored.rotation.y * DEG, 10);
+    rig.session.commit();
+    expect(rig.onCommit).not.toHaveBeenCalled();
+    expect(rig.onEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancel puts back the rotation and the position, and commits nothing', () => {
+    const rig = turning();
+    rig.session.preview({ x: 80, y: 30 });
+    rig.session.rotate!(70);
+    rig.session.cancel();
+    expect(rig.b.position.toArray()).toEqual([rig.stored.position.x, rig.stored.position.y, rig.stored.position.z]);
+    expect(rig.b.rotation.x).toBeCloseTo(0, 10);
+    expect(rig.b.rotation.y).toBeCloseTo(rig.stored.rotation.y * DEG, 10);
+    expect(rig.b.rotation.z).toBeCloseTo(0, 10);
+    expect(rig.onCommit).not.toHaveBeenCalled();
+    expect(rig.session.rotate!(10)).toBe(false);
+  });
+
+  it('rebase keeps the shown rotation as the start of the next turn', () => {
+    const rig = turning();
+    const before = worldQuaternion(rig.b);
+    rig.session.rotate!(30);
+    rig.session.rebase();
+    // A new joiner starts at 0: the part stays as it is, then turns on from there.
+    rig.session.rotate!(0);
+    expect(worldQuaternion(rig.b).angleTo(before.clone().premultiply(new THREE.Quaternion().setFromAxisAngle(FORWARD, 30 * DEG)))).toBeLessThan(0.1 * DEG);
+    rig.session.rotate!(20);
+    expect(worldQuaternion(rig.b).angleTo(before.clone().premultiply(new THREE.Quaternion().setFromAxisAngle(FORWARD, 50 * DEG)))).toBeLessThan(0.1 * DEG);
+    rig.session.commit();
+    expect(rig.onCommit).toHaveBeenCalledTimes(1);
+    expect(rig.onCommit.mock.calls[0]![2]).toBe('rotate');
+  });
+
+  it('rebase after a turn alone leaves the position preview starting from where it is', () => {
+    const rig = turning();
+    rig.session.preview({ x: 50, y: 0 });
+    const moved = rig.b.position.clone();
+    rig.session.rotate!(30);
+    rig.session.rebase();
+    rig.session.preview({ x: 0, y: 0 });
+    expect(rig.b.position.distanceTo(moved)).toBeLessThan(1e-5);
+  });
+
+  it('an invalidated session refuses to turn and commits nothing; reapply puts the turn back after a reset', () => {
+    const rig = turning();
+    rig.session.rotate!(30);
+    const turned = rig.b.rotation.clone();
+    rig.b.rotation.set(0, rig.stored.rotation.y * DEG, 0);
+    rig.session.reapply();
+    expect(rig.b.rotation.toArray().slice(0, 3)).toEqual(turned.toArray().slice(0, 3));
+    rig.session.invalidate();
+    expect(rig.session.rotate!(40)).toBe(false);
+    rig.session.commit();
+    expect(rig.onCommit).not.toHaveBeenCalled();
+  });
+
+  it('does not write the node rotation for a plain move', () => {
+    const rig = grab();
+    const rotation = rig.b.rotation.clone();
+    rig.session.preview({ x: 30, y: 0 });
+    expect(rig.b.rotation.equals(rotation)).toBe(true);
+  });
+});

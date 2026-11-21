@@ -59,7 +59,8 @@ interface Props {
   explode?: number;
   tryOn?: { readonly current: ArmSample | null };
   onPick?: (objectId: string | null, partId: string | null, additive: boolean) => void;
-  onTransform?: (objectId: string, partId: string, position: Vector, rotation: Vector, kind: 'translate' | 'rotate') => void;
+  /** `kind` is the gizmo's mode, or for a hand grab what changed: a move, a turn or both (requirement 97). */
+  onTransform?: (objectId: string, partId: string, position: Vector, rotation: Vector, kind: 'translate' | 'rotate' | 'both') => void;
   /** A hand hold moved a whole object: called once on release with the new position (the 物件 panel's path, one undo step). */
   onObjectMove?: (objectId: string, position: Vector) => void;
   /**
