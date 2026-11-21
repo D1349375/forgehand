@@ -100,7 +100,7 @@ What is printed, bought or machined; the scope; step numbers and joint labels; t
 
 ## Task 3 — Print pieces and the kit
 
-`[ ]`
+`[x]`
 
 Parts that overlap or touch are fused into print pieces unless a joint separates them; joint features are cut after the union; pieces move to the print frame; identical pieces are counted; the export findings are computed; `prepareKit` assembles every file. Runs in Node with the real manifold-3d WASM.
 
