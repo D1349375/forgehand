@@ -72,7 +72,7 @@ export function badgeText(view: { state: HandState; target: Target; gesture: Ges
     case 'grab': return name ? `手勢：已抓取 ${name}` : '手勢：已抓取';
     case 'orbit': return '手勢：轉動視角';
     case 'locked': return view.inert ? '手勢：另一手操作中' : '手勢：暫停';
-    case 'join': return '手勢：雙手操作';
+    case 'join': return view.gesture === 'zoom' ? '手勢：雙手縮放' : '手勢：雙手操作';
     case 'tracked':
     case 'fist':
     case 'hold': return '手勢：待命';

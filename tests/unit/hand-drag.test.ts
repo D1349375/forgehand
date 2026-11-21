@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Euler, Matrix4, PerspectiveCamera, Quaternion, Vector3 } from 'three';
-import { dragPosition, orbitOffset } from '../../src/hands/drag';
+import { TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX } from '../../src/hands/constants';
+import { dragPosition, orbitOffset, zoomRatio } from '../../src/hands/drag';
 import type { Point, Vector } from '../../src/hands/types';
 
 const VIEWPORT_HEIGHT = 800;
@@ -160,5 +161,36 @@ describe('orbitOffset', () => {
   it('clamps the azimuth to the limits', () => {
     const result = orbitOffset(start, { x: 10000, y: 0 }, 0.4, { ...free, minAzimuth: -0.5, maxAzimuth: 0.5 });
     expect(Math.atan2(result.x, result.z)).toBeCloseTo(-0.5, 5);
+  });
+});
+
+describe('zoomRatio', () => {
+  const ratio = (startSpan: number, span: number) => zoomRatio({ startSpan, span, deadZonePx: ZOOM_DEAD_ZONE_PX, minSpanPx: TWO_HAND_MIN_SPAN_PX });
+
+  it('is 1 at the start span', () => {
+    expect(ratio(300, 300)).toBe(1);
+  });
+
+  it('is below 1 when the hands spread (a nearer camera) and above 1 when they come together', () => {
+    expect(ratio(300, 400)).toBeLessThan(1);
+    expect(ratio(300, 200)).toBeGreaterThan(1);
+  });
+
+  it('subtracts the dead zone from the change, so leaving it does not jump', () => {
+    expect(ratio(300, 300 + ZOOM_DEAD_ZONE_PX)).toBe(1);
+    expect(ratio(300, 300 - ZOOM_DEAD_ZONE_PX)).toBe(1);
+    expect(ratio(300, 300 + ZOOM_DEAD_ZONE_PX + 1)).toBeCloseTo(300 / 301, 10);
+    expect(ratio(300, 400)).toBeCloseTo(300 / (400 - ZOOM_DEAD_ZONE_PX), 10);
+    expect(ratio(300, 200)).toBeCloseTo(300 / (200 + ZOOM_DEAD_ZONE_PX), 10);
+  });
+
+  it('never takes either span below the minimum span', () => {
+    // Together to nothing: the effective span stops at the minimum, so the ratio is bounded.
+    expect(ratio(300, 0)).toBeCloseTo(300 / TWO_HAND_MIN_SPAN_PX, 10);
+    expect(ratio(300, 10)).toBe(ratio(300, 0));
+    // Starting closer than the minimum counts as the minimum.
+    expect(ratio(20, 20)).toBe(1);
+    expect(ratio(20, 200)).toBeCloseTo(TWO_HAND_MIN_SPAN_PX / (20 + 200 - 20 - ZOOM_DEAD_ZONE_PX), 10);
+    expect(ratio(0, 0)).toBe(1);
   });
 });

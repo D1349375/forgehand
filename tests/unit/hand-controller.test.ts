@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CANCEL_NOTICE_MS, HAND_LOST_MS, TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX } from '../../src/hands/constants';
+import { CANCEL_NOTICE_MS, HAND_LOST_MS, TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX } from '../../src/hands/constants';
 import { HandController, type GrabSession, type HandPort, type OrbitSession } from '../../src/hands/controller';
 import { decidePinch } from '../../src/hands/decide';
 import type { Gate } from '../../src/hands/gate';
@@ -45,10 +45,12 @@ class FakeGrab implements GrabSession {
 
 class FakeOrbit implements OrbitSession {
   previews: Point[] = [];
+  zooms: number[] = [];
   ends = 0;
   rebases = 0;
   constructor(private readonly log: string[]) {}
   preview(offset: Point) { this.previews.push(offset); }
+  zoom(ratio: number) { this.zooms.push(ratio); }
   rebase() { this.rebases++; this.log.push('orbit.rebase'); }
   end() { this.ends++; this.log.push('orbit.end'); }
 }
@@ -161,11 +163,14 @@ describe('pair geometry', () => {
 });
 
 describe('joinGesture', () => {
-  it('has no rows yet: it returns null for every input', () => {
+  it('has one row so far (Task 6): orbit + pinch is a zoom unless hand control is off; every other input is null', () => {
     for (const owner of ['press', 'grab', 'orbit', 'hold'] as const) {
       for (const kind of ['pinch', 'fist'] as const) {
         for (const target of [EMPTY_TARGET, part('o1', 'p1')]) {
-          for (const gate of [FULL, VIEW_ONLY, OFF]) expect(joinGesture(owner, { kind, target }, gate)).toBeNull();
+          for (const gate of [FULL, VIEW_ONLY, OFF]) {
+            const zoom = owner === 'orbit' && kind === 'pinch' && gate.level !== 'off';
+            expect(joinGesture(owner, { kind, target }, gate)).toBe(zoom ? 'zoom' : null);
+          }
         }
       }
     }
@@ -695,6 +700,171 @@ describe('HandController, two hands', () => {
       expect(rig.view(1)!.badge).toBe('手勢：另一手操作中');
       expect(rig.controller.twoHand).toBeNull();
     });
+  });
+});
+
+describe('HandController, two-hand zoom (the real joinGesture)', () => {
+  const owner: [number, number] = [260, 300];
+  const start: [number, number] = [700, 300];
+  /** The owner turns the view on empty space on the left; the other hand hovers over a part on the right. */
+  const pickSides = (point: Point): Target => (point.x < 500 ? EMPTY_TARGET : part('o1', 'p2', 'Arm'));
+  /** Where each rig's second hand is, so a second move starts from there (a jump beyond HAND_MATCH_PX is a new hand). */
+  const joinerAt = new WeakMap<Rig, readonly [number, number]>();
+
+  /** The owner pinches on the left and drags a little (so its preview is live), then the second hand pinches. */
+  function zooming(options: { gate?: Gate; pick?: (point: Point) => Target } = {}) {
+    const rig = makeRig({ pick: options.pick ?? pickSides });
+    if (options.gate) rig.controller.setGate(options.gate);
+    rig.run([[200, 300, false], [...start, false]], 6);
+    rig.run([[200, 300, true], [...start, false]], 3);
+    rig.run([[230, 300, true], [...start, false]], 6);
+    rig.run([[...owner, true], [...start, false]], 30);
+    expect(rig.orbits).toHaveLength(1);
+    expect(rig.orbits[0]!.previews.length).toBeGreaterThan(0);
+    rig.run([[...owner, true], [...start, true]], 3);
+    return rig;
+  }
+  /** The second hand moves in small steps from where it is to `to`, then settles there. */
+  function moveJoiner(rig: Rig, to: readonly [number, number]) {
+    const from = joinerAt.get(rig) ?? start;
+    glide(rig, owner, from, to, 20);
+    rig.run([[...owner, true], [...to, true]], 80);
+    joinerAt.set(rig, to);
+  }
+
+  it('joins an orbit with a pinch as a zoom: join state, 手勢：雙手縮放, gesture zoom, a link, even over a part', () => {
+    const rig = zooming();
+    expect(rig.view(1)!.state).toBe('join');
+    expect(rig.view(1)!.badge).toBe('手勢：雙手縮放');
+    expect(rig.view(1)!.targetKey).not.toBe('');
+    expect(rig.view(0)!.state).toBe('orbit');
+    expect(rig.last.gesture).toBe('zoom');
+    expect(rig.last.link).not.toBeNull();
+    expect(rig.controller.stats.twoHand).toEqual({ zoom: 1 });
+    expect(rig.controller.stats.inert).toBe(0);
+    expect(rig.controller.twoHand!.gesture).toBe('zoom');
+    // Joining alone does not zoom: the hands are inside the dead zone.
+    expect(rig.orbits[0]!.zooms).toEqual([]);
+    expect(rig.log).toEqual(['beginOrbit']);
+  });
+
+  it('zooms in when the hands spread and out when they come together, from the span at join', () => {
+    const rig = zooming();
+    const startSpan = rig.controller.twoHand!.startSpan;
+    expect(startSpan).toBeGreaterThan(400);
+    moveJoiner(rig, [900, 300]);
+    const spread = rig.orbits[0]!.zooms.at(-1)!;
+    const span = rig.controller.twoHand!.span;
+    expect(span).toBeGreaterThan(startSpan + 100);
+    expect(spread).toBeLessThan(1);
+    expect(spread).toBeCloseTo(startSpan / (span - ZOOM_DEAD_ZONE_PX), 6);
+    moveJoiner(rig, [450, 300]);
+    const together = rig.orbits[0]!.zooms.at(-1)!;
+    expect(rig.controller.twoHand!.span).toBeLessThan(startSpan - 100);
+    expect(together).toBeGreaterThan(1);
+    expect(together).toBeCloseTo(startSpan / (rig.controller.twoHand!.span + ZOOM_DEAD_ZONE_PX), 6);
+  });
+
+  it('does not zoom for a movement inside the dead zone', () => {
+    const rig = zooming();
+    moveJoiner(rig, [start[0] + ZOOM_DEAD_ZONE_PX - 3, 300]);
+    expect(rig.orbits[0]!.zooms).toEqual([]);
+    moveJoiner(rig, [start[0] - ZOOM_DEAD_ZONE_PX + 3, 300]);
+    expect(rig.orbits[0]!.zooms).toEqual([]);
+  });
+
+  it('holds the orbit preview still while zooming', () => {
+    const rig = zooming();
+    const previews = rig.orbits[0]!.previews.length;
+    glide(rig, owner, start, [800, 300], 10);
+    // The owner's hand keeps moving too; the view is not turned.
+    rig.run([[330, 380, true], [800, 300, true]], 60);
+    expect(rig.orbits[0]!.zooms.length).toBeGreaterThan(0);
+    expect(rig.orbits[0]!.previews).toHaveLength(previews);
+    expect(rig.last.gesture).toBe('zoom');
+  });
+
+  it("re-bases the orbit when the second hand lets go, and the first hand then turns the view from there with no jump", () => {
+    const rig = zooming();
+    moveJoiner(rig, [850, 300]);
+    const orbit = rig.orbits[0]!;
+    const previews = orbit.previews.length;
+    rig.run([[...owner, true], [850, 300, false]], 4);
+    const zooms = orbit.zooms.length;
+    expect(orbit.rebases).toBe(1);
+    expect(orbit.ends).toBe(0);
+    expect(rig.last.gesture).toBe('orbit');
+    expect(rig.last.link).toBeNull();
+    expect(rig.view(1)!.state).not.toBe('join');
+    expect(orbit.zooms).toHaveLength(zooms);
+    // The owner has not moved since the re-base, so the next previews start near zero.
+    expect(orbit.previews.length).toBeGreaterThan(previews);
+    const first = orbit.previews[previews]!;
+    expect(Math.hypot(first.x, first.y)).toBeLessThan(20);
+    rig.run([[owner[0] + 70, 300, true], [850, 300, false]], 40);
+    expect(orbit.previews.at(-1)!.x).toBeCloseTo(70, 0);
+    expect(orbit.zooms).toHaveLength(zooms);
+  });
+
+  it('ends the zoom with the owner and leaves the second hand inert until it releases', () => {
+    const rig = zooming();
+    moveJoiner(rig, [850, 300]);
+    rig.run([[...owner, false], [850, 300, true]], 4);
+    expect(rig.orbits[0]!.ends).toBe(1);
+    expect(rig.last.gesture).toBe('none');
+    expect(rig.view(1)!.state).toBe('locked');
+    const zooms = rig.orbits[0]!.zooms.length;
+    rig.run([[...owner, false], [700, 300, true]], 30);
+    expect(rig.orbits[0]!.zooms).toHaveLength(zooms);
+  });
+
+  it('works while the gate is view-only: a pinch on a part turns the view and the second hand zooms', () => {
+    const rig = zooming({ gate: VIEW_ONLY, pick: () => part('o1', 'p1', 'Arm') });
+    expect(rig.log).toEqual(['beginOrbit']);
+    expect(rig.last.gesture).toBe('zoom');
+    moveJoiner(rig, [880, 300]);
+    expect(rig.orbits[0]!.zooms.at(-1)!).toBeLessThan(1);
+    expect(rig.view(1)!.badge).toBe('手勢：雙手縮放');
+  });
+
+  it('is inert while hand control is off, and a gate that turns off ends the zoom', () => {
+    const off = makeRig({ pick: pickSides });
+    off.controller.setGate(OFF);
+    off.run([[...owner, false], [...start, false]], 6);
+    off.run([[...owner, true], [...start, false]], 3);
+    off.run([[...owner, true], [...start, true]], 3);
+    expect(off.log).toEqual([]);
+    expect(off.controller.twoHand).toBeNull();
+    expect(off.last.gesture).toBe('none');
+    expect(off.view(1)!.state).toBe('locked');
+
+    const rig = zooming();
+    moveJoiner(rig, [850, 300]);
+    rig.controller.setGate(OFF);
+    expect(rig.orbits[0]!.ends).toBe(1);
+    rig.run([[...owner, true], [850, 300, true]], 3);
+    expect(rig.last.gesture).toBe('none');
+    expect(rig.view(1)!.state).toBe('locked');
+  });
+
+  it('leaves a grab with a second pinch inert: no zoom, locked, 另一手操作中', () => {
+    const rig = makeRig({ pick: () => part('o1', 'p1', 'Arm') });
+    rig.run([[...owner, false], [...start, false]], 6);
+    rig.run([[...owner, true], [...start, false]], 3);
+    rig.run([[...owner, true], [...start, true]], 3);
+    expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1']);
+    expect(rig.controller.twoHand).toBeNull();
+    expect(rig.last.gesture).toBe('grab');
+    expect(rig.view(1)!.state).toBe('locked');
+    expect(rig.view(1)!.badge).toBe('手勢：另一手操作中');
+    expect(rig.controller.stats.inert).toBe(1);
+    expect(rig.controller.stats.twoHand).toEqual({});
+  });
+
+  it('writes the zoom badge only for the joining hand', () => {
+    const base = { target: EMPTY_TARGET, value: null };
+    expect(badgeText({ ...base, state: 'join', gesture: 'zoom' })).toBe('手勢：雙手縮放');
+    expect(badgeText({ ...base, state: 'orbit', gesture: 'zoom' })).toBe('手勢：轉動視角');
   });
 });
 

@@ -1,5 +1,6 @@
-import { HAND_LOST_MS, ON_TRACKING_LOSS, TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX } from './constants';
+import { HAND_LOST_MS, ON_TRACKING_LOSS, TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX } from './constants';
 import { decidePinch } from './decide';
+import { zoomRatio } from './drag';
 import type { Gate } from './gate';
 import { joinGesture, type JoinRule, type OwnerGesture, type TwoHandGesture } from './join';
 import { OneEuroFilter2D } from './one-euro';
@@ -39,6 +40,11 @@ export interface GrabSession {
 export interface OrbitSession {
   preview(offset: Point): void;
   rebase(): void;
+  /**
+   * Two-hand zoom (requirement 87): the camera's distance to the orbit target becomes its distance when the zoom began,
+   * times `ratio`, within the distance limits. The viewing direction does not change.
+   */
+  zoom?(ratio: number): void;
   end(): void;
 }
 
@@ -71,6 +77,8 @@ interface Joiner {
   angle: number;
   /** The explode amount when the joiner engaged (zero for the other gestures). */
   startValue: number;
+  /** The zoom ratio last sent to the orbit session (1 until the hands leave the dead zone). */
+  zoom: number;
 }
 
 interface Session {
@@ -115,7 +123,7 @@ function newTrack(now: number): Track {
 }
 
 /**
- * The gesture core for one or two hands (design §5.5), with no DOM and no Three.js. It turns hand
+ * The gesture core for one or two hands (design §5.5), with no DOM and no scene (only Three.js math, through `drag.ts`). It turns hand
  * samples into calls on a port. At most one gesture runs; the first hand to engage owns it, and the
  * other hand can only join through the join rule, otherwise its pinch is inert until released.
  */
@@ -313,7 +321,7 @@ export class HandController {
         session.joiner = {
           slot, gesture, target: settled,
           startSpan: pairSpan(owner, track.cursor), span: pairSpan(owner, track.cursor),
-          lastAngle: pairAngle(owner, track.cursor), angle: 0, startValue: 0,
+          lastAngle: pairAngle(owner, track.cursor), angle: 0, startValue: 0, zoom: 1,
         };
         recordJoin(this.stats, gesture);
         return;
@@ -470,6 +478,13 @@ export class HandController {
       if (span >= TWO_HAND_MIN_SPAN_PX && joined.span >= TWO_HAND_MIN_SPAN_PX) joined.angle += angleDelta(joined.lastAngle, angle);
       joined.lastAngle = angle;
       joined.span = span;
+      if (joined.gesture === 'zoom' && this.session.kind === 'orbit') {
+        const ratio = zoomRatio({ startSpan: joined.startSpan, span, deadZonePx: ZOOM_DEAD_ZONE_PX, minSpanPx: TWO_HAND_MIN_SPAN_PX });
+        if (ratio !== joined.zoom) {
+          joined.zoom = ratio;
+          (this.session.scene as OrbitSession).zoom?.(ratio);
+        }
+      }
     }
     for (const slot of [0, 1] as const) {
       const track = this.tracks[slot];

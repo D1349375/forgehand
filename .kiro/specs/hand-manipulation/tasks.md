@@ -242,7 +242,8 @@ Run `npm run dev`, open the app with `?hands=debug` in the URL. Note the numbers
 13. **Dim light.** Repeat steps 3, 6 and 7 in dim light. Note what gets worse.
 14. **View-only.** Open 爆炸圖: a pinch turns the view, never grabs, and the notice says so. Close it again.
 15. **手勢 switch.** Turn 手勢 off: the skeletons and the status line disappear and the mouse works as usual; 護臂試戴 still works. Turn it on again.
-16. **Report.** Which constants to change, and to what (pinch thresholds, `DRAG_GAIN`, `ORBIT_DEG_PER_PX`, cursor filter, `TRACKING_LOSS_MS` or `ON_TRACKING_LOSS`, `DUPLICATE_HAND_PX`, `HAND_MATCH_PX`, or `TRACKED_HANDS = 1` if two hands are too slow).
+16. **Two-hand zoom** (Task 6). Pinch empty space with one hand, then pinch with the other and move the hands apart: the view zooms in; together: it zooms out; the second hand shows 手勢：雙手縮放 and a line joins the hands. Let go with the second hand and move the first: the view turns from where it is, with no jump. Note whether small hand tremor zooms (then raise `ZOOM_DEAD_ZONE_PX`).
+17. **Report.** Which constants to change, and to what (pinch thresholds, `DRAG_GAIN`, `ORBIT_DEG_PER_PX`, cursor filter, `TRACKING_LOSS_MS` or `ON_TRACKING_LOSS`, `DUPLICATE_HAND_PX`, `HAND_MATCH_PX`, `ZOOM_DEAD_ZONE_PX`, or `TRACKED_HANDS = 1` if two hands are too slow).
 
 **Session facts:**
 - E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
@@ -259,7 +260,7 @@ Run `npm run dev`, open the app with `?hands=debug` in the URL. Note the numbers
 
 ## Task 6 — P1: two-hand zoom
 
-`[ ]`
+`[x]`
 
 While one hand turns the view, the other hand pinches and the change in distance between the two cursors zooms the view. Display only.
 

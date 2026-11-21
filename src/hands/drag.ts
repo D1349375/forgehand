@@ -1,5 +1,6 @@
 import { Matrix4, Spherical, Vector3 } from 'three';
 import { DRAG_GAIN } from './constants';
+import { beyondDeadZone } from './pair';
 import type { Point, Vector } from './types';
 
 /** The `Part` position limit of `shared/model.ts`, per axis. */
@@ -56,4 +57,17 @@ export function orbitOffset(start: Vector3, offset: Point, degPerPx: number,
   spherical.phi = spherical.phi - offset.y * step;
   spherical.phi = Math.max(Math.max(limits.minPolar, EPSILON), Math.min(Math.min(limits.maxPolar, Math.PI - EPSILON), spherical.phi));
   return new Vector3().setFromSpherical(spherical);
+}
+
+/**
+ * The factor for the camera's distance to the orbit target in a two-hand zoom (requirement 87): its
+ * distance when the second hand joined, times this ratio. `startSpan` and `span` are the distances
+ * between the two cursors at join and now. The change is reduced by `deadZonePx` (so leaving the
+ * dead zone does not jump) and neither distance is taken below `minSpanPx`. Spreading the hands
+ * gives a ratio below 1 (a nearer camera), bringing them together a ratio above 1.
+ */
+export function zoomRatio(input: { startSpan: number; span: number; deadZonePx: number; minSpanPx: number }): number {
+  const { startSpan, span, deadZonePx, minSpanPx } = input;
+  const effective = startSpan + beyondDeadZone(span - startSpan, deadZonePx);
+  return Math.max(startSpan, minSpanPx) / Math.max(effective, minSpanPx);
 }

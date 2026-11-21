@@ -122,18 +122,34 @@ export interface OrbitInput {
   controls: {
     target: THREE.Vector3;
     minPolarAngle: number; maxPolarAngle: number; minAzimuthAngle: number; maxAzimuthAngle: number;
+    minDistance: number; maxDistance: number;
     update(): unknown;
   };
   /** The scene needs a new frame. */
   onChange(): void;
 }
 
-/** Turns the view around the orbit target (design §7.3): the camera keeps its distance. */
+/**
+ * Turns the view around the orbit target (design §7.3): the camera keeps its distance while it turns.
+ * `zoom` changes only the distance, from where it was when the zoom began (the first `zoom` call after
+ * the session started or was re-based), so the ratio is always relative to that distance and a limit
+ * that clamps the view does not accumulate.
+ */
 export function createOrbitSession(input: OrbitInput): OrbitSession {
   const { camera, controls } = input;
   const offsetNow = () => camera.position.clone().sub(controls.target);
   let start = offsetNow();
+  let zoomFrom: number | null = null;
   return {
+    zoom(ratio) {
+      const offset = offsetNow();
+      zoomFrom ??= offset.length();
+      offset.setLength(THREE.MathUtils.clamp(zoomFrom * ratio, controls.minDistance, controls.maxDistance));
+      camera.position.copy(controls.target).add(offset);
+      camera.lookAt(controls.target);
+      controls.update();
+      input.onChange();
+    },
     preview(offset) {
       const next = orbitOffset(start, offset, ORBIT_DEG_PER_PX, {
         minPolar: controls.minPolarAngle, maxPolar: controls.maxPolarAngle, minAzimuth: controls.minAzimuthAngle, maxAzimuth: controls.maxAzimuthAngle,
@@ -143,7 +159,11 @@ export function createOrbitSession(input: OrbitInput): OrbitSession {
       controls.update();
       input.onChange();
     },
-    rebase() { start = offsetNow(); },
+    rebase() {
+      // The next offsets turn the view from where it is now, at the zoomed distance; a later zoom starts from there.
+      start = offsetNow();
+      zoomFrom = null;
+    },
     end() { /* the view stays where it is (requirement 38) */ },
   };
 }

@@ -551,6 +551,7 @@ export const SceneViewport = forwardRef<SceneHandle, Props>(function SceneViewpo
       const armChanged = armPreview?.update(tryOn?.current ?? null, Boolean(tryOn), now);
       if (!needsRender && !changed && !armChanged) return;
       renderer.domElement.dataset.cameraPosition = camera.position.toArray().map((value) => value.toFixed(4)).join(',');
+      renderer.domElement.dataset.cameraTarget = controls.target.toArray().map((value) => value.toFixed(4)).join(',');
       renderer.render(scene, camera);
       armPreview?.render(renderer);
       renderer.domElement.dataset.armPreview = armPreview?.opacity ? 'visible' : 'hidden';
