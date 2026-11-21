@@ -64,7 +64,7 @@ Everything that turns plain data into bytes: mesh helpers and the print frame, b
 
 ## Task 2 — Kit plan and documents: scope, BOM and assembly sheet
 
-`[ ]`
+`[x]`
 
 What is printed, bought or machined; the scope; step numbers and joint labels; the summary the agent will use; the findings table; the BOM as CSV and Markdown; the assembly sheet as HTML. Pure code; nothing changes on screen.
 
