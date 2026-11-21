@@ -6,6 +6,10 @@ export interface HandSlotStats {
   pinching: boolean;
   /** `targetKey` of the settled target. */
   target: string;
+  /** Latest curl ratio (Task 7); null without a hand or world landmarks. */
+  curl: number | null;
+  /** The fist is engaged (Task 7). */
+  fist: boolean;
 }
 
 /** Plain counters for the `?hands=debug` panel. No timers, no logging. */
@@ -27,7 +31,7 @@ export interface HandStats {
   hands: [HandSlotStats, HandSlotStats];
 }
 
-const emptyHand = (): HandSlotStats => ({ pinchM: null, pinching: false, target: '' });
+const emptyHand = (): HandSlotStats => ({ pinchM: null, pinching: false, target: '', curl: null, fist: false });
 
 export function createStats(): HandStats {
   return { drags: 0, commits: 0, cancels: 0, dragLosses: 0, longestDragGapMs: 0, twoHand: {}, inert: 0, hands: [emptyHand(), emptyHand()] };

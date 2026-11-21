@@ -7,13 +7,13 @@ export const LINK_COLOUR = '#D55E00';
 /** Hand control is off, view-only or the pinch is inert. */
 export const LOCKED_COLOUR = '#9AA3AD';
 
-export type OverlayMark = 'none' | 'ring-hollow' | 'ring-filled';
+export type OverlayMark = 'none' | 'ring-hollow' | 'ring-filled' | 'square-hollow' | 'square-filled';
 export interface OverlayStyle {
   colour: string;
   /** Grey dashes mark `locked`. */
   dashed: boolean;
   lineWidth: number;
-  /** Drawn from Task 5: hollow over a target, filled while grabbing, turning the view or joining. The fist squares come with Task 7. */
+  /** Drawn from Task 5: a ring at the cursor, hollow over a target, filled while grabbing, turning the view or joining. Task 7: a rounded square at the palm centre for the fist, hollow when it holds nothing and filled while it holds an object. */
   mark: OverlayMark;
 }
 
@@ -29,9 +29,8 @@ export function overlayStyle(view: { state: HandState }): OverlayStyle {
     case 'grab':
     case 'orbit':
     case 'join': return { colour: HAND_COLOUR, dashed: false, lineWidth: 3.5, mark: 'ring-filled' };
-    // Task 7 gives the fist and its hold their square marks.
-    case 'hold': return { colour: HAND_COLOUR, dashed: false, lineWidth: 3.5, mark: 'none' };
-    case 'fist':
+    case 'hold': return { colour: HAND_COLOUR, dashed: false, lineWidth: 3.5, mark: 'square-filled' };
+    case 'fist': return { colour: HAND_COLOUR, dashed: false, lineWidth: 2, mark: 'square-hollow' };
     case 'tracked':
     case 'none': return { colour: HAND_COLOUR, dashed: false, lineWidth: 2, mark: 'none' };
   }

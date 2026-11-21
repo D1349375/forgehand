@@ -71,10 +71,12 @@ export async function installFakeHands(context: BrowserContext, options: { deleg
 }
 
 export interface FakeHand {
-  /** Client pixels. */
+  /** Client pixels: the pinch midpoint of an open hand, the palm centre of a fist. */
   at: { x: number; y: number };
-  /** Thumb-index distance in metres. */
+  /** Thumb-index distance in metres (ignored for a fist). */
   pinchM: number;
+  /** A closed fist (Task 7); its curl ratio is about 0.65. */
+  fist?: boolean;
 }
 
 /** Shows up to two synthetic hands, in slot order (the first is hand 0); an empty array hides all hands. */
@@ -91,7 +93,7 @@ export async function showHands(page: Page, hands: readonly FakeHand[]): Promise
   });
   if (!geometry?.video.width || !geometry.video.height) throw new Error('showHands: the camera video has no frame yet');
   await postHands(page, hands.map((hand, index) => syntheticHand({
-    cursor: clientToNormalized(hand.at, geometry.view, geometry.video), pinchM: hand.pinchM, side: index === 0 ? 'right' : 'left',
+    cursor: clientToNormalized(hand.at, geometry.view, geometry.video), pinchM: hand.pinchM, side: index === 0 ? 'right' : 'left', fist: hand.fist,
   })));
 }
 
@@ -102,6 +104,27 @@ export async function showHand(page: Page, at: { x: number; y: number }, pinchM:
 
 export async function hideHand(page: Page): Promise<void> {
   await showHands(page, []);
+}
+
+/**
+ * Where the palm centre of a synthetic open hand lies relative to its pinch midpoint, in client pixels (the palm is below the cursor).
+ * A fist is placed by its palm centre, so `at` of an open hand `palmOffset` above a fist's `at` has the same palm: a hand can go from
+ * open to pinching to fist without its palm moving, as a real one does.
+ */
+export async function palmOffset(page: Page): Promise<{ x: number; y: number }> {
+  const geometry = await page.evaluate(() => {
+    const video = document.querySelector('video.camera-video') as HTMLVideoElement | null;
+    if (!video) return null;
+    const rect = video.getBoundingClientRect();
+    return { view: { left: rect.left, top: rect.top, width: rect.width, height: rect.height }, video: { width: video.videoWidth, height: video.videoHeight } };
+  });
+  if (!geometry?.video.width || !geometry.video.height) throw new Error('palmOffset: the camera video has no frame yet');
+  const cursor = { x: 0.5, y: 0.5 };
+  const hand = syntheticHand({ cursor, pinchM: 0.1 });
+  const palm = [0, 5, 9, 13, 17].map(index => hand.points[index]!);
+  const centre = { x: palm.reduce((sum, point) => sum + point.x, 0) / palm.length, y: palm.reduce((sum, point) => sum + point.y, 0) / palm.length };
+  const scale = Math.max(geometry.view.width / geometry.video.width, geometry.view.height / geometry.video.height);
+  return { x: (centre.x - cursor.x) * geometry.video.width * scale, y: (centre.y - cursor.y) * geometry.video.height * scale };
 }
 
 async function postHands(page: Page, hands: unknown[]): Promise<void> {

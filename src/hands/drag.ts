@@ -71,3 +71,13 @@ export function zoomRatio(input: { startSpan: number; span: number; deadZonePx: 
   const effective = startSpan + beyondDeadZone(span - startSpan, deadZonePx);
   return Math.max(startSpan, minSpanPx) / Math.max(effective, minSpanPx);
 }
+/**
+ * The explode amount while a fist holds an object and the other hand pinches (requirement 93): the amount when the pinch joined,
+ * plus the change in the distance between the fist's palm centre and the pinch cursor (reduced by `deadZonePx`) divided by
+ * `fullFraction` of the viewport height. Spreading explodes, bringing together closes. Clamped to 0..1 and rounded to 0.01.
+ */
+export function explodeAmount(input: { start: number; startSpan: number; span: number; deadZonePx: number; viewportHeight: number; fullFraction: number }): number {
+  const { start, startSpan, span, deadZonePx, viewportHeight, fullFraction } = input;
+  const change = beyondDeadZone(span - startSpan, deadZonePx) / Math.max(fullFraction * viewportHeight, 1e-6);
+  return Math.min(1, Math.max(0, Math.round((start + change) * 100) / 100)) || 0;
+}

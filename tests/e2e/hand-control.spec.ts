@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { demoModel } from '../../shared/demo';
 import type { ModelSpec } from '../../shared/model';
-import { fakeHandsLog, hideHand, installFakeHands, showHand, showHands, handsUrl, type FakeHand } from './fake-hands';
+import { fakeHandsLog, hideHand, installFakeHands, palmOffset, showHand, showHands, handsUrl, type FakeHand } from './fake-hands';
 
 // Hand control is tested against a scripted worker (fake-hands.ts); the camera
 // stream, the capture loop and the app are real.
@@ -726,6 +726,268 @@ test.describe('T6 two-hand zoom', () => {
     expect(await modelRows(page)).toEqual(before);
     expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
     await expect(sceneCanvas(page)).toHaveAttribute('data-explode', '1.000');
+    await expect(undoButton(page)).toBeDisabled();
+  });
+});
+
+// ---- Task 7: fist to hold, move and explode an object ---------------------------------------------------------------------------
+/** A fist placed by its palm centre (see `palmOffset`); the thumb-index distance is ignored. */
+const fistAt = (at: Pt): FakeHand => ({ at, pinchM: OPEN, fist: true });
+/** The cursor an open hand needs for its palm to be where a fist's palm is at `palm`. */
+const openFor = (palm: Pt, offset: Pt): FakeHand => ({ at: shift(palm, -offset.x, -offset.y), pinchM: OPEN });
+/** The explode amount the scene shows now (0..1). */
+const explodeShown = async (page: Page) => Number(await sceneCanvas(page).getAttribute('data-explode'));
+
+/**
+ * Starts every attempt with no hand in either slot (see `pinchOnce`), then shows a fist at `at` and waits for its state: `hold`
+ * when it is over an object, `fist` over empty space. A fist shown from the start has nothing to settle, so it engages after three frames.
+ */
+async function fistOnce(page: Page, at: Pt, others: readonly FakeHand[], state: 'hold' | 'fist') {
+  await hideHand(page);
+  await expect(overlay(page)).toHaveAttribute('data-hand-state', 'none', { timeout: 45_000 });
+  await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'none', { timeout: 45_000 });
+  await showHands(page, [fistAt(at), ...others]);
+  await expect(overlay(page)).toHaveAttribute('data-hand-state', state, { timeout: 15_000 });
+}
+const fistOn = (page: Page, at: Pt, state: 'hold' | 'fist' = 'hold', others: readonly FakeHand[] = MOUSE_ONLY) =>
+  attempts(page, at, others, () => fistOnce(page, at, others, state));
+/** Fist at `at`, then move it by `by` and wait until `progressed` is true. Returns where the fist ended. */
+async function fistDragBy(page: Page, at: Pt, by: Pt, progressed: () => Promise<boolean>) {
+  const to = shift(at, by.x, by.y);
+  await attempts(page, at, MOUSE_ONLY, async () => {
+    await fistOnce(page, at, MOUSE_ONLY, 'hold');
+    await showHands(page, [fistAt(to)]);
+    await expect.poll(progressed, { timeout: 20_000 }).toBe(true);
+  });
+  return to;
+}
+/** A point on `partId` whose palm-mirror, `offset` above it, is on the same part too (so an open hand and a fist can share one palm over it). */
+async function pointWithPalmOn(page: Page, partId: string, offset: Pt): Promise<Pt> {
+  const found = await page.evaluate(([part, shiftBy]) => {
+    const scene = window.__forgehandScene!;
+    const centre = scene.projectPart(part!);
+    if (!centre) return null;
+    let best: { x: number; y: number; d: number } | null = null;
+    for (let y = centre.y - 120; y <= centre.y + 120; y += 5) {
+      for (let x = centre.x - 120; x <= centre.x + 120; x += 5) {
+        const here = scene.hitTest({ x, y });
+        const there = scene.hitTest({ x: x - shiftBy!.x, y: y - shiftBy!.y });
+        const d = Math.hypot(x - centre.x, y - centre.y);
+        if (here?.partId === part && there?.partId === part && (!best || d < best.d)) best = { x, y, d };
+      }
+    }
+    return best ? { x: best.x, y: best.y } : null;
+  }, [partId, offset] as const);
+  expect(found, `no point on ${partId} with its palm-mirror on ${partId} found`).not.toBeNull();
+  return found!;
+}
+const objectRows = async (page: Page): Promise<Array<[string, { x: number; y: number; z: number }, { x: number; y: number; z: number }]>> =>
+  JSON.parse((await sceneCanvas(page).getAttribute('data-object-json'))!);
+
+test.describe('T7 fist to hold, move and explode an object', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(handsUrl({ debug: true }));
+  });
+
+  test('a fist on the demo object moves the whole object, writes the object transform once on release, and one 復原 restores it', async ({ page }) => {
+    const calls = modelCalls(page);
+    await demoAndCamera(page);
+    const offset = await palmOffset(page);
+    const before = await modelRows(page);
+    const objects = (await sceneCanvas(page).getAttribute('data-object-json'))!;
+    const housing = await pointOn(page, 'housing');
+    const batteryBefore = (await projectOf(page, 'battery'))!;
+    await expect(undoButton(page)).toBeDisabled();
+    const to = await fistDragBy(page, housing, { x: 100, y: 0 }, async () => (await projectOf(page, 'battery'))!.x > batteryBefore.x + 30);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'hold');
+    await expect(overlay(page)).toHaveAttribute('data-hand-state', 'hold');
+    await expect(page.getByTestId('hand-debug')).toContainText('握拳 是');
+    // The preview moves the object; nothing is written until the fist opens.
+    expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
+    expect(await modelRows(page)).toEqual(before);
+    await expect(undoButton(page)).toBeDisabled();
+    await showHands(page, [openFor(to, offset)]);
+    await expect.poll(async () => sceneCanvas(page).getAttribute('data-object-json'), { timeout: 45_000 }).not.toBe(objects);
+    // The whole object moved: its transform changed, its rotation and every part stayed as they were.
+    const [movedObject] = await objectRows(page);
+    const [startObject] = JSON.parse(objects) as Array<[string, { x: number; y: number; z: number }, { x: number; y: number; z: number }]>;
+    expect(movedObject![0]).toBe(startObject![0]);
+    expect(distance(movedObject![1], startObject![1])).toBeGreaterThan(0.02);
+    expect(movedObject![2]).toEqual(startObject![2]);
+    expect(await modelRows(page)).toEqual(before);
+    expect((await projectOf(page, 'battery'))!.x).toBeGreaterThan(batteryBefore.x + 30);
+    await expect(page.getByText('已調整物件位置，可按「復原」回到上一步。').first()).toBeVisible();
+    await expect(page.getByTestId('hand-debug')).toContainText(/完成 [1-9]/);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'none');
+    // One undo step puts it back.
+    await undoButton(page).click();
+    await expect.poll(async () => sceneCanvas(page).getAttribute('data-object-json'), { timeout: 20_000 }).toBe(objects);
+    await expect(undoButton(page)).toBeDisabled();
+    expect(await modelRows(page)).toEqual(before);
+    expect(calls).toEqual([]);
+  });
+
+  test('a fist on a part of an inactive object makes the object active and moves it', async ({ page }) => {
+    const calls = modelCalls(page);
+    const second: ModelSpec = { ...structuredClone(demoModel), name: '測試：第二個物件' };
+    await page.route('**/api/generate', route => {
+      const body = route.request().postDataJSON() as { requestId: string };
+      return route.fulfill({ json: {
+        design: { status: 'ready', explanation: '測試替身模型資料。', model: second },
+        source: 'codex', model: 'test-double-not-a-real-model', elapsedMs: 25, requestId: body.requestId,
+      } });
+    });
+    await demoAndCamera(page);
+    const offset = await palmOffset(page);
+    await page.getByRole('tab', { name: '生成新物件', exact: true }).click();
+    await page.getByLabel('物件描述', { exact: true }).fill('再做一個物件');
+    await page.getByRole('button', { name: '生成 3D 草案', exact: true }).click();
+    await expect(sceneCanvas(page)).toHaveAttribute('data-object-count', '2');
+    await expect(sceneCanvas(page)).toHaveAttribute('data-model-name', second.name);
+    const start = await objectRows(page);
+    const firstId = start[0]![0];
+    const secondId = start[1]![0];
+    expect(await sceneCanvas(page).getAttribute('data-active-object-id')).toBe(secondId);
+    await sceneCanvas(page).scrollIntoViewIfNeeded();
+    const housing = await pointOn(page, 'housing', firstId);
+    const housingBefore = (await projectOf(page, 'housing', firstId))!;
+    const to = await fistDragBy(page, housing, { x: 0, y: 90 }, async () => (await projectOf(page, 'housing', firstId))!.y > housingBefore.y + 20);
+    // The first object became the active one, as a click on its part would have made it.
+    await expect(sceneCanvas(page)).toHaveAttribute('data-active-object-id', firstId);
+    await expect(sceneCanvas(page)).toHaveAttribute('data-model-name', demoModel.name);
+    await expect(overlay(page)).toHaveAttribute('data-hand-state', 'hold');
+    await showHands(page, [openFor(to, offset)]);
+    await expect.poll(async () => distance((await objectRows(page))[0]![1], start[0]![1]), { timeout: 45_000 }).toBeGreaterThan(0.02);
+    // Only the held object moved; the other one stayed.
+    expect((await objectRows(page))[1]).toEqual(start[1]);
+    await expect(sceneCanvas(page)).toHaveAttribute('data-active-object-id', firstId);
+    expect(calls).toEqual(['generate']);
+  });
+
+  test('a fist plus a pinch moving away raises the explode amount without an undo step, and moving back lowers it', async ({ page }) => {
+    const calls = modelCalls(page);
+    await demoAndCamera(page);
+    const before = await modelRows(page);
+    const objects = await sceneCanvas(page).getAttribute('data-object-json');
+    const housing = await pointOn(page, 'housing');
+    const box = (await page.getByTestId('viewport').boundingBox())!;
+    // The pinch hand starts to one side of the fist, where the view has room to spread the hands apart.
+    const dir = box.x + box.width - housing.x > 560 ? 1 : -1;
+    const start = shift(housing, dir * 200, 30);
+    const far = shift(start, dir * 150);
+    const near = shift(start, -dir * 90);
+    await expect(undoButton(page)).toBeDisabled();
+    await expect(sceneCanvas(page)).toHaveAttribute('data-explode', '0.000');
+    await attempts(page, housing, [], async () => {
+      await fistOnce(page, housing, MOUSE_ONLY, 'hold');
+      await showHands(page, [fistAt(housing), { at: start, pinchM: OPEN }]);
+      await expect(overlay(page)).toHaveAttribute('data-hand-count', '2', { timeout: 45_000 });
+      await showHands(page, [fistAt(housing), { at: start, pinchM: PINCH }]);
+      await expect(overlay(page)).toHaveAttribute('data-gesture', 'explode', { timeout: 10_000 });
+      await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'join');
+    });
+    // Joining alone does not explode: the hands are inside the dead zone.
+    await someFrames(page);
+    expect(await explodeShown(page)).toBe(0);
+    await showHands(page, [fistAt(housing), { at: far, pinchM: PINCH }]);
+    await expect.poll(() => explodeShown(page), { timeout: 30_000 }).toBeGreaterThan(0.2);
+    // The explode amount is display state: the button and the slider follow it; no data change, no undo step.
+    await expect(page.getByRole('button', { name: '收回爆炸圖', exact: true })).toBeVisible();
+    await expect.poll(async () => Number(await page.getByLabel('拆開程度', { exact: true }).inputValue()), { timeout: 20_000 }).toBeGreaterThan(20);
+    expect(await modelRows(page)).toEqual(before);
+    expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
+    await expect(undoButton(page)).toBeDisabled();
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'explode');
+    // Moving the pinch toward the fist closes it again.
+    const peak = await explodeShown(page);
+    // In two steps: a hand that jumps farther than HAND_MATCH_PX between two frames would count as a new hand.
+    await showHands(page, [fistAt(housing), { at: shift(start, dir * 30), pinchM: PINCH }]);
+    await someFrames(page, 6);
+    await showHands(page, [fistAt(housing), { at: near, pinchM: PINCH }]);
+    await expect.poll(() => explodeShown(page), { timeout: 30_000 }).toBeLessThan(peak - 0.15);
+    await expect(undoButton(page)).toBeDisabled();
+    await expect(page.getByTestId('hand-debug')).toContainText('雙手 1');
+    // The pinch lets go: the fist goes on holding, and nothing was committed.
+    await showHands(page, [fistAt(housing), { at: near, pinchM: OPEN }]);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'hold', { timeout: 20_000 });
+    expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
+    expect(calls).toEqual([]);
+  });
+
+  test('a fist in the exploded view still moves the object, and the status line says so', async ({ page }) => {
+    const calls = modelCalls(page);
+    await demoAndCamera(page);
+    const offset = await palmOffset(page);
+    await page.getByRole('button', { name: '爆炸圖', exact: true }).click();
+    await expect(sceneCanvas(page)).toHaveAttribute('data-explode', '1.000');
+    await expect(handStatus(page)).toHaveAttribute('data-state', 'exploded');
+    await expect(handStatus(page)).toContainText('握拳仍可移動整個物件');
+    const before = await modelRows(page);
+    const objects = (await sceneCanvas(page).getAttribute('data-object-json'))!;
+    const point = await anyPartPoint(page);
+    const batteryBefore = (await projectOf(page, 'battery'))!;
+    const to = await fistDragBy(page, point, { x: 100, y: 0 }, async () => (await projectOf(page, 'battery'))!.x > batteryBefore.x + 30);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'hold');
+    await expect(sceneCanvas(page)).toHaveAttribute('data-explode', '1.000');
+    await showHands(page, [openFor(to, offset)]);
+    await expect.poll(async () => sceneCanvas(page).getAttribute('data-object-json'), { timeout: 45_000 }).not.toBe(objects);
+    // The parts stay at their stored positions, and the view stays exploded.
+    expect(await modelRows(page)).toEqual(before);
+    await expect(sceneCanvas(page)).toHaveAttribute('data-explode', '1.000');
+    await undoButton(page).click();
+    await expect.poll(async () => sceneCanvas(page).getAttribute('data-object-json'), { timeout: 20_000 }).toBe(objects);
+    await expect(sceneCanvas(page)).toHaveAttribute('data-explode', '1.000');
+    expect(calls).toEqual([]);
+  });
+
+  test('a pinch that closes into a fist on a part does not move the part: the fist takes over and nothing is committed', async ({ page }) => {
+    const calls = modelCalls(page);
+    await demoAndCamera(page);
+    const offset = await palmOffset(page);
+    const before = await modelRows(page);
+    const objects = await sceneCanvas(page).getAttribute('data-object-json');
+    const objectId = (await sceneCanvas(page).getAttribute('data-active-object-id'))!;
+    // The palm stays where it is while the fingers curl: the open hand, the pinch and the fist share one palm over the housing.
+    const palm = await pointWithPalmOn(page, 'housing', offset);
+    const cursor = shift(palm, -offset.x, -offset.y);
+    const batteryBefore = (await projectOf(page, 'battery'))!;
+    await attempts(page, cursor, MOUSE_ONLY, async () => {
+      await hideHand(page);
+      await expect(overlay(page)).toHaveAttribute('data-hand-state', 'none', { timeout: 45_000 });
+      await showHands(page, [{ at: cursor, pinchM: OPEN }]);
+      await expect(overlay(page)).toHaveAttribute('data-hand-target', `${objectId}:housing`, { timeout: 45_000 });
+      await showHands(page, [{ at: cursor, pinchM: PINCH }]);
+      await expect(overlay(page)).toHaveAttribute('data-hand-state', 'grab', { timeout: 10_000 });
+      await showHands(page, [fistAt(palm)]);
+      await expect(overlay(page)).toHaveAttribute('data-hand-state', 'hold', { timeout: 15_000 });
+    });
+    // The grab was given up; the part and the object stay where they were, and no undo step exists.
+    await someFrames(page, 12);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'hold');
+    expect(Math.abs((await projectOf(page, 'battery'))!.x - batteryBefore.x)).toBeLessThan(1);
+    expect(await modelRows(page)).toEqual(before);
+    await showHands(page, [{ at: cursor, pinchM: OPEN }]);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'none', { timeout: 20_000 });
+    await someFrames(page);
+    expect(await modelRows(page)).toEqual(before);
+    expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
+    await expect(undoButton(page)).toBeDisabled();
+    await expect(page.getByTestId('hand-debug')).toContainText('拖曳 0／完成 0／取消 0');
+    expect(calls).toEqual([]);
+  });
+
+  test('a fist over empty space holds nothing: a hollow fist that changes no data', async ({ page }) => {
+    await demoAndCamera(page);
+    const before = await modelRows(page);
+    const objects = await sceneCanvas(page).getAttribute('data-object-json');
+    const empty = await emptyPoint(page);
+    await fistOn(page, empty, 'fist');
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'none');
+    await showHands(page, [fistAt(shift(empty, -90))]);
+    await someFrames(page, 12);
+    await expect(overlay(page)).toHaveAttribute('data-hand-state', 'fist');
+    expect(await modelRows(page)).toEqual(before);
+    expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
     await expect(undoButton(page)).toBeDisabled();
   });
 });

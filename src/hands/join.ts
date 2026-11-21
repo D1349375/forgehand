@@ -1,4 +1,4 @@
-import type { Gate } from './gate';
+import { fistAllowed, type Gate } from './gate';
 import type { Target } from './types';
 
 /** The one-hand gestures whose owner a second hand may join. */
@@ -15,10 +15,12 @@ export type JoinRule = (owner: OwnerGesture, joiner: JoinInput, gate: Gate) => T
 /**
  * The real rule (design §5.4, requirement 82). Each P1 task adds a row; a row whose task is not built
  * is absent, so the second hand is inert there. Rows so far:
- *   orbit + pinch -> zoom, while hand control is not off (Task 6).
- * Explode (Task 7) and rotate (Task 8) follow. The joining hand's own target is not read.
+ *   orbit + pinch -> zoom, while hand control is not off (Task 6);
+ *   hold + pinch -> explode, at full control or while the exploded view is open (Task 7).
+ * Rotate (Task 8) follows. The joining hand's own target is not read.
  */
 export const joinGesture: JoinRule = (owner, joiner, gate) => {
   if (owner === 'orbit' && joiner.kind === 'pinch' && gate.level !== 'off') return 'zoom';
+  if (owner === 'hold' && joiner.kind === 'pinch' && fistAllowed(gate)) return 'explode';
   return null;
 };

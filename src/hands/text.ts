@@ -7,32 +7,34 @@ import type { TrackerStatus } from './useHandTracking';
 
 export type HandStatusState = 'hidden' | 'loading' | 'error' | 'slow' | 'agent' | 'exploded' | 'cancelled' | 'hint';
 
-const TEXTS: Readonly<Record<Exclude<HandStatusState, 'hidden'>, string>> = {
+const TEXTS = {
   loading: '正在載入手部追蹤模型（第一次約 20–30 秒）。',
   error: '手部追蹤無法使用，仍可用滑鼠操作。',
   slow: '這台電腦的手部追蹤太慢，手勢已停用；骨架仍會顯示，請用滑鼠操作。',
   agent: '代理執行中，手勢只能轉動視角。',
   exploded: '爆炸圖開啟中，手勢只能轉動視角；收回後即可抓取零件。',
+  explodedWithFist: '爆炸圖開啟中，捏合只能轉動視角，握拳仍可移動整個物件；收回後即可抓取零件。',
   cancelled: '手部追蹤中斷，已取消這次移動。',
   hint: '把手舉到鏡頭前：捏住零件可移動，捏住空白處可轉動視角。',
-};
+} as const satisfies Readonly<Record<string, string>>;
 
 /**
  * The one line under the camera view while the camera and 手勢 are on.
  * Priority: loading, error, slow, (try-on: nothing, its own line shows), agent,
  * exploded, cancelled, then the hint until a hand has been seen.
- * `cancelledAt` is the time of the last cancel by tracking loss, or null.
+ * `cancelledAt` is the time of the last cancel by tracking loss, or null. With `fistEnabled` the exploded line also says
+ * that a fist can still move the whole object (requirement 94).
  */
-export function handStatus(input: { tracker: TrackerStatus; gate: Gate; cancelledAt: number | null; now: number; handSeen: boolean }):
+export function handStatus(input: { tracker: TrackerStatus; gate: Gate; cancelledAt: number | null; now: number; handSeen: boolean; fistEnabled?: boolean }):
   { state: HandStatusState; text: string } {
-  const show = (state: Exclude<HandStatusState, 'hidden'>) => ({ state, text: TEXTS[state] });
+  const show = (state: Exclude<HandStatusState, 'hidden'>, text: string = TEXTS[state]) => ({ state, text });
   // 'off' is the moment between the camera turning on and the worker starting.
   if (input.tracker === 'off' || input.tracker === 'loading') return show('loading');
   if (input.tracker === 'load-error' || input.tracker === 'track-error') return show('error');
   if (input.gate.reason === 'slow') return show('slow');
   if (input.gate.reason === 'try-on') return { state: 'hidden', text: '' };
   if (input.gate.reason === 'agent') return show('agent');
-  if (input.gate.reason === 'exploded') return show('exploded');
+  if (input.gate.reason === 'exploded') return show('exploded', input.fistEnabled ? TEXTS.explodedWithFist : TEXTS.exploded);
   if (input.cancelledAt !== null && input.now - input.cancelledAt < CANCEL_NOTICE_MS) return show('cancelled');
   if (!input.handSeen) return show('hint');
   return { state: 'hidden', text: '' };
@@ -61,8 +63,8 @@ export function shortenName(name: string, max: number = BADGE_NAME_MAX): string 
 /**
  * The short badge next to a hand (requirement 16), so colour is never the only signal.
  * `target` is the settled target, or for a grab the grabbed part. `inert` marks a pinch that
- * may not act because the other hand's gesture runs. `gesture`, `value` and `objectName` are
- * for the rows the P1 tasks add (zoom, hold, explode, rotate); they are not read yet.
+ * may not act because the other hand's gesture runs. `gesture` tells the joining hand's badge (zoom, explode); `value` is the
+ * explode percentage of the pull (requirement 95); `objectName` is the held object's name. Rotate (Task 8) is not read yet.
  */
 export function badgeText(view: { state: HandState; target: Target; gesture: GestureKind; value: number | null; objectName?: string; inert?: boolean }): string {
   const name = view.target.kind === 'empty' ? '' : shortenName(view.target.label);
@@ -72,10 +74,13 @@ export function badgeText(view: { state: HandState; target: Target; gesture: Ges
     case 'grab': return name ? `手勢：已抓取 ${name}` : '手勢：已抓取';
     case 'orbit': return '手勢：轉動視角';
     case 'locked': return view.inert ? '手勢：另一手操作中' : '手勢：暫停';
-    case 'join': return view.gesture === 'zoom' ? '手勢：雙手縮放' : '手勢：雙手操作';
-    case 'tracked':
-    case 'fist':
-    case 'hold': return '手勢：待命';
+    case 'join':
+      if (view.gesture === 'zoom') return '手勢：雙手縮放';
+      if (view.gesture === 'explode') return view.value === null ? '手勢：拉開' : `手勢：拉開 ${view.value}%`;
+      return '手勢：雙手操作';
+    case 'fist': return '手勢：握拳';
+    case 'hold': return view.objectName ? `手勢：握住 ${shortenName(view.objectName)}` : '手勢：握住';
+    case 'tracked': return '手勢：待命';
   }
 }
 
@@ -83,9 +88,14 @@ export function badgeText(view: { state: HandState; target: Target; gesture: Ges
 export function debugLine(stats: HandStats, tracking: Parameters<typeof trackingDebugLine>[0] & { gesture: GestureKind }): string {
   const { gesture, ...rest } = tracking;
   const twoHand = Object.values(stats.twoHand).reduce((sum, count) => sum + count, 0);
+  // The curl ratio and the fist state of both hands, for tuning the fist thresholds on a real webcam (Task 7).
+  const fists = stats.hands.some(hand => hand.curl !== null)
+    ? [`曲度 ${stats.hands.map(hand => (hand.curl === null ? '—' : hand.curl.toFixed(2))).join('／')}`, `握拳 ${stats.hands.map(hand => (hand.fist ? '是' : '否')).join('／')}`]
+    : [];
   return [
     trackingDebugLine(rest),
     `手勢 ${gesture}`,
+    ...fists,
     `拖曳 ${stats.drags}／完成 ${stats.commits}／取消 ${stats.cancels}／拖曳中遺失 ${stats.dragLosses}（最長 ${stats.longestDragGapMs} ms）`,
     `雙手 ${twoHand}`,
     `無效捏合 ${stats.inert}`,

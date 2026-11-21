@@ -19,12 +19,16 @@ export interface HandSample {
   palm: Point;
   /** Distance between thumb tip and index tip in metres (world landmarks); null without world landmarks. */
   pinchM: number | null;
+  /** Curl ratio of the four fingers (`curlRatio`); below FIST_ENGAGE_RATIO is a fist. Null without world landmarks. Filled by `handSample` (Task 7). */
+  curl?: number | null;
 }
 export type Target =
   | { kind: 'empty' }
   | { kind: 'screen'; id: string; label: string }
   /** `hit` is the world point under the cursor. */
-  | { kind: 'part'; objectId: string; partId: string; label: string; hit: { x: number; y: number; z: number } };
+  | { kind: 'part'; objectId: string; partId: string; label: string; hit: { x: number; y: number; z: number };
+    /** The part's object name, for the fist badge (Task 7). */
+    objectName?: string };
 /** An on-screen target (a button) in client pixels. Later specs register more of them. */
 export interface ScreenTarget { id: string; label: string; left: number; top: number; right: number; bottom: number }
 export type GestureKind = 'none' | 'grab' | 'orbit' | 'press' | 'zoom' | 'hold' | 'explode' | 'rotate';

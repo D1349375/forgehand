@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Euler, Matrix4, PerspectiveCamera, Quaternion, Vector3 } from 'three';
-import { TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX } from '../../src/hands/constants';
-import { dragPosition, orbitOffset, zoomRatio } from '../../src/hands/drag';
+import { EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX } from '../../src/hands/constants';
+import { dragPosition, explodeAmount, orbitOffset, zoomRatio } from '../../src/hands/drag';
 import type { Point, Vector } from '../../src/hands/types';
 
 const VIEWPORT_HEIGHT = 800;
@@ -192,5 +192,71 @@ describe('zoomRatio', () => {
     expect(ratio(20, 20)).toBe(1);
     expect(ratio(20, 200)).toBeCloseTo(TWO_HAND_MIN_SPAN_PX / (20 + 200 - 20 - ZOOM_DEAD_ZONE_PX), 10);
     expect(ratio(0, 0)).toBe(1);
+  });
+});
+describe('moving a whole object (Task 7, requirement 92)', () => {
+  const world = new Matrix4();
+  it('moves the stored position in the world frame, in the camera plane, at the depth of the held point', () => {
+    const camera = cameraAt(new Vector3(0, 0, 5));
+    const start = { x: 0.2, y: 0.1, z: -0.3 };
+    const metresPerPixel = (2 * 5 * Math.tan((FOV * Math.PI) / 360)) / VIEWPORT_HEIGHT;
+    const moved = move(camera, { parentWorld: world, start, hit: { x: 0, y: 0, z: 0 }, offset: { x: 100, y: -40 } });
+    expect(moved.x).toBeCloseTo(0.2 + 100 * 1.5 * metresPerPixel, 4);
+    expect(moved.y).toBeCloseTo(0.1 + 40 * 1.5 * metresPerPixel, 4);
+    expect(moved.z).toBeCloseTo(-0.3, 5);
+  });
+  it('does not jump at offset 0 and moves finer with the camera closer to the held point', () => {
+    const start = { x: 1.25, y: -2, z: 0.5 };
+    expect(move(cameraAt(new Vector3(0, 0, 5)), { parentWorld: world, start, offset: { x: 0, y: 0 } })).toEqual(start);
+    const far = move(cameraAt(new Vector3(0, 0, 8)), { parentWorld: world, offset: { x: 100, y: 0 } }).x;
+    const near = move(cameraAt(new Vector3(0, 0, 4)), { parentWorld: world, offset: { x: 100, y: 0 } }).x;
+    expect(near).toBeCloseTo(far / 2, 5);
+  });
+  it('moves in the camera plane of a rotated camera, whatever the object\'s own rotation (the position is a world position)', () => {
+    const camera = cameraAt(new Vector3(4, 3, 4));
+    const moved = move(camera, { parentWorld: world, offset: { x: 80, y: 30 } });
+    const forward = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    expect(asVector3(moved).dot(forward)).toBeCloseTo(0, 5);
+    expect(asVector3(moved).length()).toBeGreaterThan(0.01);
+  });
+  it('rounds to 5 decimals and clamps to ±100 m per axis', () => {
+    const camera = cameraAt(new Vector3(0, 0, 5));
+    const moved = move(camera, { parentWorld: world, start: { x: 0.123456789, y: 0, z: 0 }, offset: { x: 33.3, y: 0 } });
+    for (const value of [moved.x, moved.y, moved.z]) expect(Number(value.toFixed(5))).toBe(value);
+    const far = move(camera, { parentWorld: world, start: { x: 99.9, y: -99.9, z: 0 }, offset: { x: 100000, y: 100000 } });
+    expect(far.x).toBe(100);
+    expect(far.y).toBe(-100);
+  });
+});
+
+describe('explodeAmount', () => {
+  const amount = (start: number, startSpan: number, span: number, viewportHeight = 800) =>
+    explodeAmount({ start, startSpan, span, deadZonePx: EXPLODE_DEAD_ZONE_PX, viewportHeight, fullFraction: EXPLODE_FULL_FRACTION });
+  it('is the start amount at the start span, and inside the dead zone', () => {
+    expect(amount(0, 300, 300)).toBe(0);
+    expect(amount(0.4, 300, 300 + EXPLODE_DEAD_ZONE_PX)).toBe(0.4);
+    expect(amount(0.4, 300, 300 - EXPLODE_DEAD_ZONE_PX)).toBe(0.4);
+  });
+  it('rises when the hands spread and falls when they come together, by the change beyond the dead zone over half the viewport height', () => {
+    // Half the viewport height is 400 px: 112 px beyond the dead zone is 0.28.
+    expect(amount(0, 300, 300 + EXPLODE_DEAD_ZONE_PX + 112)).toBe(0.28);
+    expect(amount(0.5, 300, 300 - EXPLODE_DEAD_ZONE_PX - 100)).toBe(0.25);
+    expect(amount(0.5, 300, 400)).toBeGreaterThan(0.5);
+    expect(amount(0.5, 300, 200)).toBeLessThan(0.5);
+  });
+  it('goes from assembled to fully exploded over EXPLODE_FULL_FRACTION of the viewport height', () => {
+    expect(amount(0, 300, 300 + EXPLODE_DEAD_ZONE_PX + EXPLODE_FULL_FRACTION * 800)).toBe(1);
+    expect(amount(0, 300, 300 + EXPLODE_DEAD_ZONE_PX + EXPLODE_FULL_FRACTION * 400, 400)).toBe(1);
+  });
+  it('clamps to 0..1', () => {
+    expect(amount(0.9, 300, 3000)).toBe(1);
+    expect(amount(0.1, 300, 0)).toBe(0);
+    expect(amount(0, 300, 0)).toBe(0);
+  });
+  it('rounds to 0.01', () => {
+    const value = amount(0, 300, 300 + EXPLODE_DEAD_ZONE_PX + 123);
+    expect(value).toBe(0.31);
+    expect(Math.round(value * 100)).toBeCloseTo(value * 100, 10);
+    expect(amount(0.333, 300, 300)).toBe(0.33);
   });
 });

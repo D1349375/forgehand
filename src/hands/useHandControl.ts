@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { SceneHandle } from '../scene/SceneViewport';
-import { CANCEL_NOTICE_MS } from './constants';
+import { CANCEL_NOTICE_MS, FIST_ENABLED } from './constants';
 import { HandController, type HandPort } from './controller';
 import type { Gate } from './gate';
 import type { HandOverlayHandle } from './HandOverlay';
@@ -46,6 +46,12 @@ export function useHandControl(input: {
   lossMs?: number | null;
   /** A pinch on a part selects it, as a click does (activating its object when needed). */
   onPick: (objectId: string, partId: string) => void;
+  /** A fist on an object makes it the active object first (App's `activateObject`). */
+  onActivate?: (objectId: string) => void;
+  /** The active object's explode amount, read when a pinch joins a fist (0..1). */
+  explodeAmount?: () => number;
+  /** Sets the explode amount, as the 爆炸圖 slider does (display state, no undo step). */
+  setExplode?: (amount: number) => void;
 }): { status: { state: HandStatusState; text: string }; debug: RefObject<HandDebugNumbers> } {
   const { source, tracker, enabled, gate, videoRef, overlayRef, objectCount, sceneRef, lossMs = null } = input;
   const [handSeen, setHandSeen] = useState(false);
@@ -54,21 +60,29 @@ export function useHandControl(input: {
   const debug = useRef<HandDebugNumbers>({ ...IDLE_DEBUG });
   const onPick = useRef(input.onPick);
   onPick.current = input.onPick;
+  const fistInputs = useRef({ onActivate: input.onActivate, explodeAmount: input.explodeAmount, setExplode: input.setExplode });
+  fistInputs.current = { onActivate: input.onActivate, explodeAmount: input.explodeAmount, setExplode: input.setExplode };
   const controller = useMemo(() => {
     const port: HandPort = {
       pick(point): Target {
         return pickTarget(point, [], at => {
           const hit = sceneRef.current?.hitTest(at);
-          return hit ? { kind: 'part', objectId: hit.objectId, partId: hit.partId, label: hit.name, hit: hit.hit } : EMPTY_TARGET;
+          return hit ? { kind: 'part', objectId: hit.objectId, partId: hit.partId, label: hit.name, hit: hit.hit, objectName: hit.objectName } : EMPTY_TARGET;
         });
       },
       select: (objectId, partId) => onPick.current(objectId, partId),
       beginGrab: (objectId, partId, hit) => sceneRef.current?.beginPartGrab(objectId, partId, hit) ?? null,
       beginOrbit: () => sceneRef.current?.beginOrbit() ?? null,
       press: () => { /* no on-screen targets yet */ },
+      activate: objectId => fistInputs.current.onActivate?.(objectId),
+      beginHold: (objectId, hit) => sceneRef.current?.beginObjectHold(objectId, hit) ?? null,
+      explodeAmount: () => fistInputs.current.explodeAmount?.() ?? 0,
+      setExplode: amount => fistInputs.current.setExplode?.(amount),
+      // The camera view fills the stage, so its height is the viewport height the pull is scaled by.
+      viewportHeight: () => videoRef.current?.getBoundingClientRect().height ?? 0,
     };
     return new HandController(port, { lossMs });
-  }, [sceneRef, lossMs]);
+  }, [sceneRef, videoRef, lossMs]);
   useEffect(() => { controller.setGate(gate); }, [controller, gate.level, gate.reason]);
   useEffect(() => { controller.setObjectCount(objectCount); }, [controller, objectCount]);
   useEffect(() => {
@@ -125,7 +139,7 @@ export function useHandControl(input: {
   }, [controller, source, enabled, videoRef, overlayRef]);
   const status = useMemo(
     () => (enabled
-      ? handStatus({ tracker, gate: { level: gate.level, reason: gate.reason }, cancelledAt, now: cancelledAt ?? 0, handSeen })
+      ? handStatus({ tracker, gate: { level: gate.level, reason: gate.reason }, cancelledAt, now: cancelledAt ?? 0, handSeen, fistEnabled: FIST_ENABLED })
       : { state: 'hidden' as const, text: '' }),
     [enabled, tracker, gate.level, gate.reason, handSeen, cancelledAt],
   );

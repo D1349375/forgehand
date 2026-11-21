@@ -40,6 +40,7 @@ Turn the camera on (開啟攝影機) and move your hands in front of it. Hand co
 - **Turn the view**: pinch on empty space and move. The view turns while you pinch and stays where it is when you let go.
 - **Finer moves**: zoom in with the mouse wheel. The same hand movement then moves a part less.
 - **Zoom with two hands**: while one hand turns the view, pinch with the other and move the hands apart to zoom in or together to zoom out. Let go with the second hand and the first keeps turning the view from where it is.
+- **Fist**: make a fist over an object to hold the whole object (a filled square shows at your palm), move it and open your hand; 復原 puts it back in one step. While you hold it, pinch with the other hand and move it away from the fist to pull the object apart (exploded view), or toward the fist to close it again. A fist also works while the exploded view is open.
 - **A second hand** cannot start anything while the first hand is pinching; its pinch is shown as inactive until you open it.
 - **View-only and off**: while the exploded view is open or the agent is running, a pinch only turns the view, and the status line under the camera says so. While the arm try-on (護臂試戴) runs, or when the tracker is too slow for gestures (under 10 frames per second), hand control is off and the mouse works as usual. The skeletons stay visible in both cases.
 - **If tracking is lost** for more than about a third of a second during a drag, the part goes back to where it was and the status line says so.
