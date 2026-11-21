@@ -137,7 +137,7 @@ Parts that overlap or touch are fused into print pieces unless a joint separates
 
 ## Task 4 — The export dialog, the exploded image and downloads
 
-`[ ]`
+`[x]`
 
 The 匯出套件 button, the export dialog with progress, findings, the summary and every download, the off-screen exploded image with step badges, the GLB in the browser, and the e2e test.
 

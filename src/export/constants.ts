@@ -12,3 +12,8 @@ export const FUSE_PARTS = true;
 export const FUSE_MIN_MM3 = 1;
 /** A piece whose largest extent passes this is reported as `TOO_LARGE`, in millimetres. */
 export const LARGE_PIECE_MM = 250;
+/** Size of `exploded.png` in pixels (requirement 40). */
+export const IMAGE_WIDTH = 1600;
+export const IMAGE_HEIGHT = 1200;
+/** Objects of one assembly are drawn apart by at least this share of the smaller object's size (requirement 41). */
+export const SEPARATION_FACTOR = 0.3;
