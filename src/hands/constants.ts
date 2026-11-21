@@ -53,3 +53,5 @@ export const DUPLICATE_HAND_PX = 40;
 export const HAND_MATCH_PX = 160;
 /** A two-hand gesture reads the angle between the hands only while they are at least this far apart (pixels). */
 export const TWO_HAND_MIN_SPAN_PX = 60;
+/** Two-hand zoom ignores a change in the distance between the cursors smaller than this (pixels), so hand tremor does not zoom. */
+export const ZOOM_DEAD_ZONE_PX = 12;

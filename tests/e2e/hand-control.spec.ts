@@ -561,3 +561,171 @@ test.describe('T5 pinch-move, orbit and the rest of the P0 core', () => {
     expect(calls).toEqual(['agent']);
   });
 });
+
+// ---- Task 6: two-hand zoom -------------------------------------------------------------------------------------------------------
+/** The camera relative to its orbit target, read from the two data attributes the scene writes. */
+async function cameraOf(page: Page) {
+  const read = await sceneCanvas(page).evaluate(element => ({ position: element.getAttribute('data-camera-position'), target: element.getAttribute('data-camera-target') }));
+  const numbers = (text: string | null) => (text ?? '').split(',').map(Number);
+  const position = numbers(read.position);
+  const target = numbers(read.target);
+  expect([...position, ...target], 'the scene writes data-camera-position and data-camera-target').toHaveLength(6);
+  const offset = position.map((value, index) => value - target[index]!);
+  return {
+    target,
+    distance: Math.hypot(offset[0]!, offset[1]!, offset[2]!),
+    azimuth: (Math.atan2(offset[0]!, offset[2]!) * 180) / Math.PI,
+    polar: (Math.acos(offset[1]! / Math.hypot(offset[0]!, offset[1]!, offset[2]!)) * 180) / Math.PI,
+  };
+}
+type Camera = Awaited<ReturnType<typeof cameraOf>>;
+/** The turn between two azimuths in degrees, wrapped to (−180, 180]. */
+const turned = (from: Camera, to: Camera) => ((((to.azimuth - from.azimuth) % 360) + 540) % 360) - 180;
+const pair = (owner: Pt, ownerPinch: number, second: Pt, secondPinch: number): FakeHand[] => [{ at: owner, pinchM: ownerPinch }, { at: second, pinchM: secondPinch }];
+
+/**
+ * The owner hand turns the view on empty space, then the second hand pinches and joins as a zoom. Hands keep their slots, so the
+ * owner is shown alone first and settles in slot 0; the second hand then appears in slot 1, more than HAND_MATCH_PX away.
+ * `hover` is what the owner shows over empty space: `tracked` at full control, `locked` while view-only.
+ */
+async function startZoom(page: Page, owner: Pt, second: Pt, hover: 'tracked' | 'locked') {
+  await attempts(page, owner, [{ at: second, pinchM: OPEN }], async () => {
+    await hideHand(page);
+    await expect(overlay(page)).toHaveAttribute('data-hand-state', 'none', { timeout: 45_000 });
+    await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'none', { timeout: 45_000 });
+    await showHands(page, [{ at: owner, pinchM: OPEN }]);
+    await expect(overlay(page)).toHaveAttribute('data-hand-state', hover, { timeout: 45_000 });
+    await showHands(page, pair(owner, OPEN, second, OPEN));
+    await expect(overlay(page)).toHaveAttribute('data-hand-count', '2', { timeout: 45_000 });
+    await showHands(page, pair(owner, PINCH, second, OPEN));
+    await expect(overlay(page)).toHaveAttribute('data-hand-state', 'orbit', { timeout: 10_000 });
+    await showHands(page, pair(owner, PINCH, second, PINCH));
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'zoom', { timeout: 10_000 });
+    await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'join');
+  });
+}
+/** Waits until the camera distance is within 8 % of `expected` (the filters and the frame rate decide how long a move takes). */
+const distanceNear = (page: Page, expected: number) =>
+  expect.poll(async () => Math.abs((await cameraOf(page)).distance / expected - 1), { timeout: 30_000 }).toBeLessThan(0.08);
+/** Lets a few tracking frames pass, for proving that something stays unchanged. */
+async function someFrames(page: Page, count = 8) {
+  await framesAbove(page, (await frames(page)) + count);
+}
+
+test.describe('T6 two-hand zoom', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(handsUrl({ debug: true }));
+  });
+
+  test('spreading the hands zooms in with the view held still, and letting go of the second hand turns the view on from there', async ({ page }) => {
+    const calls = modelCalls(page);
+    await demoAndCamera(page);
+    const before = await modelRows(page);
+    const objects = await sceneCanvas(page).getAttribute('data-object-json');
+    const owner = await emptyPoint(page);
+    const second = shift(owner, -200);
+    const spread = shift(second, -120);
+    const start = await cameraOf(page);
+    await startZoom(page, owner, second, 'tracked');
+    await expect(undoButton(page)).toBeDisabled();
+    // Joining alone changes nothing: the hands are inside the dead zone.
+    await someFrames(page);
+    expect((await cameraOf(page)).distance).toBeCloseTo(start.distance, 3);
+
+    // Span 200 px at join, 320 px now; the dead zone takes 12 px off the change.
+    await showHands(page, pair(owner, PINCH, spread, PINCH));
+    const expected = (start.distance * 200) / (320 - 12);
+    await distanceNear(page, expected);
+    await someFrames(page, 15);
+    const zoomed = await cameraOf(page);
+    expect(zoomed.distance).toBeLessThan(start.distance * 0.8);
+    expect(zoomed.target).toEqual(start.target);
+    expect(Math.abs(turned(start, zoomed))).toBeLessThan(0.5);
+    expect(Math.abs(zoomed.polar - start.polar)).toBeLessThan(0.5);
+    // Display only: no data change, no undo step, no model request.
+    expect(await modelRows(page)).toEqual(before);
+    expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
+    await expect(undoButton(page)).toBeDisabled();
+
+    // Both hands move left together, so the span stays and the zoom with it. The first hand's move does not turn the view.
+    const moved = shift(owner, -60);
+    const spreadMoved = shift(spread, -60);
+    await showHands(page, pair(moved, PINCH, spreadMoved, PINCH));
+    await someFrames(page, 12);
+    const held = await cameraOf(page);
+    expect(Math.abs(turned(zoomed, held))).toBeLessThan(0.5);
+    expect(held.distance).toBeCloseTo(zoomed.distance, 2);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'zoom');
+
+    // The second hand lets go: the view stays where it is (no jump to the first hand's new place), at the zoomed distance.
+    await showHands(page, pair(moved, PINCH, spreadMoved, OPEN));
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'orbit', { timeout: 20_000 });
+    await someFrames(page);
+    const released = await cameraOf(page);
+    expect(Math.abs(turned(held, released))).toBeLessThan(3);
+    expect(released.distance).toBeCloseTo(held.distance, 2);
+    // The first hand goes on turning from there: 50 px at ORBIT_DEG_PER_PX (0.4) is 20 degrees, not the 44 of its whole path.
+    await showHands(page, pair(shift(moved, -50), PINCH, spreadMoved, OPEN));
+    await expect.poll(async () => Math.abs(turned(released, await cameraOf(page))), { timeout: 20_000 }).toBeGreaterThan(12);
+    await someFrames(page);
+    const turnedView = await cameraOf(page);
+    expect(Math.abs(turned(released, turnedView))).toBeLessThan(28);
+    expect(turnedView.distance).toBeCloseTo(released.distance, 2);
+
+    await showHands(page, pair(shift(moved, -50), OPEN, spreadMoved, OPEN));
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'none', { timeout: 20_000 });
+    expect(await modelRows(page)).toEqual(before);
+    expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
+    await expect(undoButton(page)).toBeDisabled();
+    await expect(page.getByTestId('hand-debug')).toContainText('雙手 1');
+    expect(calls).toEqual([]);
+  });
+
+  test('bringing the hands together zooms out', async ({ page }) => {
+    await demoAndCamera(page);
+    const before = await modelRows(page);
+    const owner = await emptyPoint(page);
+    const second = shift(owner, -300);
+    const start = await cameraOf(page);
+    await startZoom(page, owner, second, 'tracked');
+    // Span 300 px at join, 200 px now: the camera backs away by 300 / (200 + 12).
+    await showHands(page, pair(owner, PINCH, shift(second, 100), PINCH));
+    const expected = (start.distance * 300) / (200 + 12);
+    await distanceNear(page, expected);
+    await someFrames(page, 15);
+    const zoomed = await cameraOf(page);
+    expect(zoomed.distance).toBeGreaterThan(start.distance * 1.2);
+    expect(zoomed.target).toEqual(start.target);
+    expect(Math.abs(turned(start, zoomed))).toBeLessThan(0.5);
+    expect(await modelRows(page)).toEqual(before);
+    await expect(undoButton(page)).toBeDisabled();
+  });
+
+  test('works with the exploded view open', async ({ page }) => {
+    await demoAndCamera(page);
+    await page.getByRole('button', { name: '爆炸圖', exact: true }).click();
+    await expect(sceneCanvas(page)).toHaveAttribute('data-explode', '1.000');
+    await expect(handStatus(page)).toHaveAttribute('data-state', 'exploded');
+    const before = await modelRows(page);
+    const objects = await sceneCanvas(page).getAttribute('data-object-json');
+    const owner = await emptyPoint(page);
+    const second = shift(owner, -200);
+    const start = await cameraOf(page);
+    await startZoom(page, owner, second, 'locked');
+    await showHands(page, pair(owner, PINCH, shift(second, -120), PINCH));
+    await distanceNear(page, (start.distance * 200) / (320 - 12));
+    await someFrames(page, 15);
+    const zoomed = await cameraOf(page);
+    expect(zoomed.distance).toBeLessThan(start.distance * 0.8);
+    expect(Math.abs(turned(start, zoomed))).toBeLessThan(0.5);
+    // The second hand lets go and the first goes on turning the view; nothing in the data changes.
+    await showHands(page, pair(owner, PINCH, shift(second, -120), OPEN));
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'orbit', { timeout: 20_000 });
+    await showHands(page, pair(shift(owner, -60), PINCH, shift(second, -120), OPEN));
+    await expect.poll(async () => Math.abs(turned(zoomed, await cameraOf(page))), { timeout: 20_000 }).toBeGreaterThan(10);
+    expect(await modelRows(page)).toEqual(before);
+    expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
+    await expect(sceneCanvas(page)).toHaveAttribute('data-explode', '1.000');
+    await expect(undoButton(page)).toBeDisabled();
+  });
+});

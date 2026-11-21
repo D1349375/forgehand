@@ -171,6 +171,7 @@ describe('orbit session', () => {
     view.position.set(0, 0, 5);
     const controls = {
       target: new THREE.Vector3(), minPolarAngle: 0, maxPolarAngle: Math.PI, minAzimuthAngle: -Infinity, maxAzimuthAngle: Infinity,
+      minDistance: 2, maxDistance: 20,
       update: vi.fn(),
     };
     const onChange = vi.fn();
@@ -195,5 +196,72 @@ describe('orbit session', () => {
     expect(rig.view.position.distanceTo(turned)).toBeLessThan(1e-9);
     rig.session.end();
     expect(rig.view.position.distanceTo(turned)).toBeLessThan(1e-9);
+  });
+
+  describe('zoom', () => {
+    const direction = (view: THREE.PerspectiveCamera, target = new THREE.Vector3()) => view.position.clone().sub(target).normalize();
+
+    it('scales the distance by the ratio and keeps the viewing direction', () => {
+      const rig = orbit();
+      rig.session.preview({ x: 80, y: 30 });
+      const before = direction(rig.view);
+      const distance = rig.view.position.length();
+      rig.controls.update.mockClear();
+      rig.onChange.mockClear();
+      rig.session.zoom!(0.5);
+      expect(rig.view.position.length()).toBeCloseTo(distance * 0.5, 6);
+      expect(direction(rig.view).distanceTo(before)).toBeLessThan(1e-9);
+      expect(rig.controls.update).toHaveBeenCalled();
+      expect(rig.onChange).toHaveBeenCalled();
+    });
+
+    it('is relative to the distance when the zoom began, not to the last zoom', () => {
+      const rig = orbit();
+      rig.session.zoom!(0.5);
+      rig.session.zoom!(0.8);
+      expect(rig.view.position.length()).toBeCloseTo(5 * 0.8, 6);
+      rig.session.zoom!(1);
+      expect(rig.view.position.length()).toBeCloseTo(5, 6);
+    });
+
+    it('works around a non-zero orbit target', () => {
+      const rig = orbit();
+      rig.controls.target.set(1, 2, -1);
+      rig.view.position.set(1, 2, 4);
+      const fresh = createOrbitSession({ camera: rig.view, controls: rig.controls, onChange: rig.onChange });
+      fresh.zoom!(0.4);
+      expect(rig.view.position.clone().sub(rig.controls.target).length()).toBeCloseTo(2, 6);
+      expect(rig.view.position.x).toBeCloseTo(1, 6);
+      expect(rig.view.position.y).toBeCloseTo(2, 6);
+    });
+
+    it('clamps to the distance limits without accumulating the clamp', () => {
+      const rig = orbit();
+      rig.session.zoom!(0.01);
+      expect(rig.view.position.length()).toBeCloseTo(rig.controls.minDistance, 6);
+      rig.session.zoom!(100);
+      expect(rig.view.position.length()).toBeCloseTo(rig.controls.maxDistance, 6);
+      // Coming back to the starting ratio returns to the starting distance, not to a clamped one.
+      rig.session.zoom!(1);
+      expect(rig.view.position.length()).toBeCloseTo(5, 6);
+    });
+
+    it('rebase after a zoom keeps the zoomed distance, and the next turn starts from it', () => {
+      const rig = orbit();
+      rig.session.zoom!(0.5);
+      rig.session.rebase();
+      rig.session.preview({ x: 0, y: 0 });
+      expect(rig.view.position.length()).toBeCloseTo(2.5, 6);
+      rig.session.preview({ x: 60, y: 0 });
+      expect(rig.view.position.length()).toBeCloseTo(2.5, 6);
+    });
+
+    it('a zoom after a re-base starts from the distance at that time', () => {
+      const rig = orbit();
+      rig.session.zoom!(0.5);
+      rig.session.rebase();
+      rig.session.zoom!(0.8);
+      expect(rig.view.position.length()).toBeCloseTo(2.5 * 0.8, 6);
+    });
   });
 });
