@@ -6,3 +6,9 @@ export const PLATE_ROW_MM = 220;
 export const MESH_KEY_MM = 0.001;
 /** Size of the binary STL header in bytes. */
 export const STL_HEADER_BYTES = 80;
+/** Fusion of touching and overlapping printed parts into print pieces (requirement 6). `false` gives one piece per printed part. */
+export const FUSE_PARTS = true;
+/** Two printed parts overlapping by at least this volume are linked, and a joint whose sides overlap by this much is reported, in mm³. */
+export const FUSE_MIN_MM3 = 1;
+/** A piece whose largest extent passes this is reported as `TOO_LARGE`, in millimetres. */
+export const LARGE_PIECE_MM = 250;
