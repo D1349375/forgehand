@@ -1,6 +1,6 @@
 # Hand manipulation — Tasks
 
-Implementation order is **1 → 9**. Tasks 1 and 2 are done; they were written and built for the 2026-11-15 version of the spec and are kept as written. Tasks 3–5 finish the P0 core: both hands and the hidden camera image → the pure two-hand gesture core → scene and App wiring with the rest of the feedback and checks. Tasks 6–9 are P1, in this order: two-hand zoom, fist, two-hand rotate, agent switch for the camera image. They are cut from the end (see "Cut order"). Requirement numbers refer to `requirements.md` (stable ids: 73 and above were added on 2026-11-19, 56–62 were removed); section numbers (§) refer to `design.md`. Where the text of Tasks 1–2 names a requirement or a design section that has changed since, the current version applies to the later tasks. Design §15 lists every change that later tasks make to the code of Tasks 1–2. Each task is meant for one fresh Kiro session that starts without memory, so each one lists what to read first and repeats the session facts.
+Implementation order is **1 → 9**, then Task 10, which was added on 2026-11-22 after the first test on the user's laptop (release timing and pinch thresholds). The join with two pinches and the fist-knob rotate of the same decision are a later Task 11 that is not written yet. Tasks 1 and 2 are done; they were written and built for the 2026-11-15 version of the spec and are kept as written. Tasks 3–5 finish the P0 core: both hands and the hidden camera image → the pure two-hand gesture core → scene and App wiring with the rest of the feedback and checks. Tasks 6–9 are P1, in this order: two-hand zoom, fist, two-hand rotate, agent switch for the camera image. They are cut from the end (see "Cut order"). Requirement numbers refer to `requirements.md` (stable ids: 73 and above were added on 2026-11-19, 56–62 were removed); section numbers (§) refer to `design.md`. Where the text of Tasks 1–2 names a requirement or a design section that has changed since, the current version applies to the later tasks. Design §15 lists every change that later tasks make to the code of Tasks 1–2. Each task is meant for one fresh Kiro session that starts without memory, so each one lists what to read first and repeats the session facts.
 
 Status legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
@@ -243,11 +243,12 @@ Run `npm run dev`, open the app with `?hands=debug` in the URL. Note the numbers
 14. **View-only.** Open 爆炸圖: a pinch turns the view, never grabs, and the notice says so. Close it again.
 15. **手勢 switch.** Turn 手勢 off: the skeletons and the status line disappear and the mouse works as usual; 護臂試戴 still works. Turn it on again.
 16. **Two-hand zoom** (Task 6). Pinch empty space with one hand, then pinch with the other and move the hands apart: the view zooms in; together: it zooms out; the second hand shows 手勢：雙手縮放 and a line joins the hands. Let go with the second hand and move the first: the view turns from where it is, with no jump. Note whether small hand tremor zooms (then raise `ZOOM_DEAD_ZONE_PX`).
-17. **Fist** (Task 7). Note the curl ratio in the debug line (曲度) for an open hand, a pinch and a fist. Make a fist over the demo object: a hollow square, then a filled one with 手勢：握住 …; move it: the whole object moves; open the hand; one 復原 restores it. Note false fists during pinches and missed fists (then change `FIST_ENGAGE_RATIO`, `FIST_RELEASE_RATIO` or `FIST_ENGAGE_FRAMES`, or set `FIST_ENABLED = false`).
+17. **Fist** (Task 7). Note the curl ratio in the debug line (曲度) for an open hand, a pinch and a fist. Make a fist over the demo object: a hollow square, then a filled one with 手勢：握住 …; move it: the whole object moves; open the hand; one 復原 restores it. Note false fists during pinches and missed fists (then change `FIST_ENGAGE_RATIO`, `FIST_RELEASE_RATIO` or `FIST_ENGAGE_MS` (was `FIST_ENGAGE_FRAMES` before Task 10), or set `FIST_ENABLED = false`).
 18. **Pull apart** (Task 7). Hold the object with a fist and pinch with the other hand; move the pinch away: the object explodes; back: it closes. Repeat with 爆炸圖 already open: the fist still moves the object.
 19. **Two-hand rotate** (Task 8). Pinch a part with one hand, then pinch with the other and move it around the first: the part turns the same way on screen, the second hand shows 手勢：雙手旋轉 …° and an arc. Let go with the second hand, move the first a little, let go: one 復原 restores both the turn and the move. Note whether the part turns when you did not mean it to (then raise `ROTATE_DEAD_ZONE_DEG`).
 20. **Agent** (Task 9). With the camera on, ask the agent 「把鏡頭畫面藏起來」: the image hides, 隱藏鏡頭畫面 is pressed, and the skeletons keep following; ask it to show the image again.
-21. **Report.** Which constants to change, and to what (pinch thresholds, `DRAG_GAIN`, `ORBIT_DEG_PER_PX`, cursor filter, `TRACKING_LOSS_MS` or `ON_TRACKING_LOSS`, `DUPLICATE_HAND_PX`, `HAND_MATCH_PX`, `ZOOM_DEAD_ZONE_PX`, the fist ratios and frames, `EXPLODE_DEAD_ZONE_PX`, `EXPLODE_FULL_FRACTION`, `ROTATE_DEAD_ZONE_DEG`, or `TRACKED_HANDS = 1` if two hands are too slow).
+21. **Release timing and thresholds** (Task 10). With `?hands=debug` the line shows the pinch engage and release thresholds (捏合門檻 40／55 mm) next to the measured pinch distance. Pinch, drag and release several times and note any overshoot on release: the part should stop where the fingers started to open, and the 復原 step should return it. Repeat the two-fist join (two objects, a fist on each, bring them together until 可以接合 shows, open one fist) and note whether it joins on release. Note any missed or false pinches with the new thresholds, and the distance in the debug line at each. Hold the fingers between 40 and 55 mm and note that the part freezes and does not release.
+22. **Report.** Which constants to change, and to what (pinch thresholds and times, `DRAG_GAIN`, `ORBIT_DEG_PER_PX`, cursor filter, `TRACKING_LOSS_MS` or `ON_TRACKING_LOSS`, `DUPLICATE_HAND_PX`, `HAND_MATCH_PX`, `ZOOM_DEAD_ZONE_PX`, the fist ratios and times, `EXPLODE_DEAD_ZONE_PX`, `EXPLODE_FULL_FRACTION`, `ROTATE_DEAD_ZONE_DEG`, or `TRACKED_HANDS = 1` if two hands are too slow).
 
 **Session facts:**
 - E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
@@ -441,6 +442,50 @@ A server tool lets the agent hide or show the camera image, through a new option
 
 ---
 
+## Task 10 — Release timing and pinch thresholds (after the webcam test)
+
+`[x]`
+
+The first test on the user's laptop (2026-11-22, VISION §4.9) found that a closed pinch measures about 26 mm (half open about 58 mm, open about 100 mm), so the 30 mm engage threshold misses pinches; that one hand tracks at about 9–10 fps; and that a release takes 3 frames (about 0.3 s) while the opening hand keeps dragging the object, so pinch-move, the view turn and the two-fist join overshoot or fail on release. This task widens the thresholds, counts engage and release in time instead of frames, freezes the running gesture the moment a hand starts to open, keeps a ready snap latched through the release, lowers the speed gate to 5 fps and shows the thresholds in the debug line. The join with two pinches and the fist-knob rotate of the same decision are a later task (Task 11) and are not built here. Requirements 101–107 (design §16).
+
+**Read first:** `docs/VISION.md` §4.9, the note "Updated 2026-11-22 (first webcam test on the user's laptop)"; requirements 20, 40, 45, 47, 89 and 101–107; design §4.1, §4.5, §5.5, §9.1 and §16; `src/hands/constants.ts`, `pinch.ts`, `fist.ts`, `controller.ts` (`frame`, `follow`, `stepAssemble`, `leaveJoiner`, `onFistRelease`, `commitSession`), `text.ts` (`trackingDebugLine`), `HandDebugPanel.tsx`, `gate.ts`; `src/scene/hand-sessions.ts` (`rebase` of grab, orbit and hold sessions, `createAssembleSession`); `tests/unit/hand-input.test.ts`, `hand-fist.test.ts`, `hand-controller.test.ts`, `hand-assemble.test.ts`, `hand-gate.test.ts`; `tests/e2e/hand-control.spec.ts` (`dragBy`, `pinchOnce`, `attempts`, the T3 speed cases) and `fake-hands.ts` (`handsUrl`); `README.md` ("Hand control").
+
+**Build:**
+- `src/hands/constants.ts`: `PINCH_ENGAGE_M` 0.03 → 0.04, `PINCH_RELEASE_M` 0.05 → 0.055 (R103); remove `PINCH_ENGAGE_FRAMES`, `PINCH_RELEASE_FRAMES`, `FIST_ENGAGE_FRAMES` and `FIST_RELEASE_FRAMES`; add `PINCH_ENGAGE_MS` (80), `PINCH_RELEASE_MS` (60), `FIST_ENGAGE_MS` (150), `FIST_RELEASE_MS` (60) and `MIN_GESTURE_FRAMES` (2) (R104); `MIN_CONTROL_FPS` 10 → 5 (R105). `HAND_LOST_MS`, `TRACKING_LOSS_MS` and `?hands-loss-ms` stay.
+- `src/hands/pinch.ts` and `fist.ts` (design §16.1): the pure `holdStep` (exported from `pinch.ts`), and a `streakSince` field next to `streak` in `PinchState` and `FistState`; engage and release go through it. A frame that does not qualify, without a distance or curl ratio, or without a hand restarts the count; a tick does not count.
+- `src/hands/controller.ts` (design §16.2, §16.3): `isOpening`, `Session.frozen`, `updateFreeze` (first in `follow`) and `resume`; while frozen, skip the owner's preview, `stepAssemble` and the joiner's zoom, rotate and explode; hold the cursor (pinch) and the palm (fist) at their engage points while a hand opens; `leaveJoiner` clears the flag after its own re-base; an assemble resumes by shifting both palm references. The ready snap is not asked while frozen, so it stays latched (R102).
+- `src/hands/text.ts` and `HandDebugPanel.tsx` (R106): `trackingDebugLine` takes `pinchThresholdsMm` and appends 捏合門檻 40／55 mm; the panel passes the constants.
+- `README.md`: the speed statement (under 5 frames per second), one sentence on the thresholds and the freeze, and the thresholds in the `?hands=debug` list.
+- `.kiro/specs/hand-manipulation/`: this task, the changes sections of `requirements.md` and `design.md`, and the manual-list item below.
+
+**Tests (R107):**
+- `tests/unit/hand-input.test.ts`: the constants (new names and values; the four frame constants no longer exist); `pinchStep` in time at 20, 33, 50, 100 and 200 ms spacing (2 frames at 10 fps, 4 at 30 fps, release in 2 and 3), the 26, 40 and 58 mm cases, one noisy frame, a lone frame after a long gap with a long loss window, the release threshold of 55 mm; `holdStep`.
+- `tests/unit/hand-fist.test.ts`: the same in time for the fist.
+- `tests/unit/hand-controller.test.ts`: engage and release at 10 and 30 fps through the controller; a single noisy frame; the freeze for a grab, an orbit, a hold, a zoom, a rotate and an explode (nothing is previewed while the hand opens, the confirmed release commits the frozen state); the resume after closing again (one re-base, the first offset is zero, nothing jumps); a tap that does not become a drag while the fingers open.
+- `tests/unit/hand-assemble.test.ts`: the latched snap with either fist opening (`commit(true)` on release, `joins` 1, the scene not asked meanwhile), the scene asked again after a resume, the offsets after a resume equal those before the freeze, a plain fist hold freezes too.
+- `tests/unit/hand-gate.test.ts`: the default gate of 5 (9 fps never locks, 4 fps does) and the thresholds in the debug line.
+- `tests/e2e/hand-control.spec.ts`: opening while the hand is still moving commits where the hand started to open (one undo step restores it).
+- Existing tests changed only where they encode the old numbers or frame counts: `hand-input.test.ts` (the constants tests; the `pinchStep` cases and the "keeps the grabbed target" case, whose 16 ms frame spacing and 2- and 3-frame counts no longer engage or release); `hand-controller.test.ts` (`FRAME_MS` 33 → 40, so that the new 80 ms engage takes the 3 closing frames the helpers hard-code and the 60 ms release takes 3; the frame-count constants it imported are computed locally from the new ms constants; a `frameMs` option and the `pinch` helper's closing frames come from the same computation); `hand-assemble.test.ts` and `hand-fist.test.ts` (the imported frame-count constants are computed locally from the new ms constants at 33 ms spacing, and three timestamps of spike cases were put in order); `hand-gate.test.ts` (an invalid-value case `5fps` became `7fps`, because 5 is now the default); `hand-control.spec.ts` (the slow-tracker case delays each answer by 300 ms instead of 150 ms, because the gate is 5 fps, and the CPU case also checks the thresholds in the debug line).
+- E2E while developing: `hand-control.spec.ts`. At the end: the full suite.
+
+**Dependencies:** Tasks 1–9.
+
+**Done when:** `npm run check` passes, the tests above are green, the full e2e suite passes, and the manual list has the new item.
+
+**Session facts:**
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
+- Never download MediaPipe models in tests. Every e2e spec that turns the camera on uses a fake worker (`installFakeHands` from `tests/e2e/fake-hands.ts`, or the own fake in `arm-try-on.spec.ts`); unit tests never load MediaPipe.
+- Open hand e2e pages with `handsUrl()`. Start each attempt with no hand in either slot, and compare debug counters with their values at the start of the successful attempt.
+- The e2e suite starts its own server on ports 5197/8797 and fails if they are taken. Never stop a process you did not start. No other Kiro session runs in this working tree; never run `git checkout`, `restore`, `stash`, `reset` or `clean`.
+- Run single spec files while developing (`npx playwright test tests/e2e/<name>.spec.ts`). The full suite (85 tests) takes about 15–21 minutes: run it once at the end, in the background, with its output in a file (`npx playwright test *> artifacts/local/e2e-hand-task10.log`), with a timeout of at least 30 minutes, and read the file when it finishes.
+- `npm run check` (type check + build + unit tests) must pass before the task is marked `[x]`; report the real result and numbers.
+- No real model calls in tests: unit tests use a fake `ModelProvider`, e2e tests route `/api/*`. Never run `verify:real` or `verify:edit`.
+- If a test is flaky, or a failure cannot be fixed within two or three attempts, stop and report instead of investigating for a long time. Never drop or simplify a feature on your own; report instead.
+- Do not commit; the reviewer commits (suggested message: `fix(hands): faster release, freeze on opening and wider pinch thresholds (spec hand-manipulation, task 10)`).
+- Files are LF. User-facing strings are Traditional Chinese; code, comments, documents and reports are English.
+
+---
+
 ## Cut order
 
 **Only the user decides whether anything is cut.** A Kiro session never drops or simplifies a feature on its own, also not to save time: it reports the problem, and the reviewer asks the user. The list below is only a reference for that decision.
@@ -469,5 +514,6 @@ The full map, with the parts of shared requirements, is design §12. In short:
 | 7 | 15, 18, 41, 43, 45, 47, 82, 89–95, 70, 72 |
 | 8 | 55, 82, 96–98, 70, 72 |
 | 9 | 54, 99, 100, 70, 72 |
+| 10 | 20, 40, 45, 47, 74, 89 (changed numbers), 101–107 |
 
 Requirements 65 and 67–69 apply to every task; 71 is this file. Requirements 56–62 are removed.

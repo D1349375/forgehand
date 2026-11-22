@@ -1,5 +1,5 @@
 import {
-  EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, FIST_ENABLED, FIST_ENGAGE_RATIO, HAND_LOST_MS, ON_TRACKING_LOSS, ROTATE_DEAD_ZONE_DEG, TRACKING_LOSS_MS,
+  EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, FIST_ENABLED, FIST_ENGAGE_RATIO, HAND_LOST_MS, ON_TRACKING_LOSS, PINCH_ENGAGE_M, ROTATE_DEAD_ZONE_DEG, TRACKING_LOSS_MS,
   TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX,
 } from './constants';
 import { decideFist, decidePinch } from './decide';
@@ -152,6 +152,8 @@ interface Joiner {
   ref: Point;
   /** The latest preview said the snap is ready. */
   ready: boolean;
+  /** Where the joining fist's palm was at the last frame that moved the assemble: a resume after a freeze measures from it. */
+  applied: Point | null;
 }
 
 interface Session {
@@ -170,6 +172,13 @@ interface Session {
   /** When the owner's hand first went missing during this session. */
   missingSince: number | null;
   joiner: Joiner | null;
+  /**
+   * A hand of the gesture has started to open (a pinch above PINCH_ENGAGE_M, a fist above FIST_ENGAGE_RATIO) and has not been released
+   * yet: no hand movement reaches the scene, so the preview stays where it was and the confirmed release commits it (requirement 101).
+   */
+  frozen: boolean;
+  /** Where the owner was at the last frame that moved an assemble; null until then. Used only to resume an assemble after a freeze. */
+  applied: Point | null;
 }
 
 /** What a running two-hand gesture has measured; the P1 tasks turn it into zoom, explode and rotate. */
@@ -332,13 +341,17 @@ export class HandController {
       const fistLike = this.fistEnabled && track.curl !== null && (track.curl < FIST_ENGAGE_RATIO || track.fist.engaged);
       // The pinch midpoint drifts while the fingers curl into a fist, so a fist-like frame leaves the dead zone of an engaged pinch
       // alone: the cursor stays where the pinch engaged, and a pinch that had not moved can still give way to the fist.
-      const cursor = fistLike && track.pinch.engaged && track.pinch.engagePoint ? track.pinch.engagePoint : track.cursor;
+      // The same holds while the fingers open: the cursor drift of the opening hand must not turn a tap into a drag (requirement 101).
+      const opening = this.isOpening(track, 'pinch');
+      const cursor = (fistLike || opening) && track.pinch.engaged && track.pinch.engagePoint ? track.pinch.engagePoint : track.cursor;
       const input: PinchInput = { kind: 'hand', cursor, pinchM: fistLike ? null : sample.pinchM };
       const step = pinchStep(track.pinch, input, now, this.lossMs ?? undefined);
       track.pinch = step.state;
       events[slot] = step.events;
       if (this.fistEnabled) {
-        fistEvents[slot] = this.stepFist(track, { kind: 'hand', palm: track.palm, curl: track.curl, pinchMoved: track.pinch.engaged && track.pinch.moved }, now);
+        // An opening fist keeps its palm where the fist engaged, so a fist that never moved cannot start to move while the fingers open.
+        const palm = this.isOpening(track, 'fist') && track.fist.engagePalm ? track.fist.engagePalm : track.palm;
+        fistEvents[slot] = this.stepFist(track, { kind: 'hand', palm, curl: track.curl, pinchMoved: track.pinch.engaged && track.pinch.moved }, now);
       }
     }
     for (const slot of [0, 1] as const) {
@@ -413,7 +426,7 @@ export class HandController {
           this.blocked[slot] = 'passive';
           return;
         case 'press':
-          this.session = { owner: slot, kind: 'press', scene: null, pressId: action.id, target: settled, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null };
+          this.session = { owner: slot, kind: 'press', scene: null, pressId: action.id, target: settled, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null, frozen: false, applied: null };
           return;
         case 'grab': {
           this.port.select(action.objectId, action.partId);
@@ -422,7 +435,7 @@ export class HandController {
             this.blocked[slot] = 'passive';
             return;
           }
-          this.session = { owner: slot, kind: 'grab', scene, target: settled, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null };
+          this.session = { owner: slot, kind: 'grab', scene, target: settled, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null, frozen: false, applied: null };
           return;
         }
         case 'orbit': {
@@ -431,7 +444,7 @@ export class HandController {
             this.blocked[slot] = 'passive';
             return;
           }
-          this.session = { owner: slot, kind: 'orbit', scene, target: EMPTY_TARGET, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null };
+          this.session = { owner: slot, kind: 'orbit', scene, target: EMPTY_TARGET, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null, frozen: false, applied: null };
           return;
         }
       }
@@ -457,7 +470,7 @@ export class HandController {
       startSpan: pairSpan(owner, joinerPoint), span: pairSpan(owner, joinerPoint),
       lastAngle: pairAngle(owner, joinerPoint), angle: 0, startAngle: pairAngle(owner, joinerPoint), rotated: 0,
       startValue, zoom: 1, explode: Math.round(startValue * 100) / 100,
-      assemble: null, ref: { ...this.tracks[slot].palm }, ready: false,
+      assemble: null, ref: { ...this.tracks[slot].palm }, ready: false, applied: null,
     };
     recordJoin(this.stats, gesture);
   }
@@ -556,7 +569,7 @@ export class HandController {
     this.port.activate?.(action.objectId);
     const scene = this.port.beginHold?.(action.objectId, action.hit) ?? null;
     if (!scene) return;
-    this.session = { owner: slot, kind: 'hold', scene, target, ref: track.palm, moved: false, turned: false, missingSince: null, joiner: null };
+    this.session = { owner: slot, kind: 'hold', scene, target, ref: track.palm, moved: false, turned: false, missingSince: null, joiner: null, frozen: false, applied: null };
   }
 
   /** Puts an engaged pinch of this hand away without committing anything: its own session ends, or it leaves the gesture it joined. */
@@ -565,7 +578,7 @@ export class HandController {
     const session = this.session;
     if (session?.owner === slot) this.finishQuietly();
     else if (session?.joiner?.slot === slot) this.leaveJoiner();
-    track.pinch = { ...track.pinch, engaged: false, streak: 0, engagePoint: null, moved: false };
+    track.pinch = { ...track.pinch, engaged: false, streak: 0, streakSince: null, engagePoint: null, moved: false };
     this.blocked[slot] = null;
   }
 
@@ -694,6 +707,8 @@ export class HandController {
     session.joiner = null;
     session.ref = this.ownerPoint(session);
     session.scene?.rebase();
+    // This re-base is the resume of a freeze that the joiner's opening caused; if the owner is opening too, the next frame freezes again.
+    session.frozen = false;
   }
 
   private noteGap(session: Session, now: number): void {
@@ -707,6 +722,8 @@ export class HandController {
   /** After the events of a frame: owner preview, joiner measurement, gap bookkeeping and the debug numbers. */
   private follow(now: number): void {
     const session = this.session;
+    // A hand that has started to open freezes the whole gesture: nothing below moves the scene until it closes again or is released.
+    const frozen = session ? this.updateFreeze(session) : false;
     if (session) {
       const owner = this.tracks[session.owner];
       if (!this.present[session.owner]) {
@@ -718,7 +735,7 @@ export class HandController {
         this.noteGap(session, now);
         // The owner moves once it has left the dead zone: its pinch for a grab or an orbit, its fist for a hold.
         const moved = session.kind === 'hold' ? owner.fist.moved : owner.pinch.moved;
-        if (!session.joiner && moved && session.scene) {
+        if (!frozen && !session.joiner && moved && session.scene) {
           const point = this.ownerPoint(session);
           const offset = { x: point.x - session.ref.x, y: point.y - session.ref.y };
           if (isEditing(session.kind)) {
@@ -733,7 +750,7 @@ export class HandController {
       }
     }
     const joined = this.session?.joiner;
-    if (this.session && joined?.assemble && this.present[joined.slot] && this.present[this.session.owner]) {
+    if (!frozen && this.session && joined?.assemble && this.present[joined.slot] && this.present[this.session.owner]) {
       this.stepAssemble(this.session, joined, now);
     }
     if (this.session && joined && this.present[joined.slot] && this.present[this.session.owner]) {
@@ -741,17 +758,17 @@ export class HandController {
       const to = this.joinerPoint(joined);
       const span = pairSpan(from, to);
       const angle = pairAngle(from, to);
-      if (span >= TWO_HAND_MIN_SPAN_PX && joined.span >= TWO_HAND_MIN_SPAN_PX) joined.angle += angleDelta(joined.lastAngle, angle);
+      if (!frozen && span >= TWO_HAND_MIN_SPAN_PX && joined.span >= TWO_HAND_MIN_SPAN_PX) joined.angle += angleDelta(joined.lastAngle, angle);
       joined.lastAngle = angle;
       joined.span = span;
-      if (joined.gesture === 'zoom' && this.session.kind === 'orbit') {
+      if (!frozen && joined.gesture === 'zoom' && this.session.kind === 'orbit') {
         const ratio = zoomRatio({ startSpan: joined.startSpan, span, deadZonePx: ZOOM_DEAD_ZONE_PX, minSpanPx: TWO_HAND_MIN_SPAN_PX });
         if (ratio !== joined.zoom) {
           joined.zoom = ratio;
           (this.session.scene as OrbitSession).zoom?.(ratio);
         }
       }
-      if (joined.gesture === 'rotate' && this.session.kind === 'grab') {
+      if (!frozen && joined.gesture === 'rotate' && this.session.kind === 'grab') {
         // The accumulated turn less the dead zone, so leaving the dead zone does not jump (requirement 96). The part's move holds still.
         const rotated = beyondDeadZone(joined.angle, ROTATE_DEAD_ZONE_DEG);
         if (rotated !== joined.rotated) {
@@ -767,7 +784,7 @@ export class HandController {
           }
         }
       }
-      if (this.session && joined.gesture === 'explode' && this.session.kind === 'hold') {
+      if (!frozen && this.session && joined.gesture === 'explode' && this.session.kind === 'hold') {
         const viewportHeight = this.port.viewportHeight?.() ?? 0;
         if (viewportHeight > 0) {
           const amount = explodeAmount({
@@ -790,6 +807,61 @@ export class HandController {
     }
   }
 
+  /** Whether a hand of this track is opening: an engaged pinch above PINCH_ENGAGE_M, or an engaged fist above FIST_ENGAGE_RATIO. */
+  private isOpening(track: Track, input: 'pinch' | 'fist'): boolean {
+    if (input === 'fist') return track.fist.engaged && track.curl !== null && track.curl > FIST_ENGAGE_RATIO;
+    return track.pinch.engaged && track.pinchM !== null && track.pinchM > PINCH_ENGAGE_M;
+  }
+
+  /**
+   * Whether the running gesture is frozen (requirement 101): its owner or its joiner is opening, so the hand movement of the opening
+   * is not applied and the preview stays. A hand that is missing leaves the state as it was. When every hand has closed again the
+   * gesture resumes from the frozen point (resume).
+   */
+  private updateFreeze(session: Session): boolean {
+    if (session.kind === 'press') return false;
+    const joiner = session.joiner;
+    if (!this.present[session.owner] || (joiner && !this.present[joiner.slot])) return session.frozen;
+    const opening = this.isOpening(this.tracks[session.owner], session.kind === 'hold' ? 'fist' : 'pinch')
+      || (joiner !== null && this.isOpening(this.tracks[joiner.slot], joiner.input));
+    if (opening) {
+      session.frozen = true;
+      return true;
+    }
+    if (session.frozen) {
+      session.frozen = false;
+      this.resume(session);
+    }
+    return false;
+  }
+
+  /**
+   * The hands have closed again before the release was confirmed: every measurement restarts from where the gesture froze, so nothing
+   * jumps (requirement 101). The scene is re-based like after a joiner leaves; an assemble has no re-base, so its two palm
+   * references move by what the palms travelled since the last frame that moved it.
+   */
+  private resume(session: Session): void {
+    const joiner = session.joiner;
+    const owner = this.ownerPoint(session);
+    if (joiner?.assemble) {
+      const shift = (ref: Point, from: Point, to: Point): Point => ({ x: ref.x + to.x - from.x, y: ref.y + to.y - from.y });
+      session.ref = shift(session.ref, session.applied ?? session.ref, owner);
+      joiner.ref = shift(joiner.ref, joiner.applied ?? joiner.ref, this.joinerPoint(joiner));
+      return;
+    }
+    session.scene?.rebase();
+    session.ref = { ...owner };
+    if (!joiner) return;
+    const to = this.joinerPoint(joiner);
+    joiner.startSpan = pairSpan(owner, to);
+    joiner.startAngle = pairAngle(owner, to);
+    joiner.lastAngle = joiner.startAngle;
+    joiner.angle = 0;
+    joiner.rotated = 0;
+    joiner.zoom = 1;
+    joiner.startValue = joiner.explode;
+  }
+
   /**
    * One frame of a running assemble: both fists move their assemblies (the owner does not freeze, unlike the other two-hand gestures),
    * and the scene tells whether the faces snap. A palm that has not left its dead zone offsets nothing.
@@ -801,6 +873,8 @@ export class HandController {
     const ownerOffset = owner.fist.moved ? { x: owner.palm.x - session.ref.x, y: owner.palm.y - session.ref.y } : { x: 0, y: 0 };
     const joinerOffset = second.fist.moved ? { x: second.palm.x - joiner.ref.x, y: second.palm.y - joiner.ref.y } : { x: 0, y: 0 };
     const result = assemble.preview(ownerOffset, joinerOffset, now);
+    session.applied = { ...owner.palm };
+    joiner.applied = { ...second.palm };
     if (!result) {
       // The scene changed under one of the holds: both objects go back, and both fists stay inert until they open.
       const slot = joiner.slot;

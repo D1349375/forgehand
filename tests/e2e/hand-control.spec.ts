@@ -288,7 +288,8 @@ test.describe('T3 both hands, the hidden camera image and the status line', () =
 test.describe('T3 tracking speed', () => {
   test('a slow tracker locks hand control with the 太慢 line and locked skeletons', async ({ context, page }) => {
     // Registered after the default fake, so this one answers the worker URL.
-    await installFakeHands(context, { replyDelayMs: 150 });
+    // 300 ms per answer is about 3 frames per second, below the speed gate of 5 (it was 150 ms against a gate of 10 before Task 10).
+    await installFakeHands(context, { replyDelayMs: 300 });
     await page.goto(handsUrl({ minFps: null }));
     await openCamera(page);
     const hand = await viewportCentre(page);
@@ -309,6 +310,7 @@ test.describe('T3 tracking speed', () => {
     await expect(page.getByTestId('hand-debug')).toContainText('CPU', { timeout: 45_000 });
     await expect(page.getByTestId('hand-debug')).toContainText('1 隻手', { timeout: 45_000 });
     await expect(page.getByTestId('hand-debug')).toContainText('速度門檻 0 幀');
+    await expect(page.getByTestId('hand-debug')).toContainText('捏合門檻 40／55 mm');
     // The delegate is not a gate input: a CPU tracker with the speed gate off stays tracked and is never called too slow.
     await expect(page.getByTestId('hand-overlay')).toHaveAttribute('data-hand-state', 'tracked');
     await expect(page.locator('[data-testid="hand-status"][data-state="slow"]')).toHaveCount(0);
@@ -632,6 +634,41 @@ test.describe('T5 pinch-move, orbit and the rest of the P0 core', () => {
       release();
     }
     expect(calls).toEqual(['agent']);
+  });
+
+  test('opening the hand while it is still moving freezes the part: the committed position is where the hand started to open (Task 10)', async ({ page }) => {
+    const calls = modelCalls(page);
+    await demoAndCamera(page);
+    const objectId = (await sceneCanvas(page).getAttribute('data-active-object-id'))!;
+    const before = await modelRows(page);
+    const housing = await pointOn(page, 'housing');
+    const batteryBefore = (await projectOf(page, 'battery'))!;
+    const dragged = await dragBy(page, housing, { key: `${objectId}:housing`, hover: 'hover', state: 'grab' }, { x: 90, y: 0 },
+      async () => (await projectOf(page, 'battery'))!.x > batteryBefore.x + 30);
+    // Let the preview settle where the hand stands, so that "where the hand started to open" is one position.
+    let settled = (await projectOf(page, 'battery'))!.x;
+    await expect.poll(async () => {
+      await someFrames(page, 4);
+      const x = (await projectOf(page, 'battery'))!.x;
+      const change = Math.abs(x - settled);
+      settled = x;
+      return change;
+    }, { timeout: 30_000 }).toBeLessThan(0.5);
+    // The fingers start to open (45 mm, above the 40 mm engage threshold and below the 55 mm release threshold) while the hand travels on.
+    const away = shift(dragged, 120);
+    await showHand(page, away, 0.045);
+    await someFrames(page, 10);
+    expect(Math.abs((await projectOf(page, 'battery'))!.x - settled)).toBeLessThan(1);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'grab');
+    expect(await modelRows(page)).toEqual(before);
+    // Fully open: the release is confirmed and commits the frozen state, not the place the hand has travelled to.
+    await showHand(page, away, OPEN);
+    await expect.poll(async () => distance((await rowOf(page, 'housing'))[1], before.find(entry => entry[0] === 'housing')![1]), { timeout: 45_000 }).toBeGreaterThan(0.02);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'none', { timeout: 20_000 });
+    expect(Math.abs((await projectOf(page, 'battery'))!.x - settled)).toBeLessThan(2);
+    await undoButton(page).click();
+    await expect.poll(() => modelRows(page)).toEqual(before);
+    expect(calls).toEqual([]);
   });
 });
 

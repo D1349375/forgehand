@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DRAG_DEAD_ZONE_PX, FIST_ENGAGE_FRAMES, FIST_ENGAGE_RATIO, FIST_RELEASE_FRAMES, FIST_RELEASE_RATIO, HAND_LOST_MS, TRACKING_LOSS_MS,
+  DRAG_DEAD_ZONE_PX, FIST_ENGAGE_MS, FIST_ENGAGE_RATIO, FIST_RELEASE_MS, FIST_RELEASE_RATIO, HAND_LOST_MS, MIN_GESTURE_FRAMES, TRACKING_LOSS_MS,
 } from '../../src/hands/constants';
 import { curlRatio, fistStep, initialFistState, type FistEvent, type FistInput, type FistState } from '../../src/hands/fist';
 import type { Point } from '../../src/hands/types';
@@ -10,6 +10,10 @@ const OPEN = 1.8;
 const BETWEEN = (FIST_ENGAGE_RATIO + FIST_RELEASE_RATIO) / 2;
 const CLOSED = 0.65;
 const palm: Point = { x: 400, y: 300 };
+/** Frame spacing of `frames` (33 ms, about 30 fps), and the frames that spacing needs to engage and to release: the first qualifying frame starts the clock. */
+const FRAME_MS = 33;
+const FIST_ENGAGE_FRAMES = Math.ceil(FIST_ENGAGE_MS / FRAME_MS) + 1;
+const FIST_RELEASE_FRAMES = Math.ceil(FIST_RELEASE_MS / FRAME_MS) + 1;
 
 describe('curlRatio', () => {
   const world = (options: { pinchM: number; fist?: boolean }) => syntheticHand({ cursor: { x: 0.5, y: 0.5 }, ...options }).world;
@@ -60,7 +64,50 @@ const types = (events: FistEvent[]) => events.map(event => event.type);
 const frames = (value: number, count: number, from: number): Array<[number, number]> => Array.from({ length: count }, (_, index) => [value, from + index * 33]);
 
 describe('fistStep', () => {
-  it('engages after FIST_ENGAGE_FRAMES consecutive frames below the engage ratio, not before', () => {
+  const spaced = (value: number, count: number, spacing: number, from = 0): Array<[number, number]> => Array.from({ length: count }, (_, index) => [value, from + index * spacing]);
+
+  it('engages after FIST_ENGAGE_MS from the first qualifying frame, whatever the frame rate, and never in fewer than MIN_GESTURE_FRAMES frames', () => {
+    for (const spacing of [20, 33, 50, 100, 200]) {
+      const log = run(spaced(CLOSED, 14, spacing)).log;
+      const at = log.findIndex(events => types(events).includes('fist-engage'));
+      expect(at).toBeGreaterThanOrEqual(MIN_GESTURE_FRAMES - 1);
+      expect(at * spacing).toBeGreaterThanOrEqual(FIST_ENGAGE_MS);
+      expect((at - 1) * spacing).toBeLessThan(FIST_ENGAGE_MS);
+    }
+    // 10 frames per second: three frames (200 ms); 30 frames per second: six (165 ms).
+    expect(run(spaced(CLOSED, 2, 100)).state.engaged).toBe(false);
+    expect(run(spaced(CLOSED, 3, 100)).state.engaged).toBe(true);
+    expect(run(spaced(CLOSED, 5, 33)).state.engaged).toBe(false);
+    expect(run(spaced(CLOSED, 6, 33)).state.engaged).toBe(true);
+  });
+
+  it('releases after FIST_RELEASE_MS from the first qualifying frame, whatever the frame rate', () => {
+    const engaged = run(spaced(CLOSED, 3, 100)).state;
+    // 10 frames per second: two frames; 30 frames per second: three.
+    expect(run(spaced(OPEN, 1, 100, 300), engaged).state.engaged).toBe(true);
+    expect(run(spaced(OPEN, 2, 100, 300), engaged).events).toEqual([{ type: 'fist-release', moved: false }]);
+    expect(run(spaced(OPEN, 2, 33, 300), engaged).state.engaged).toBe(true);
+    expect(run(spaced(OPEN, 3, 33, 300), engaged).events).toEqual([{ type: 'fist-release', moved: false }]);
+  });
+
+  it('a single noisy frame never engages or releases, at any frame rate', () => {
+    for (const spacing of [33, 100, 200]) {
+      const noisy = run([[CLOSED, 0], [OPEN, spacing], [CLOSED, 2 * spacing], [OPEN, 3 * spacing], [CLOSED, 4 * spacing], [OPEN, 5 * spacing]]);
+      expect(noisy.state.engaged).toBe(false);
+      const engaged = run(spaced(CLOSED, 8, spacing)).state;
+      const from = 8 * spacing;
+      const flicker = run([[OPEN, from], [CLOSED, from + spacing], [OPEN, from + 2 * spacing], [CLOSED, from + 3 * spacing], [OPEN, from + 4 * spacing]], engaged);
+      expect(flicker.state.engaged).toBe(true);
+      expect(flicker.events).toEqual([]);
+    }
+  });
+
+  it('a long gap inside a long loss window does not make one frame enough: the minimum number of frames still holds', () => {
+    expect(run([[CLOSED, 0], ['tick', 1000]], initialFistState(), 5000).state.engaged).toBe(false);
+    expect(run([[CLOSED, 0], [CLOSED, 1000]], initialFistState(), 5000).state.engaged).toBe(true);
+  });
+
+  it('engages after FIST_ENGAGE_MS of consecutive frames below the engage ratio (6 frames 33 ms apart), not before', () => {
     const early = run(frames(CLOSED, FIST_ENGAGE_FRAMES - 1, 0));
     expect(early.state.engaged).toBe(false);
     expect(early.events).toEqual([]);
@@ -76,7 +123,7 @@ describe('fistStep', () => {
   });
 
   it('ignores a one-frame spike: the streak restarts', () => {
-    const spiky = run([...frames(CLOSED, FIST_ENGAGE_FRAMES - 1, 0), [OPEN, 100], ...frames(CLOSED, FIST_ENGAGE_FRAMES - 1, 133)]);
+    const spiky = run([...frames(CLOSED, FIST_ENGAGE_FRAMES - 1, 0), [OPEN, 200], ...frames(CLOSED, FIST_ENGAGE_FRAMES - 1, 233)]);
     expect(spiky.state.engaged).toBe(false);
     expect(spiky.events).toEqual([]);
   });
@@ -90,7 +137,7 @@ describe('fistStep', () => {
     expect(held.events).toEqual([]);
   });
 
-  it('releases after FIST_RELEASE_FRAMES frames above the release ratio, and reports whether it moved', () => {
+  it('releases after FIST_RELEASE_MS of frames above the release ratio (3 frames 33 ms apart), and reports whether it moved', () => {
     const engaged = run(frames(CLOSED, FIST_ENGAGE_FRAMES, 0)).state;
     const early = run(frames(OPEN, FIST_RELEASE_FRAMES - 1, 200), engaged);
     expect(early.state.engaged).toBe(true);
@@ -111,7 +158,7 @@ describe('fistStep', () => {
   it('a frame without a curl ratio (no world landmarks) never engages and resets the streak', () => {
     const none = run(Array.from({ length: 10 }, (_, index): [FistInput, number] => [{ kind: 'hand', palm, curl: null, pinchMoved: false }, index * 33]));
     expect(none.state.engaged).toBe(false);
-    const broken = run([...frames(CLOSED, FIST_ENGAGE_FRAMES - 1, 0), [{ kind: 'hand', palm, curl: null, pinchMoved: false }, 100], ...frames(CLOSED, FIST_ENGAGE_FRAMES - 1, 133)]);
+    const broken = run([...frames(CLOSED, FIST_ENGAGE_FRAMES - 1, 0), [{ kind: 'hand', palm, curl: null, pinchMoved: false }, 200], ...frames(CLOSED, FIST_ENGAGE_FRAMES - 1, 233)]);
     expect(broken.state.engaged).toBe(false);
   });
 

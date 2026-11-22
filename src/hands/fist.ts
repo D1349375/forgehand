@@ -1,7 +1,8 @@
 import type { Landmark } from '../try-on/arm-pose';
 import {
-  DRAG_DEAD_ZONE_PX, FIST_ENGAGE_FRAMES, FIST_ENGAGE_RATIO, FIST_RELEASE_FRAMES, FIST_RELEASE_RATIO, HAND_LOST_MS, TRACKING_LOSS_MS,
+  DRAG_DEAD_ZONE_PX, FIST_ENGAGE_MS, FIST_ENGAGE_RATIO, FIST_RELEASE_MS, FIST_RELEASE_RATIO, HAND_LOST_MS, TRACKING_LOSS_MS,
 } from './constants';
+import { holdStep } from './pinch';
 import type { Point } from './types';
 
 const WRIST = 0;
@@ -39,6 +40,8 @@ export interface FistState {
   engaged: boolean;
   /** Consecutive tracking frames beyond the threshold that would change `engaged`. */
   streak: number;
+  /** When the first frame of the current streak arrived; null while there is no streak. */
+  streakSince: number | null;
   /** When a hand was last seen; null before the first hand and after the hand was lost. */
   handSeenAt: number | null;
   /** The palm centre when the fist engaged. */
@@ -58,13 +61,13 @@ export type FistEvent =
 export type FistInput = { kind: 'hand'; palm: Point; curl: number | null; pinchMoved: boolean } | { kind: 'none' } | { kind: 'tick' };
 
 export function initialFistState(): FistState {
-  return { engaged: false, streak: 0, handSeenAt: null, engagePalm: null, moved: false };
+  return { engaged: false, streak: 0, streakSince: null, handSeenAt: null, engagePalm: null, moved: false };
 }
 
 /**
- * The fist state machine, in the pattern of `pinchStep`. Below FIST_ENGAGE_RATIO for FIST_ENGAGE_FRAMES consecutive tracking
- * frames engages, above FIST_RELEASE_RATIO for FIST_RELEASE_FRAMES releases, nothing changes in between, and a frame without a curl
- * ratio resets the streak and never engages. A hand whose pinch has left its dead zone cannot engage (requirement 90). Only
+ * The fist state machine, in the pattern of `pinchStep`. Below FIST_ENGAGE_RATIO for FIST_ENGAGE_MS (measured from the first
+ * qualifying tracking frame, and at least MIN_GESTURE_FRAMES frames in a row) engages, above FIST_RELEASE_RATIO for FIST_RELEASE_MS
+ * releases, nothing changes in between, and a frame without a curl ratio resets the streak and never engages. A hand whose pinch has left its dead zone cannot engage (requirement 90). Only
  * tracking frames count; `tick` only advances time. `palm` should be the filtered palm centre. A hand missing for the time-out
  * (`lossMs` when given, else TRACKING_LOSS_MS while engaged and HAND_LOST_MS otherwise) resets the state; `fist-lost` is
  * reported only when the fist was engaged.
@@ -79,23 +82,29 @@ export function fistStep(state: FistState, input: FistInput, now: number, lossMs
   if (input.kind === 'tick') return { state: next, events };
   if (input.kind === 'none') {
     next.streak = 0;
+    next.streakSince = null;
     return { state: next, events };
   }
   next.handSeenAt = now;
   const { palm, curl } = input;
   if (curl === null) {
     next.streak = 0;
+    next.streakSince = null;
   } else if (!next.engaged) {
-    next.streak = curl < FIST_ENGAGE_RATIO && !input.pinchMoved ? next.streak + 1 : 0;
-    if (next.streak >= FIST_ENGAGE_FRAMES) {
-      next = { ...next, engaged: true, streak: 0, engagePalm: palm, moved: false };
+    const hold = holdStep(next.streak, next.streakSince, curl < FIST_ENGAGE_RATIO && !input.pinchMoved, now, FIST_ENGAGE_MS);
+    next.streak = hold.streak;
+    next.streakSince = hold.since;
+    if (hold.done) {
+      next = { ...next, engaged: true, streak: 0, streakSince: null, engagePalm: palm, moved: false };
       events.push({ type: 'fist-engage', palm });
     }
   } else {
-    next.streak = curl > FIST_RELEASE_RATIO ? next.streak + 1 : 0;
-    if (next.streak >= FIST_RELEASE_FRAMES) {
+    const hold = holdStep(next.streak, next.streakSince, curl > FIST_RELEASE_RATIO, now, FIST_RELEASE_MS);
+    next.streak = hold.streak;
+    next.streakSince = hold.since;
+    if (hold.done) {
       events.push({ type: 'fist-release', moved: next.moved });
-      next = { ...next, engaged: false, streak: 0, engagePalm: null, moved: false };
+      next = { ...next, engaged: false, streak: 0, streakSince: null, engagePalm: null, moved: false };
     }
   }
   // The frame that releases cannot also start a move: the fingers opening shifts the palm.

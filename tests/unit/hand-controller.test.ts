@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  CANCEL_NOTICE_MS, DRAG_DEAD_ZONE_PX, EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, FIST_ENGAGE_FRAMES, FIST_RELEASE_FRAMES, HAND_LOST_MS, ROTATE_DEAD_ZONE_DEG,
+  CANCEL_NOTICE_MS, DRAG_DEAD_ZONE_PX, EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, FIST_ENGAGE_MS, FIST_RELEASE_MS, HAND_LOST_MS, PINCH_ENGAGE_MS, PINCH_RELEASE_MS, ROTATE_DEAD_ZONE_DEG,
   TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX,
 } from '../../src/hands/constants';
 import { HandController, type GrabSession, type HandPort, type HoldSession, type OrbitSession } from '../../src/hands/controller';
@@ -21,7 +21,11 @@ const VIEW = { left: 0, top: 0, width: 1000, height: 800 };
 const VIDEO = { width: 1000, height: 800 };
 const OPEN = 0.08;
 const CLOSED = 0.015;
-const FRAME_MS = 33;
+const FRAME_MS = 40;
+/** Frames at FRAME_MS spacing that a fist needs to engage and to release. The first qualifying frame starts the clock, so one more than the time spans. */
+const FIST_ENGAGE_FRAMES = Math.ceil(FIST_ENGAGE_MS / FRAME_MS) + 1;
+const FIST_RELEASE_FRAMES = Math.ceil(FIST_RELEASE_MS / FRAME_MS) + 1;
+const PINCH_ENGAGE_FRAMES = Math.ceil(PINCH_ENGAGE_MS / FRAME_MS) + 1;
 const FULL: Gate = { level: 'full', reason: null };
 const VIEW_ONLY: Gate = { level: 'view-only', reason: 'exploded' };
 const OFF: Gate = { level: 'off', reason: 'slow' };
@@ -37,7 +41,7 @@ const PALM_DY = (() => { const sample = hand(500, 400); return sample.palm.y - s
 
 /**
  * A hand with its palm centre at client point (x, y): a fist, or an open hand (pinching when closed). The palm stays where it is while
- * the fingers curl, so a hand can go from open to pinching to fist without moving. 	humbIn puts the thumb on the index finger of a fist
+ * the fingers curl, so a hand can go from open to pinching to fist without moving. `thumbIn` puts the thumb on the index finger of a fist
  * (a real fist does), so it has a short thumb-index distance.
  */
 function palmHand(x: number, y: number, mode: 'open' | 'pinch' | 'fist', thumbIn = false): HandSample {
@@ -90,7 +94,7 @@ class FakeOrbit implements OrbitSession {
 }
 
 /** A controller, a fake port that records every call, and a clock that advances one frame at a time. */
-function makeRig(options: { join?: JoinRule; objectCount?: number; pick?: (point: Point) => Target; lossMs?: number; fistEnabled?: boolean } = {}) {
+function makeRig(options: { join?: JoinRule; objectCount?: number; pick?: (point: Point) => Target; lossMs?: number; fistEnabled?: boolean; frameMs?: number } = {}) {
   const log: string[] = [];
   const grabs: FakeGrab[] = [];
   const holds: FakeHold[] = [];
@@ -143,7 +147,7 @@ function makeRig(options: { join?: JoinRule; objectCount?: number; pick?: (point
   /** `hands`: [x, y, closed?] per hand (the pinch midpoint at x, y), or a ready sample (`palmHand`), in the order they are handed to the controller. */
   const run = (hands: ReadonlyArray<readonly [number, number, boolean?] | HandSample>, frames = 1) => {
     for (let index = 0; index < frames; index++) {
-      now += FRAME_MS;
+      now += options.frameMs ?? FRAME_MS;
       last = controller.frame(hands.map(entry => (Array.isArray(entry) ? hand(entry[0], entry[1], entry[2]) : entry as HandSample)), now);
     }
     return last;
@@ -157,10 +161,10 @@ type Rig = ReturnType<typeof makeRig>;
 /** Open hands long enough for the hovered target to settle, then a closed pinch long enough to engage. */
 function pinch(rig: Rig, hands: ReadonlyArray<readonly [number, number]>, closed: readonly boolean[] = hands.map(() => true)) {
   rig.run(hands.map(([x, y]) => [x, y, false] as const), 6);
-  return rig.run(hands.map(([x, y], index) => [x, y, closed[index] ?? false] as const), 3);
+  return rig.run(hands.map(([x, y], index) => [x, y, closed[index] ?? false] as const), PINCH_ENGAGE_FRAMES);
 }
 
-/** The second hand moves in small steps from rom to 	o while the first stays put (a hand that jumps farther than HAND_MATCH_PX in one frame is a new hand). */
+/** The second hand moves in small steps from `from` to `to` while the first stays put (a hand that jumps farther than HAND_MATCH_PX in one frame is a new hand). */
 function glide(rig: Rig, owner: readonly [number, number], from: readonly [number, number], to: readonly [number, number], steps: number) {
   for (let step = 1; step <= steps; step++) {
     const k = step / steps;
@@ -1851,5 +1855,275 @@ describe('frame states', () => {
     rig.run([[200, 300, true]], 3);
     states.push(rig.view(0)!.state);
     expect(states).toEqual(['tracked', 'hover', 'grab']);
+  });
+});
+
+// ---- Task 10: release timing, thresholds and the freeze while a hand opens ----------------------------------------------------------
+
+describe('HandController, release timing and the freeze while a hand opens (Task 10)', () => {
+  /** The pinch distances of the webcam test: closed 26 mm, half open 58 mm, open 100 mm; and 45 mm, between the engage (40) and the release (55) threshold. */
+  const CLOSED_MM = 0.026;
+  const OPENING_MM = 0.045;
+  const WIDE_OPEN_MM = 0.08;
+  const pinchAt = (x: number, y: number, pinchM: number): HandSample => ({ ...hand(x, y), pinchM });
+  /** A fist whose fingers have begun to open: the curl ratio is above the engage ratio and below the release ratio. */
+  const halfOpenFist = (x: number, y: number): HandSample => ({ ...palmHand(x, y, 'fist'), curl: 1.1 });
+
+  it('engages in 2 frames at 10 frames per second and in 4 at 30, the pinch of 26 mm engages and the half-open 58 mm does not', () => {
+    for (const [frameMs, frames] of [[100, 2], [33, 4]] as const) {
+      const rig = makeRig({ frameMs });
+      rig.run([[200, 300]], Math.ceil(300 / frameMs));
+      rig.run([pinchAt(200, 300, 0.058)], 10);
+      expect(rig.log).toEqual([]);
+      rig.run([pinchAt(200, 300, CLOSED_MM)], frames - 1);
+      expect(rig.log).toEqual([]);
+      rig.run([pinchAt(200, 300, CLOSED_MM)], 1);
+      expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1']);
+    }
+  });
+
+  it('never engages on one noisy frame, and never releases on one', () => {
+    const rig = makeRig({ frameMs: 100 });
+    rig.run([[200, 300]], 4);
+    rig.run([pinchAt(200, 300, CLOSED_MM)], 1);
+    rig.run([[200, 300]], 1);
+    rig.run([pinchAt(200, 300, CLOSED_MM)], 1);
+    rig.run([[200, 300]], 1);
+    expect(rig.log).toEqual([]);
+    rig.run([pinchAt(200, 300, CLOSED_MM)], 2);
+    expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1']);
+    rig.run([pinchAt(330, 300, CLOSED_MM)], 12);
+    const grab = rig.grabs[0]!;
+    rig.run([pinchAt(330, 300, WIDE_OPEN_MM)], 1);
+    rig.run([pinchAt(330, 300, CLOSED_MM)], 1);
+    rig.run([pinchAt(330, 300, WIDE_OPEN_MM)], 1);
+    rig.run([pinchAt(330, 300, CLOSED_MM)], 3);
+    expect(grab.commits).toBe(0);
+    expect(grab.cancels).toBe(0);
+    expect(rig.view(0)!.state).toBe('grab');
+  });
+
+  it('releases in 2 frames at 10 frames per second and in 3 at 30 frames per second', () => {
+    for (const [frameMs, frames] of [[100, 2], [33, 3]] as const) {
+      expect(Math.ceil(PINCH_RELEASE_MS / frameMs) + 1).toBe(frames);
+      const rig = makeRig({ frameMs });
+      rig.run([[200, 300]], Math.ceil(300 / frameMs));
+      rig.run([pinchAt(200, 300, CLOSED_MM)], 8);
+      rig.run([pinchAt(330, 300, CLOSED_MM)], Math.ceil(2000 / frameMs));
+      const grab = rig.grabs[0]!;
+      rig.run([pinchAt(330, 300, WIDE_OPEN_MM)], frames - 1);
+      expect(grab.commits).toBe(0);
+      rig.run([pinchAt(330, 300, WIDE_OPEN_MM)], 1);
+      expect(grab.commits).toBe(1);
+    }
+  });
+
+  it('freezes the part while the hand opens: it does not move, and the confirmed release commits the frozen state', () => {
+    const rig = makeRig();
+    pinch(rig, [[200, 300]]);
+    rig.run([[320, 300, true]], 40);
+    const grab = rig.grabs[0]!;
+    const count = grab.previews.length;
+    const frozen = grab.previews.at(-1)!;
+    expect(frozen.x).toBeCloseTo(120, 0);
+    // The fingers start to open (45 mm, above the engage threshold, below the release threshold) and the hand keeps travelling.
+    rig.run([pinchAt(400, 300, OPENING_MM)], 12);
+    expect(grab.previews).toHaveLength(count);
+    expect(grab.commits).toBe(0);
+    expect(rig.view(0)!.state).toBe('grab');
+    // Fully open: the release is confirmed after PINCH_RELEASE_MS and commits where the hand started to open.
+    rig.run([pinchAt(480, 300, WIDE_OPEN_MM)], 1);
+    expect(grab.commits).toBe(0);
+    rig.run([pinchAt(520, 300, WIDE_OPEN_MM)], 2);
+    expect(grab.commits).toBe(1);
+    expect(grab.cancels).toBe(0);
+    expect(grab.previews).toHaveLength(count);
+    expect(grab.previews.at(-1)).toEqual(frozen);
+    expect(rig.controller.stats).toMatchObject({ drags: 1, commits: 1, cancels: 0 });
+  });
+
+  it('resumes from the frozen point when the hand closes again before the release: the first preview is zero, nothing jumps', () => {
+    const rig = makeRig();
+    pinch(rig, [[200, 300]]);
+    rig.run([[320, 300, true]], 40);
+    const grab = rig.grabs[0]!;
+    const count = grab.previews.length;
+    const frozen = grab.previews.at(-1)!;
+    rig.run([pinchAt(300, 360, OPENING_MM)], 6);
+    rig.run([pinchAt(420, 360, OPENING_MM)], 12);
+    expect(grab.previews).toHaveLength(count);
+    expect(grab.rebases).toBe(0);
+    // One wide-open frame is not a release; closing again continues the same grab.
+    rig.run([pinchAt(420, 360, WIDE_OPEN_MM)], 1);
+    rig.run([pinchAt(420, 360, CLOSED_MM)], 1);
+    expect(grab.commits).toBe(0);
+    expect(grab.rebases).toBe(1);
+    expect(grab.previews).toHaveLength(count + 1);
+    expect(grab.previews[count]).toEqual({ x: 0, y: 0 });
+    expect(frozen.x).toBeCloseTo(120, 0);
+    // From there the part follows the hand again, relative to the re-based preview.
+    rig.run([pinchAt(480, 360, CLOSED_MM)], 40);
+    expect(grab.previews.at(-1)!.x).toBeCloseTo(60, 0);
+    expect(grab.previews.at(-1)!.y).toBeCloseTo(0, 0);
+    rig.run([pinchAt(480, 360, WIDE_OPEN_MM)], 3);
+    expect(grab.commits).toBe(1);
+  });
+
+  it('does not turn a tap into a drag while the fingers open', () => {
+    const rig = makeRig();
+    pinch(rig, [[200, 300]]);
+    rig.run([pinchAt(260, 330, OPENING_MM)], 6);
+    rig.run([pinchAt(280, 340, WIDE_OPEN_MM)], 3);
+    const grab = rig.grabs[0]!;
+    expect(grab.previews).toEqual([]);
+    expect(grab.commits).toBe(0);
+    expect(grab.cancels).toBe(1);
+    expect(rig.controller.stats.drags).toBe(0);
+  });
+
+  it('freezes the view turn while the hand that turns it opens, and ends the orbit on the release', () => {
+    const rig = makeRig();
+    pinch(rig, [[800, 300]]);
+    rig.run([[700, 300, true]], 30);
+    const orbit = rig.orbits[0]!;
+    const count = orbit.previews.length;
+    expect(count).toBeGreaterThan(0);
+    rig.run([pinchAt(600, 300, OPENING_MM)], 10);
+    expect(orbit.previews).toHaveLength(count);
+    rig.run([pinchAt(560, 300, WIDE_OPEN_MM)], 3);
+    expect(orbit.ends).toBe(1);
+    expect(orbit.previews).toHaveLength(count);
+  });
+
+  it('freezes the object while the fist opens, and the confirmed release commits it where it was', () => {
+    const rig = makeRig();
+    rig.run([palmHand(300, 400, 'open')], 8);
+    rig.run([palmHand(300, 400, 'fist')], FIST_ENGAGE_FRAMES);
+    expect(rig.holds).toHaveLength(1);
+    rig.run([palmHand(380, 400, 'fist')], 30);
+    const hold = rig.holds[0]!;
+    const count = hold.previews.length;
+    const frozen = hold.previews.at(-1)!;
+    expect(frozen.x).toBeCloseTo(80, 0);
+    rig.run([halfOpenFist(440, 400)], 6);
+    rig.run([halfOpenFist(480, 400)], 6);
+    expect(hold.previews).toHaveLength(count);
+    expect(hold.commits).toBe(0);
+    rig.run([palmHand(500, 400, 'open')], FIST_RELEASE_FRAMES);
+    expect(hold.commits).toBe(1);
+    expect(hold.previews).toHaveLength(count);
+    expect(hold.previews.at(-1)).toEqual(frozen);
+  });
+
+  it('resumes a fist that closes again with a re-base and no jump', () => {
+    const rig = makeRig();
+    rig.run([palmHand(300, 400, 'open')], 8);
+    rig.run([palmHand(300, 400, 'fist')], FIST_ENGAGE_FRAMES);
+    rig.run([palmHand(380, 400, 'fist')], 30);
+    const hold = rig.holds[0]!;
+    const count = hold.previews.length;
+    rig.run([halfOpenFist(430, 400)], 6);
+    rig.run([halfOpenFist(470, 400)], 6);
+    rig.run([palmHand(470, 400, 'fist')], 2);
+    expect(hold.rebases).toBe(1);
+    expect(hold.previews[count]).toEqual({ x: 0, y: 0 });
+    expect(hold.commits).toBe(0);
+  });
+
+  describe('two-hand gestures', () => {
+    /** The second hand moves in steps of 25 px from `from` to `to`, with the owner holding still (a jump beyond HAND_MATCH_PX counts as a new hand). */
+    function slide(rig: Rig, owner: HandSample | readonly [number, number, boolean], from: [number, number], to: [number, number], pinchM: number) {
+      const steps = Math.max(1, Math.round(Math.hypot(to[0] - from[0], to[1] - from[1]) / 25));
+      for (let step = 1; step <= steps; step++) {
+        const k = step / steps;
+        rig.run([owner, pinchAt(from[0] + (to[0] - from[0]) * k, from[1] + (to[1] - from[1]) * k, pinchM)], 2);
+      }
+    }
+
+    it('freezes a two-hand zoom while either pinch opens, and resumes from the span it froze at', () => {
+      const rig = makeRig({ pick: point => (point.x < 500 ? EMPTY_TARGET : part('o1', 'p2', 'Arm')) });
+      const owner: [number, number, boolean] = [330, 300, true];
+      rig.run([[200, 300, false], [700, 300, false]], 6);
+      rig.run([[200, 300, true], [700, 300, false]], PINCH_ENGAGE_FRAMES);
+      rig.run([[230, 300, true], [700, 300, false]], 6);
+      rig.run([owner, [700, 300, false]], 30);
+      rig.run([owner, [700, 300, true]], PINCH_ENGAGE_FRAMES);
+      const orbit = rig.orbits[0]!;
+      expect(rig.last.gesture).toBe('zoom');
+      slide(rig, owner, [700, 300], [800, 300], CLOSED_MM);
+      rig.run([owner, [800, 300, true]], 10);
+      const zooms = orbit.zooms.length;
+      expect(zooms).toBeGreaterThan(0);
+      // The joining hand opens while it travels out: the view does not zoom any further.
+      slide(rig, owner, [800, 300], [950, 300], OPENING_MM);
+      rig.run([owner, pinchAt(950, 300, OPENING_MM)], 6);
+      expect(orbit.zooms).toHaveLength(zooms);
+      expect(rig.last.gesture).toBe('zoom');
+      // It closes again at the wide span: a re-base, and no zoom jump.
+      rig.run([owner, [950, 300, true]], 3);
+      expect(orbit.rebases).toBe(1);
+      expect(orbit.zooms).toHaveLength(zooms);
+      const startSpan = rig.controller.twoHand!.startSpan;
+      expect(startSpan).toBeCloseTo(pairSpan(rig.view(0)!.cursor, rig.view(1)!.cursor), 0);
+      // Coming back in zooms relative to the re-based span.
+      slide(rig, owner, [950, 300], [800, 300], CLOSED_MM);
+      rig.run([owner, [800, 300, true]], 30);
+      expect(orbit.zooms.length).toBeGreaterThan(zooms);
+      expect(orbit.zooms.at(-1)!).toBeCloseTo(startSpan / (rig.controller.twoHand!.span + ZOOM_DEAD_ZONE_PX), 6);
+      expect(orbit.zooms.at(-1)!).toBeGreaterThan(1);
+    });
+
+    it('freezes the part while the other hand opens in a two-hand rotate, and measures the turn again from the re-base', () => {
+      const rig = makeRig();
+      const owner: [number, number] = [400, 300];
+      const around = (degrees: number): [number, number] => [owner[0] + 250 * Math.cos((degrees * Math.PI) / 180), owner[1] + 250 * Math.sin((degrees * Math.PI) / 180)];
+      const swing = (from: number, to: number, pinchM: number) => {
+        for (let degrees = from + 10; degrees <= to; degrees += 10) rig.run([[...owner, true], pinchAt(...around(degrees), pinchM)], 6);
+      };
+      rig.run([[...owner, false], [...around(0), false]], 6);
+      rig.run([[...owner, true], [...around(0), false]], PINCH_ENGAGE_FRAMES);
+      rig.run([[...owner, true], [...around(0), true]], PINCH_ENGAGE_FRAMES);
+      const grab = rig.grabs[0]!;
+      expect(rig.last.gesture).toBe('rotate');
+      swing(0, 30, CLOSED_MM);
+      rig.run([[...owner, true], pinchAt(...around(30), CLOSED_MM)], 20);
+      const sent = grab.rotates.length;
+      expect(grab.rotates.at(-1)!).toBeCloseTo(25, 0);
+      swing(30, 70, OPENING_MM);
+      rig.run([[...owner, true], pinchAt(...around(70), OPENING_MM)], 10);
+      expect(grab.rotates).toHaveLength(sent);
+      expect(grab.rebases).toBe(0);
+      rig.run([[...owner, true], pinchAt(...around(70), CLOSED_MM)], 4);
+      expect(grab.rebases).toBe(1);
+      expect(grab.rotates).toHaveLength(sent);
+      expect(rig.controller.twoHand!.angle).toBeCloseTo(0, 0);
+      // Another 30° from the re-base turns the part by 25° more relative to it, not by the 70° swung in total.
+      swing(70, 100, CLOSED_MM);
+      rig.run([[...owner, true], pinchAt(...around(100), CLOSED_MM)], 20);
+      expect(grab.rotates.at(-1)!).toBeCloseTo(25, 0);
+      // The owner's release commits the move and the turn once.
+      rig.run([pinchAt(...owner, WIDE_OPEN_MM), pinchAt(...around(100), CLOSED_MM)], 3);
+      expect(grab.commits).toBe(1);
+    });
+
+    it('freezes the pull while the fist of an explode opens, and the pinch that opens does not change the amount', () => {
+      const rig = makeRig();
+      const ownerAt: [number, number] = [200, 300];
+      rig.run([palmHand(...ownerAt, 'open'), palmHand(700, 300, 'open')], 4);
+      rig.run([palmHand(...ownerAt, 'fist'), palmHand(700, 300, 'open')], FIST_ENGAGE_FRAMES);
+      rig.run([palmHand(...ownerAt, 'fist'), palmHand(700, 300, 'pinch')], PINCH_ENGAGE_FRAMES);
+      expect(rig.last.gesture).toBe('explode');
+      for (let x = 725; x <= 800; x += 25) rig.run([palmHand(...ownerAt, 'fist'), palmHand(x, 300, 'pinch')], 3);
+      rig.run([palmHand(...ownerAt, 'fist'), palmHand(800, 300, 'pinch')], 10);
+      const amount = rig.explodes.at(-1)!;
+      expect(amount).toBeGreaterThan(0);
+      const calls = rig.explodes.length;
+      for (let x = 825; x <= 1000; x += 25) rig.run([palmHand(...ownerAt, 'fist'), { ...palmHand(x, 300, 'pinch'), pinchM: OPENING_MM }], 3);
+      expect(rig.explodes).toHaveLength(calls);
+      const hold = rig.holds[0]!;
+      rig.run([{ ...palmHand(ownerAt[0] + 30, ownerAt[1], 'fist'), curl: 1.1 }, { ...palmHand(1000, 300, 'pinch'), pinchM: OPENING_MM }], 6);
+      expect(rig.explodes).toHaveLength(calls);
+      expect(hold.previews).toEqual([]);
+    });
   });
 });

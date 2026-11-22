@@ -1,5 +1,5 @@
 import {
-  DRAG_DEAD_ZONE_PX, HAND_LOST_MS, PINCH_ENGAGE_FRAMES, PINCH_ENGAGE_M, PINCH_RELEASE_FRAMES, PINCH_RELEASE_M, TRACKING_LOSS_MS,
+  DRAG_DEAD_ZONE_PX, HAND_LOST_MS, MIN_GESTURE_FRAMES, PINCH_ENGAGE_M, PINCH_ENGAGE_MS, PINCH_RELEASE_M, PINCH_RELEASE_MS, TRACKING_LOSS_MS,
 } from './constants';
 import type { Point } from './types';
 
@@ -7,6 +7,8 @@ export interface PinchState {
   engaged: boolean;
   /** Consecutive tracking frames beyond the threshold that would change `engaged`. */
   streak: number;
+  /** When the first frame of the current streak arrived; null while there is no streak. */
+  streakSince: number | null;
   /** When a hand was last seen; null before the first hand and after `lost`. */
   handSeenAt: number | null;
   /** The latest tracking frame had no hand. */
@@ -28,13 +30,25 @@ export type PinchEvent =
   | { type: 'release'; tap: boolean; point: Point };
 
 export function initialPinchState(): PinchState {
-  return { engaged: false, streak: 0, handSeenAt: null, missing: true, engagePoint: null, moved: false };
+  return { engaged: false, streak: 0, streakSince: null, handSeenAt: null, missing: true, engagePoint: null, moved: false };
+}
+
+/**
+ * One step of a time-based engage or release, shared by the pinch and the fist. A frame that qualifies extends the streak; the
+ * streak is `done` once it has lasted `holdMs` from its first frame and has at least MIN_GESTURE_FRAMES frames, so one noisy frame
+ * never triggers, and the wall-clock time is the same at 10 and at 30 frames per second. A frame that does not qualify ends the streak.
+ */
+export function holdStep(streak: number, since: number | null, qualifies: boolean, now: number, holdMs: number): { streak: number; since: number | null; done: boolean } {
+  if (!qualifies) return { streak: 0, since: null, done: false };
+  const start = since ?? now;
+  const count = streak + 1;
+  return { streak: count, since: start, done: count >= MIN_GESTURE_FRAMES && now - start >= holdMs };
 }
 
 /**
  * The pinch state machine. `cursor` should be the filtered cursor. Only
  * tracking frames (`hand`, `none`) count toward streaks; `tick` only advances
- * time. Between the two thresholds nothing changes, a frame without a pinch
+ * time. Engaging and releasing take PINCH_ENGAGE_MS and PINCH_RELEASE_MS from the first qualifying frame (`holdStep`). Between the two thresholds nothing changes, a frame without a pinch
  * distance never engages, and a hand that comes back before the time-out
  * continues the same pinch. `lossMs`, when given, replaces both loss windows.
  */
@@ -53,6 +67,7 @@ export function pinchStep(state: PinchState, input: PinchInput, now: number, los
   if (input.kind === 'none') {
     next.missing = true;
     next.streak = 0;
+    next.streakSince = null;
     return { state: next, events };
   }
 
@@ -63,17 +78,22 @@ export function pinchStep(state: PinchState, input: PinchInput, now: number, los
   const { cursor, pinchM } = input;
   if (pinchM === null) {
     next.streak = 0;
+    next.streakSince = null;
   } else if (!next.engaged) {
-    next.streak = pinchM < PINCH_ENGAGE_M ? next.streak + 1 : 0;
-    if (next.streak >= PINCH_ENGAGE_FRAMES) {
-      next = { ...next, engaged: true, streak: 0, engagePoint: cursor, moved: false };
+    const hold = holdStep(next.streak, next.streakSince, pinchM < PINCH_ENGAGE_M, now, PINCH_ENGAGE_MS);
+    next.streak = hold.streak;
+    next.streakSince = hold.since;
+    if (hold.done) {
+      next = { ...next, engaged: true, streak: 0, streakSince: null, engagePoint: cursor, moved: false };
       events.push({ type: 'engage', point: cursor });
     }
   } else {
-    next.streak = pinchM > PINCH_RELEASE_M ? next.streak + 1 : 0;
-    if (next.streak >= PINCH_RELEASE_FRAMES) {
+    const hold = holdStep(next.streak, next.streakSince, pinchM > PINCH_RELEASE_M, now, PINCH_RELEASE_MS);
+    next.streak = hold.streak;
+    next.streakSince = hold.since;
+    if (hold.done) {
       events.push({ type: 'release', tap: !next.moved, point: cursor });
-      next = { ...next, engaged: false, streak: 0, engagePoint: null, moved: false };
+      next = { ...next, engaged: false, streak: 0, streakSince: null, engagePoint: null, moved: false };
     }
   }
 

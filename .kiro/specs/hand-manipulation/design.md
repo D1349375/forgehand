@@ -175,8 +175,9 @@ const [cameraHidden, setCameraHidden] = useState(false);   // reset to false in 
 |---|---|---|---|
 | `CURSOR_POINT` | `'pinch-midpoint'` | T2 ✓ | `'pinch-midpoint'` (landmarks 4 and 8) or `'index-knuckle'` (landmark 5) |
 | `CURSOR_MIN_CUTOFF` / `CURSOR_BETA` / `CURSOR_D_CUTOFF` | 1.0 Hz / 0.01 / 1.0 Hz | T2 ✓ | One Euro filter |
-| `PINCH_ENGAGE_M` / `PINCH_ENGAGE_FRAMES` | 0.03 m / 2 | T2 ✓ | R20 |
-| `PINCH_RELEASE_M` / `PINCH_RELEASE_FRAMES` | 0.05 m / 3 | T2 ✓ | R20 |
+| `PINCH_ENGAGE_M` / `PINCH_ENGAGE_MS` | **0.04 m / 80 ms** (changed 2026-11-22; was 0.03 m / 2 frames) | T2 ✓, T10 | R20, R103, R104 |
+| `PINCH_RELEASE_M` / `PINCH_RELEASE_MS` | **0.055 m / 60 ms** (changed 2026-11-22; was 0.05 m / 3 frames) | T2 ✓, T10 | R20, R103, R104 |
+| `MIN_GESTURE_FRAMES` | 2 (new 2026-11-22) | T10 | R104; at least this many qualifying frames in a row to engage or release a pinch or a fist |
 | `HOVER_SETTLE_MS` | 150 | T2 ✓ | R23 |
 | `HAND_LOST_MS` | 300 | T2 ✓ | a hand's skeleton hides; its filter and an idle pinch reset |
 | `DRAG_DEAD_ZONE_PX` | 8 | T2 ✓ | R29, also the fist move (R92) |
@@ -184,7 +185,7 @@ const [cameraHidden, setCameraHidden] = useState(false);   // reset to false in 
 | `ORBIT_DEG_PER_PX` | 0.4 | T2 ✓ | R35 |
 | `TRACKING_LOSS_MS` | 300 | T2 ✓ | R37, R84 |
 | `ON_TRACKING_LOSS` | `'cancel'` | T2 ✓ | R37 |
-| `MIN_CONTROL_FPS` / `SPEED_HOLD_MS` | 10 / 2000 | T2 ✓ | R40 |
+| `MIN_CONTROL_FPS` / `SPEED_HOLD_MS` | **5** / 2000 (changed 2026-11-22; `MIN_CONTROL_FPS` was 10) | T2 ✓, T10 | R40, R105 |
 | `CANCEL_NOTICE_MS` | 4000 | T2 ✓ | R43 |
 | `BADGE_NAME_MAX` | 12 | T2 ✓ | R16 |
 | `TRACKED_HANDS` | 2 | T3 | R73; 1 restores one-hand tracking |
@@ -193,8 +194,8 @@ const [cameraHidden, setCameraHidden] = useState(false);   // reset to false in 
 | `TWO_HAND_MIN_SPAN_PX` | 60 | T4 | R83, R87, R96 |
 | `ZOOM_DEAD_ZONE_PX` | 12 | T6 | R87 |
 | `FIST_ENABLED` | `true` | T7 | R89 |
-| `FIST_ENGAGE_RATIO` / `FIST_ENGAGE_FRAMES` | 1.0 / 3 | T7 | R89 |
-| `FIST_RELEASE_RATIO` / `FIST_RELEASE_FRAMES` | 1.25 / 3 | T7 | R89 |
+| `FIST_ENGAGE_RATIO` / `FIST_ENGAGE_MS` | 1.0 / **150 ms** (changed 2026-11-22; was 3 frames) | T7, T10 | R89, R104; the ratio also starts the freeze (R101) |
+| `FIST_RELEASE_RATIO` / `FIST_RELEASE_MS` | 1.25 / **60 ms** (changed 2026-11-22; was 3 frames) | T7, T10 | R89, R104 |
 | `EXPLODE_DEAD_ZONE_PX` | 12 | T7 | R93 |
 | `EXPLODE_FULL_FRACTION` | 0.5 | T7 | R93; spreading by half the view height goes from 0 to fully exploded |
 | `ROTATE_DEAD_ZONE_DEG` | 5 | T8 | R96 |
@@ -254,7 +255,7 @@ Built in T2: `OneEuroFilter2D` (Casiez et al., CHI 2012) with `filter(point, tim
 
 ### 4.5 Pinch state machine (`pinch.ts`, R20, R21, R29)
 
-Built in T2 and unchanged: `pinchStep(state, input, now)` with the events `found`, `lost`, `engage`, `drag-start` and `release { tap }`. Thresholds count only tracking frames; `null` distance never engages; a hand back within the time-out continues the same pinch. Each track has its own `PinchState`. The double-tap event of the 2026-11-15 version is not added. T7 feeds `pinchM: null` for fist-like frames (§9.2), which the machine already treats as "no distance".
+Built in T2 and unchanged: `pinchStep(state, input, now)` with the events `found`, `lost`, `engage`, `drag-start` and `release { tap }`. Thresholds count only tracking frames; `null` distance never engages; a hand back within the time-out continues the same pinch. Each track has its own `PinchState`. The double-tap event of the 2026-11-15 version is not added. T7 feeds `pinchM: null` for fist-like frames (§9.2), which the machine already treats as "no distance". **Changed in T10 (2026-11-22, §16):** a streak is counted in time (`PINCH_ENGAGE_MS`, `PINCH_RELEASE_MS`) with a minimum of `MIN_GESTURE_FRAMES` frames, not in frames, and `PinchState` gains `streakSince`.
 
 ### 4.6 Picking and settling (`targets.ts`, R22, R23)
 
@@ -614,7 +615,7 @@ export function fistStep(state: FistState, input: { kind: 'hand'; palm: Point; c
 ```
 
 - `curlRatio`: for each of the index (5→8), middle (9→12), ring (13→16) and little (17→20) fingers, `|tip − wrist| / |knuckle − wrist|` on the world landmarks; the result is the largest of the four, so one extended finger means "not a fist". `null` without 21 finite world landmarks or with a degenerate knuckle distance. For orientation: an open hand gives about 1.8 (the synthetic hand: 1.88), a pinch with curled other fingers about 1.3–1.5 (the index stays the largest), a closed fist below 1.0. These are estimates from hand proportions; the manual check reads the real value in the debug line.
-- `fistStep` is the pinch machine's pattern: below `FIST_ENGAGE_RATIO` for `FIST_ENGAGE_FRAMES` engages, above `FIST_RELEASE_RATIO` for `FIST_RELEASE_FRAMES` releases, nothing in between, `null` resets the streak, the same `TRACKING_LOSS_MS` / `HAND_LOST_MS` time-outs, and a move start after `DRAG_DEAD_ZONE_PX` of palm movement. `pinchMoved` blocks engaging (R90).
+- `fistStep` is the pinch machine's pattern: below `FIST_ENGAGE_RATIO` for `FIST_ENGAGE_FRAMES` engages, above `FIST_RELEASE_RATIO` for `FIST_RELEASE_FRAMES` releases (**changed in T10: `FIST_ENGAGE_MS` and `FIST_RELEASE_MS` with `MIN_GESTURE_FRAMES`, §16**), nothing in between, `null` resets the streak, the same `TRACKING_LOSS_MS` / `HAND_LOST_MS` time-outs, and a move start after `DRAG_DEAD_ZONE_PX` of palm movement. `pinchMoved` blocks engaging (R90).
 - `FIST_ENABLED = false`: `handSample` still computes `curl` for the debug line, but the controller never calls `fistStep` and never nulls `pinchM`.
 
 ### 9.2 Fist and pinch (R90)
@@ -698,6 +699,7 @@ Nine tasks (R71). Tasks 1–2 are done; Tasks 3–5 finish the P0 core; Tasks 6�
 | 7 | P1 fist: `curlRatio`, `fistStep`, fist and pinch precedence, `decideFist`, hold sessions and `onObjectMove`, explode row and `explodeAmount`, fist marks and badges, exploded status text, synthetic fist, e2e, README and manual lines | 15 (squares), 18 (fist states), 41 (fist when exploded), 43 (exploded line), 45 (curl), 47 (fist constants), 82 (explode row), 89–95, 70, 72 |
 | 8 | P1 two-hand rotate: join row, `rotateAboutView`, grab `rotate`, `both` notice, arc, e2e, README and manual lines | 55 (R stays), 82 (rotate row), 96–98, 70, 72 |
 | 9 | P1 agent switch: `set_camera_image`, optional `cameraHidden`, `AGENT_INSTRUCTIONS` line, client apply, unit tests, e2e, README and manual lines | 54 (tool lists), 99, 100, 70, 72 |
+| 10 | After the webcam test (2026-11-22, §16): wider pinch thresholds, engage and release in ms with a two-frame minimum, freeze while a hand opens with a re-based resume, latched snap, speed gate 5, thresholds in the debug line, tests, README and manual line | 20, 40, 45, 47, 74, 89 (changed numbers), 101–107 |
 
 Requirements 65 and 67–69 apply to every task; 71 is satisfied by `tasks.md` itself. Requirements 56–62 are removed.
 
@@ -747,3 +749,47 @@ Tasks 1 and 2 stay as committed; these changes are made by later tasks:
 | `tests/fixtures/synthetic-hand.ts` (T1) | `fist` option | T7 |
 | `tests/e2e/hand-control.spec.ts` (T1, T2) | the T2 case's `data-hand-mode` assertion removed | T3 |
 | `tests/unit/hand-input.test.ts` (T2) | the overlay style test no longer expects two mode colours | T3 |
+
+## 16. Changes after the webcam test (2026-11-22)
+
+Built in Task 10 (R101–R107). The first test on the user's laptop (integrated GPU) measured one hand at about 9–10 fps (70–90 ms recognition), a closed pinch at about 26 mm, half open about 58 mm, open about 100 mm, and a release that took 3 frames (about 0.3 s) while the opening hand kept dragging the object. Everything not named here stays as designed. The two-pinch join and the fist-knob rotate of the same decision are a later task and are not designed here.
+
+### 16.1 Thresholds and time (R103, R104)
+
+- `PINCH_ENGAGE_M` 0.03 → **0.04**, `PINCH_RELEASE_M` 0.05 → **0.055**. `MIN_CONTROL_FPS` 10 → **5** (R105).
+- `PINCH_ENGAGE_FRAMES`, `PINCH_RELEASE_FRAMES`, `FIST_ENGAGE_FRAMES` and `FIST_RELEASE_FRAMES` are removed. `PINCH_ENGAGE_MS` (80), `PINCH_RELEASE_MS` (60), `FIST_ENGAGE_MS` (150) and `FIST_RELEASE_MS` (60) replace them, with `MIN_GESTURE_FRAMES` (2).
+- One shared pure step, `holdStep(streak, since, qualifies, now, holdMs)` in `pinch.ts`, returns the new streak count, the time of its first frame and `done`. `done` is true when the streak has at least `MIN_GESTURE_FRAMES` frames and `now − since ≥ holdMs`. A frame that does not qualify, a frame without a distance or curl ratio and a frame without a hand reset the streak; a tick does not count. `PinchState` and `FistState` gain `streakSince: number | null` next to `streak`.
+- Resulting frame counts, counted from the first qualifying frame: pinch engage 2 frames at 10 fps (100 ms apart), 4 at 30 fps (33 ms); pinch release 2 at 10 fps, 3 at 30 fps; fist engage 3 at 10 fps, 6 at 30 fps; fist release 2 at 10 fps, 3 at 30 fps. At 5 fps the minimum of 2 frames rules (0.2 s). `HAND_LOST_MS`, `TRACKING_LOSS_MS` and `?hands-loss-ms` are unchanged; a gap longer than the loss window resets the state, so a long gap never lets one frame count as two.
+
+### 16.2 Freeze while a hand opens (R101)
+
+In `HandController`:
+
+- `isOpening(track, 'pinch' | 'fist')`: an engaged pinch with `pinchM > PINCH_ENGAGE_M`, or an engaged fist with `curl > FIST_ENGAGE_RATIO`. The input kind comes from the session role: the owner of a `hold` and a joiner whose `input` is `fist` use the fist rule, every other hand the pinch rule.
+- `Session.frozen` and `updateFreeze(session)`, called first in `follow`. It is true while the owner or the joiner is opening. A hand missing in this frame leaves the flag as it was; a `press` session never freezes. While `frozen`, `follow` skips the owner's `preview`, the `stepAssemble` call and the joiner's zoom, rotate and explode (their span and angle bookkeeping still follows the hands, so a resume starts from the current hands). Nothing is cancelled or committed by the freeze; the release rules of §5.5 stay as they are (a release needs the distance above `PINCH_RELEASE_M` or the curl above `FIST_RELEASE_RATIO` for the release time), and the release commits the last preview, which is the frozen one.
+- Between the engage and the release thresholds a hand can stay frozen as long as it likes; closing it resumes, opening it releases.
+- While a pinch opens, the cursor given to `pinchStep` is the engage point, and while a fist opens the palm given to `fistStep` is the engage palm, so the opening of the fingers cannot start a drag (a tap stays a tap).
+- `resume(session)`, called when no hand of the gesture is opening any more: the scene session is re-based (`rebase()`, as when a joiner leaves) and the owner's `ref` becomes its current point, so the next offset is zero. A joiner's measurements restart from the current hands: `startSpan` and the angle base are the current ones, the accumulated angle and the sent zoom ratio are reset, and `startValue` is the explode amount last sent. An assemble session has no re-base, so both palm references move by what the palms travelled since the last frame that moved it (`session.applied`, `joiner.applied`), which keeps every offset as it was. The rotate badge counts from the re-base after a resume.
+- `leaveJoiner` clears `frozen` after its own re-base (it is the resume of a freeze that the joiner caused); an owner that is still opening freezes again on the next frame.
+
+### 16.3 Latched snap (R102)
+
+`stepAssemble` is not called while frozen, so `joiner.ready` keeps the value of the last frame in which neither hand was opening, the 可以接合 label stays, and the confirmed release calls `assemble.commit(true)` through the existing path (`commitSession`), which creates the joint when `ready`. When both hands close again, `resume` shifts the references and `stepAssemble` asks the scene again in the same frame, so the existing snap rules decide whether it stays ready.
+
+### 16.4 Debug line (R106)
+
+`trackingDebugLine` takes an optional `pinchThresholdsMm: { engage, release }` and appends `捏合門檻 40／55 mm`; `HandDebugPanel` passes `PINCH_ENGAGE_M × 1000` and `PINCH_RELEASE_M × 1000`.
+
+### 16.5 Tests (R107)
+
+- `hand-input.test.ts`: the constants, the pinch machine in time at 20, 33, 50, 100 and 200 ms spacing, the 26, 40 and 58 mm cases, one noisy frame, the minimum of two frames with a long loss window, `holdStep`.
+- `hand-fist.test.ts`: the same for the fist.
+- `hand-controller.test.ts`: engage and release at 10 and 30 fps through the controller; a single noisy frame; the freeze for a grab, an orbit, a hold, a zoom, a rotate and an explode; the commit of the frozen state; the resume with a first offset of zero; a tap that does not become a drag while the fingers open.
+- `hand-assemble.test.ts`: the latched snap with either fist opening, the scene asked again after a resume, no jump of the offsets.
+- `hand-gate.test.ts`: the default gate of 5 and the debug line.
+- `hand-control.spec.ts`: opening while moving commits where the hand started to open; the slow-tracker case now delays each answer by 300 ms (about 3 fps against a gate of 5); the debug line shows the thresholds.
+
+### 16.6 Risks
+
+- A hand held between 40 and 55 mm freezes the gesture without releasing it; the user opens further or closes again. The debug line shows the distance and the thresholds so the next test can tell if 55 mm is too wide.
+- The 40 mm freeze threshold is the engage threshold, so a pinch that sits near 40 mm while moving freezes and resumes (each with a re-base) frame by frame; nothing jumps, but the part follows in steps. If that shows on the webcam, a separate, larger freeze threshold is the knob.

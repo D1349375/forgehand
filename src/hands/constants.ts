@@ -12,12 +12,20 @@ export const CURSOR_MIN_CUTOFF = 1.0;
 export const CURSOR_BETA = 0.01;
 export const CURSOR_D_CUTOFF = 1.0;
 
-/** A pinch engages below this thumb-index distance (m) for this many consecutive tracking frames. */
-export const PINCH_ENGAGE_M = 0.03;
-export const PINCH_ENGAGE_FRAMES = 2;
-/** A pinch releases above this distance (m) for this many consecutive tracking frames. */
-export const PINCH_RELEASE_M = 0.05;
-export const PINCH_RELEASE_FRAMES = 3;
+/**
+ * A pinch engages below this thumb-index distance (m) for PINCH_ENGAGE_MS, measured from the first qualifying tracking frame, and for
+ * at least MIN_GESTURE_FRAMES consecutive frames. Changed on 2026-11-22 (webcam test): 0.03 m, counted as 2 frames, before.
+ */
+export const PINCH_ENGAGE_M = 0.04;
+export const PINCH_ENGAGE_MS = 80;
+/** A pinch releases above this distance (m) for PINCH_RELEASE_MS, on the same rule. Changed on 2026-11-22: 0.05 m, counted as 3 frames, before. */
+export const PINCH_RELEASE_M = 0.055;
+export const PINCH_RELEASE_MS = 60;
+/**
+ * Engaging or releasing a pinch or a fist needs at least this many qualifying tracking frames in a row, whatever the time, so one
+ * noisy frame never triggers (the time alone would let a single frame after a long gap count).
+ */
+export const MIN_GESTURE_FRAMES = 2;
 
 /** A new raw target must hold this long before it becomes the settled target. */
 export const HOVER_SETTLE_MS = 150;
@@ -37,8 +45,8 @@ export const TRACKING_LOSS_MS = 300;
 export type TrackingLossPolicy = 'cancel' | 'keep';
 export const ON_TRACKING_LOSS: TrackingLossPolicy = 'cancel';
 
-/** Below this tracking rate (frames per second) for SPEED_HOLD_MS, hand control locks. */
-export const MIN_CONTROL_FPS = 10;
+/** Below this tracking rate (frames per second) for SPEED_HOLD_MS, hand control locks. Changed on 2026-11-22: 10 before; the user's laptop tracks at about 9-10 fps. */
+export const MIN_CONTROL_FPS = 5;
 export const SPEED_HOLD_MS = 2000;
 
 /** How long the "cancelled" notice stays in the status line. */
@@ -60,12 +68,12 @@ export const ROTATE_DEAD_ZONE_DEG = 5;
 
 /** Fists: holding, moving and pulling apart a whole object (requirements 89-95). `false` turns fists off completely and leaves the pinch exactly as without them. */
 export const FIST_ENABLED: boolean = true;
-/** A fist engages when the curl ratio stays below this for FIST_ENGAGE_FRAMES consecutive tracking frames. */
+/** A fist engages when the curl ratio stays below this for FIST_ENGAGE_MS (and MIN_GESTURE_FRAMES frames). Changed on 2026-11-22: counted as 3 frames before. */
 export const FIST_ENGAGE_RATIO = 1.0;
-export const FIST_ENGAGE_FRAMES = 3;
-/** A fist releases when the curl ratio stays above this for FIST_RELEASE_FRAMES consecutive tracking frames. */
+export const FIST_ENGAGE_MS = 150;
+/** A fist releases when the curl ratio stays above this for FIST_RELEASE_MS (and MIN_GESTURE_FRAMES frames). Changed on 2026-11-22: counted as 3 frames before. */
 export const FIST_RELEASE_RATIO = 1.25;
-export const FIST_RELEASE_FRAMES = 3;
+export const FIST_RELEASE_MS = 60;
 /** Pulling an object apart ignores a change in the distance between the fist and the pinch smaller than this (pixels). */
 export const EXPLODE_DEAD_ZONE_PX = 12;
 /** Spreading the hands by this fraction of the viewport height goes from assembled to fully exploded. */

@@ -36,19 +36,19 @@ The UI is currently in Traditional Chinese; an English UI is planned.
 
 Turn the camera on (開啟攝影機) and move your hands in front of it. Hand control is on by default and has its own switch, 手勢. Both hands are tracked and drawn as skeletons over the view; one hand is enough for everything below. Each skeleton has a short badge that says what the hand is doing, so colour is never the only signal.
 
-- **Grab and move a part**: point at a part until its ring appears, pinch thumb and index finger, move, and open the fingers. The part moves with your hand, its child parts follow, and 復原 (undo) puts it back in one step. A quick pinch without moving only selects the part.
+- **Grab and move a part**: point at a part until its ring appears, pinch thumb and index finger, move, and open the fingers. The part moves with your hand, its child parts follow, and 復原 (undo) puts it back in one step. A quick pinch without moving only selects the part. A pinch engages when thumb and index are closer than about 4 cm and releases when they are farther apart than about 5.5 cm. The moment your fingers start to open, the part stops following your hand and stays where it was; it is saved when the release is confirmed (about 0.06 s), so opening your hand does not drag the part.
 - **Turn the view**: pinch on empty space and move. The view turns while you pinch and stays where it is when you let go.
 - **Finer moves**: zoom in with the mouse wheel. The same hand movement then moves a part less.
 - **Zoom with two hands**: while one hand turns the view, pinch with the other and move the hands apart to zoom in or together to zoom out. Let go with the second hand and the first keeps turning the view from where it is.
 - **Fist**: make a fist over an object to hold the whole object (a filled square shows at your palm), move it and open your hand; 復原 puts it back in one step. While you hold it, pinch with the other hand and move it away from the fist to pull the object apart (exploded view), or toward the fist to close it again. A fist also works while the exploded view is open.
 - **Rotate with two hands**: while one hand grabs a part, pinch with the other and move it around the first hand. The part turns about the view direction the same way on screen, and an arc shows the angle. Let go with the second hand and the part keeps its turn while the first hand goes on moving it; opening the first hand saves the move and the turn as one 復原 step.
 - **A second hand** can only start the two-hand gestures above; any other pinch or fist while the first hand is busy is shown as inactive until you open it.
-- **View-only and off**: while the exploded view is open or the agent is running, a pinch only turns the view, and the status line under the camera says so. While the arm try-on (護臂試戴) runs, or when the tracker is too slow for gestures (under 10 frames per second), hand control is off and the mouse works as usual. The skeletons stay visible in both cases.
+- **View-only and off**: while the exploded view is open or the agent is running, a pinch only turns the view, and the status line under the camera says so. While the arm try-on (護臂試戴) runs, or when the tracker is too slow for gestures (under 5 frames per second), hand control is off and the mouse works as usual. The skeletons stay visible in both cases.
 - **If tracking is lost** for more than about a third of a second during a drag, the part goes back to where it was and the status line says so.
 - **隱藏鏡頭畫面** hides the camera image and keeps tracking and the skeletons running, for a plain backdrop. Turning the camera off and on shows the image again. The agent can hide or show the camera image too: ask 「把鏡頭畫面藏起來」 or 「顯示鏡頭畫面」 while the camera is on.
 - Turn 手勢 off to use the mouse only. Everything above is local; no video or landmark leaves the browser.
 
-Add `?hands=debug` to the address to show tracking numbers (delegate, frames per second, recognition time, pinch distance in mm) and gesture counters (drags, commits, cancels, losses). `?hands-min-fps=<number>` changes the speed threshold for slow machines (0 switches the speed check off).
+Add `?hands=debug` to the address to show tracking numbers (delegate, frames per second, recognition time, pinch distance in mm, and the pinch engage and release thresholds in mm) and gesture counters (drags, commits, cancels, losses). `?hands-min-fps=<number>` changes the speed threshold for slow machines (0 switches the speed check off).
 
 ## Assembly joints
 

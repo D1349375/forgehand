@@ -3,7 +3,7 @@ import * as constants from '../../src/hands/constants';
 import { DUPLICATE_HAND_PX, HAND_LOST_MS, HAND_MATCH_PX, HOVER_SETTLE_MS, TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX } from '../../src/hands/constants';
 import { handSample, landmarkToClient } from '../../src/hands/mapping';
 import { OneEuroFilter2D } from '../../src/hands/one-euro';
-import { initialPinchState, pinchStep, type PinchEvent, type PinchInput, type PinchState } from '../../src/hands/pinch';
+import { holdStep, initialPinchState, pinchStep, type PinchEvent, type PinchInput, type PinchState } from '../../src/hands/pinch';
 import { HAND_CONNECTIONS } from '../../src/hands/skeleton';
 import { assignHands, dedupeHands } from '../../src/hands/slots';
 import { HAND_COLOUR, LINK_COLOUR, LOCKED_COLOUR, overlayStyle } from '../../src/hands/style';
@@ -20,15 +20,18 @@ describe('constants', () => {
   it('exports the P0 defaults by name', () => {
     expect(constants).toMatchObject({
       CURSOR_POINT: 'pinch-midpoint', CURSOR_MIN_CUTOFF: 1, CURSOR_BETA: 0.01, CURSOR_D_CUTOFF: 1,
-      PINCH_ENGAGE_M: 0.03, PINCH_ENGAGE_FRAMES: 2, PINCH_RELEASE_M: 0.05, PINCH_RELEASE_FRAMES: 3,
+      PINCH_ENGAGE_M: 0.04, PINCH_ENGAGE_MS: 80, PINCH_RELEASE_M: 0.055, PINCH_RELEASE_MS: 60, MIN_GESTURE_FRAMES: 2,
       HOVER_SETTLE_MS: 150, HAND_LOST_MS: 300, DRAG_DEAD_ZONE_PX: 8, DRAG_GAIN: 1.5, ORBIT_DEG_PER_PX: 0.4,
-      TRACKING_LOSS_MS: 300, ON_TRACKING_LOSS: 'cancel', MIN_CONTROL_FPS: 10, SPEED_HOLD_MS: 2000, CANCEL_NOTICE_MS: 4000, BADGE_NAME_MAX: 12,
+      TRACKING_LOSS_MS: 300, ON_TRACKING_LOSS: 'cancel', MIN_CONTROL_FPS: 5, SPEED_HOLD_MS: 2000, CANCEL_NOTICE_MS: 4000, BADGE_NAME_MAX: 12,
       TRACKED_HANDS: 2, DUPLICATE_HAND_PX: 40,
     });
   });
+  it('no longer exports frame counts for engaging and releasing: they are times now', () => {
+    for (const name of ['PINCH_ENGAGE_FRAMES', 'PINCH_RELEASE_FRAMES', 'FIST_ENGAGE_FRAMES', 'FIST_RELEASE_FRAMES']) expect(constants).not.toHaveProperty(name);
+  });
   it('exports the fist defaults by name (Task 7)', () => {
     expect(constants).toMatchObject({
-      FIST_ENABLED: true, FIST_ENGAGE_RATIO: 1.0, FIST_ENGAGE_FRAMES: 3, FIST_RELEASE_RATIO: 1.25, FIST_RELEASE_FRAMES: 3,
+      FIST_ENABLED: true, FIST_ENGAGE_RATIO: 1.0, FIST_ENGAGE_MS: 150, FIST_RELEASE_RATIO: 1.25, FIST_RELEASE_MS: 60,
       EXPLODE_DEAD_ZONE_PX: 12, EXPLODE_FULL_FRACTION: 0.5,
     });
   });
@@ -180,81 +183,153 @@ describe('pinchStep', () => {
   }
   const types = (events: PinchEvent[]) => events.map(event => event.type);
 
+  const closed = hand(0.01);
+  const open = hand(0.08);
+  /** Feeds the inputs at a constant frame spacing, starting at `from` (the first input is at `from`). */
+  const spaced = (inputs: PinchInput[], spacing: number, from = 0): Array<[PinchInput, number]> => inputs.map((input, index) => [input, from + index * spacing]);
+  const same = (input: PinchInput, count: number): PinchInput[] => Array.from({ length: count }, () => input);
+
   it('a custom loss window replaces both defaults', () => {
-    const open = hand(0.08);
     const gap = Math.max(HAND_LOST_MS, TRACKING_LOSS_MS) + 700;
     // Idle: a gap longer than HAND_LOST_MS loses the hand by default, not with a wider window.
     expect(types(run([[open, 0], [open, gap]]).events)).toEqual(['found', 'lost', 'found']);
     const idle = pinchStep(pinchStep(initialPinchState(), open, 0, 2000).state, open, gap, 2000);
     expect(types(idle.events)).toEqual([]);
     // Engaged: the same for TRACKING_LOSS_MS.
-    const engaged = (lossMs?: number) => {
+    const engagedAfter = (lossMs?: number) => {
       let state = initialPinchState();
-      for (const [input, time] of [[hand(0.08), 0], [hand(0.02), 16], [hand(0.02), 32]] as Array<[PinchInput, number]>) state = pinchStep(state, input, time, lossMs).state;
+      for (const [input, time] of [[hand(0.08), 0], [hand(0.02), 100], [hand(0.02), 200]] as Array<[PinchInput, number]>) state = pinchStep(state, input, time, lossMs).state;
       expect(state.engaged).toBe(true);
-      return pinchStep(state, { kind: 'tick' }, 32 + gap, lossMs);
+      return pinchStep(state, { kind: 'tick' }, 200 + gap, lossMs);
     };
-    expect(types(engaged().events)).toEqual(['lost']);
-    expect(types(engaged(2000).events)).toEqual([]);
-    expect(types(engaged(500).events)).toEqual(['lost']);
+    expect(types(engagedAfter().events)).toEqual(['lost']);
+    expect(types(engagedAfter(2000).events)).toEqual([]);
+    expect(types(engagedAfter(500).events)).toEqual(['lost']);
   });
   it('emits found on the first hand frame', () => {
     expect(run([[hand(0.08), 0], [hand(0.08), 16]]).log.map(types)).toEqual([['found'], []]);
   });
 
-  it('engages after two consecutive frames below the threshold', () => {
-    const { log } = run([[hand(0.08), 0], [hand(0.02), 16], [hand(0.02), 32]]);
+  it('engages in two frames at 10 frames per second: the second frame is 100 ms after the first', () => {
+    const { log } = run(spaced([open, closed, closed], 100));
     expect(log.map(types)).toEqual([['found'], [], ['engage']]);
     expect(log[2]![0]).toEqual({ type: 'engage', point: cursor });
   });
 
-  it('needs the distance strictly below the engage threshold', () => {
-    expect(run([[hand(0.03), 0], [hand(0.03), 16], [hand(0.03), 32]]).events.map(event => event.type)).toEqual(['found']);
-    expect(types(run([[hand(0.0299), 0], [hand(0.0299), 16]]).events)).toEqual(['found', 'engage']);
+  it('engages after PINCH_ENGAGE_MS from the first qualifying frame, whatever the frame rate', () => {
+    for (const spacing of [20, 33, 50, 100, 200]) {
+      const frames = run(spaced([open, ...same(closed, 12)], spacing)).log;
+      const engageAt = frames.findIndex(events => types(events).includes('engage'));
+      expect(engageAt).toBeGreaterThan(0);
+      // The first closed frame is index 1; the engage frame is the first one at least PINCH_ENGAGE_MS later (and at least the second frame).
+      const elapsed = (engageAt - 1) * spacing;
+      expect(elapsed).toBeGreaterThanOrEqual(constants.PINCH_ENGAGE_MS);
+      expect(elapsed - spacing).toBeLessThan(constants.PINCH_ENGAGE_MS);
+      expect(engageAt - 1).toBeGreaterThanOrEqual(constants.MIN_GESTURE_FRAMES - 1);
+    }
+    // The cases the task names: 2 frames at 10 frames per second, 4 at 30 (33 ms apart).
+    expect(run(spaced([open, ...same(closed, 2)], 100)).events.map(event => event.type)).toEqual(['found', 'engage']);
+    expect(run(spaced([open, ...same(closed, 3)], 33)).events.map(event => event.type)).toEqual(['found']);
+    expect(run(spaced([open, ...same(closed, 4)], 33)).events.map(event => event.type)).toEqual(['found', 'engage']);
+  });
+
+  it('needs the distance strictly below the engage threshold: 40 mm, not 30 mm', () => {
+    expect(constants.PINCH_ENGAGE_M).toBe(0.04);
+    expect(types(run(spaced(same(hand(0.04), 8), 100)).events)).toEqual(['found']);
+    expect(types(run(spaced(same(hand(0.0399), 2), 100)).events)).toEqual(['found', 'engage']);
+    // 26 mm, what a closed pinch measured on the webcam, engages; 58 mm, half open, does not.
+    expect(types(run(spaced(same(hand(0.026), 2), 100)).events)).toEqual(['found', 'engage']);
+    expect(types(run(spaced(same(hand(0.058), 8), 100)).events)).toEqual(['found']);
+  });
+
+  it('never engages on a single noisy frame, however long the frames are apart or how long the time-out is', () => {
+    expect(types(run(spaced([open, closed, open, closed, open, closed, open], 100)).events)).toEqual(['found']);
+    expect(types(run(spaced([closed, open, closed, open], 33)).events)).toEqual(['found']);
+    // With a long loss window a lone closed frame after a long gap has the time but not the second frame.
+    let state = initialPinchState();
+    const events: PinchEvent[] = [];
+    for (const [input, time] of [[open, 0], [closed, 1000], [{ kind: 'tick' }, 1900]] as Array<[PinchInput, number]>) {
+      const result = pinchStep(state, input, time, 5000);
+      state = result.state;
+      events.push(...result.events);
+    }
+    expect(types(events)).toEqual(['found']);
+    expect(state.engaged).toBe(false);
+    // The second closed frame completes the minimum, and 1000 ms is more than enough time.
+    expect(types(pinchStep(state, closed, 2000, 5000).events)).toEqual(['engage']);
   });
 
   it('ignores a one-frame spike, and a distance between the thresholds breaks the streak', () => {
-    expect(types(run([[hand(0.01), 0], [hand(0.08), 16], [hand(0.01), 32], [hand(0.08), 48]]).events)).toEqual(['found']);
-    expect(types(run([[hand(0.01), 0], [hand(0.04), 16], [hand(0.01), 32]]).events)).toEqual(['found']);
+    expect(types(run(spaced([closed, open, closed, open], 100)).events)).toEqual(['found']);
+    expect(types(run(spaced([closed, hand(0.045), closed], 100)).events)).toEqual(['found']);
   });
 
   it('never engages without a pinch distance, and a missing distance breaks the streak', () => {
-    expect(types(run([[hand(null), 0], [hand(null), 16], [hand(null), 32], [hand(null), 48]]).events)).toEqual(['found']);
-    expect(types(run([[hand(0.01), 0], [hand(null), 16], [hand(0.01), 32]]).events)).toEqual(['found']);
+    expect(types(run(spaced([hand(null), hand(null), hand(null), hand(null)], 100)).events)).toEqual(['found']);
+    expect(types(run(spaced([closed, hand(null), closed], 100)).events)).toEqual(['found']);
   });
 
-  const engaged = () => run([[hand(0.01), 0], [hand(0.01), 16]]);
-
-  it('releases after three consecutive frames above the release threshold', () => {
-    const start = engaged();
-    const { log } = run([[hand(0.08), 32], [hand(0.08), 48], [hand(0.08), 64]], start.state);
-    expect(log.map(types)).toEqual([[], [], ['release']]);
-    expect(log[2]![0]).toEqual({ type: 'release', tap: true, point: cursor });
+  it('a frame without a hand breaks the streak', () => {
+    expect(types(run(spaced([closed, { kind: 'none' }, closed], 100)).events)).toEqual(['found']);
   });
 
-  it('keeps the pinch between the thresholds and through a one-frame spike', () => {
+  const engaged = () => run(spaced([closed, closed], 100));
+
+  it('releases in two frames at 10 frames per second', () => {
     const start = engaged();
-    const { events, state } = run([
-      [hand(0.04), 32], [hand(0.05), 48], [hand(0.08), 64], [hand(0.01), 80], [hand(0.08), 96], [hand(0.08), 112], [hand(0.04), 128],
-    ], start.state);
+    const { log } = run(spaced([open, open], 100, 200), start.state);
+    expect(log.map(types)).toEqual([[], ['release']]);
+    expect(log[1]![0]).toEqual({ type: 'release', tap: true, point: cursor });
+  });
+
+  it('releases after PINCH_RELEASE_MS from the first qualifying frame, whatever the frame rate', () => {
+    for (const spacing of [20, 33, 50, 100, 200]) {
+      const start = engaged();
+      const frames = run(spaced(same(open, 12), spacing, 200), start.state).log;
+      const releaseAt = frames.findIndex(events => types(events).includes('release'));
+      expect(releaseAt).toBeGreaterThanOrEqual(1);
+      expect(releaseAt * spacing).toBeGreaterThanOrEqual(constants.PINCH_RELEASE_MS);
+      expect((releaseAt - 1) * spacing).toBeLessThan(constants.PINCH_RELEASE_MS);
+    }
+    // 30 frames per second: three frames, 66 ms.
+    const at30 = run(spaced(same(open, 3), 33, 200), engaged().state);
+    expect(at30.log.map(types)).toEqual([[], [], ['release']]);
+    expect(run(spaced(same(open, 2), 33, 200), engaged().state).events).toEqual([]);
+  });
+
+  it('does not release on one noisy frame, also not at a low frame rate', () => {
+    for (const spacing of [33, 100, 200]) {
+      const { events, state } = run(spaced([open, closed, open, closed, open], spacing, 200), engaged().state);
+      expect(events).toEqual([]);
+      expect(state.engaged).toBe(true);
+    }
+  });
+
+  it('keeps the pinch between the thresholds and through a one-frame spike: release needs more than 55 mm', () => {
+    expect(constants.PINCH_RELEASE_M).toBe(0.055);
+    const start = engaged();
+    const { events, state } = run(spaced([
+      hand(0.04), hand(0.05), hand(0.055), hand(0.055), hand(0.08), hand(0.01), hand(0.08), hand(0.01), hand(0.045),
+    ], 100, 200), start.state);
     expect(events).toEqual([]);
     expect(state.engaged).toBe(true);
+    expect(types(run(spaced(same(hand(0.0551), 2), 100, 200), engaged().state).events)).toEqual(['release']);
   });
 
   it('is a tap inside the dead zone and a drag outside it', () => {
     const tap = run([
-      [hand(0.01, { x: 100, y: 100 }), 0], [hand(0.01, { x: 100, y: 100 }), 16],
-      [hand(0.01, { x: 105, y: 104 }), 32],
-      [hand(0.08, { x: 105, y: 104 }), 48], [hand(0.08, { x: 105, y: 104 }), 64], [hand(0.08, { x: 105, y: 104 }), 80],
+      [hand(0.01, { x: 100, y: 100 }), 0], [hand(0.01, { x: 100, y: 100 }), 100],
+      [hand(0.01, { x: 105, y: 104 }), 200],
+      [hand(0.08, { x: 105, y: 104 }), 300], [hand(0.08, { x: 105, y: 104 }), 400], [hand(0.08, { x: 105, y: 104 }), 500],
     ]);
     expect(types(tap.events)).toEqual(['found', 'engage', 'release']);
     expect(tap.events.at(-1)).toMatchObject({ type: 'release', tap: true });
 
     const drag = run([
-      [hand(0.01, { x: 100, y: 100 }), 0], [hand(0.01, { x: 100, y: 100 }), 16],
-      [hand(0.01, { x: 112, y: 100 }), 32], [hand(0.01, { x: 140, y: 100 }), 48],
-      [hand(0.01, { x: 102, y: 100 }), 64],
-      [hand(0.08, { x: 102, y: 100 }), 80], [hand(0.08, { x: 102, y: 100 }), 96], [hand(0.08, { x: 102, y: 100 }), 112],
+      [hand(0.01, { x: 100, y: 100 }), 0], [hand(0.01, { x: 100, y: 100 }), 100],
+      [hand(0.01, { x: 112, y: 100 }), 200], [hand(0.01, { x: 140, y: 100 }), 300],
+      [hand(0.01, { x: 102, y: 100 }), 400],
+      [hand(0.08, { x: 102, y: 100 }), 500], [hand(0.08, { x: 102, y: 100 }), 600], [hand(0.08, { x: 102, y: 100 }), 700],
     ]);
     // drag-start is emitted once, and returning to the dead zone does not make the release a tap.
     expect(types(drag.events)).toEqual(['found', 'engage', 'drag-start', 'release']);
@@ -263,14 +338,14 @@ describe('pinchStep', () => {
 
   it('does not turn a tap into a drag on the releasing frame', () => {
     const start = engaged();
-    const { events } = run([[hand(0.08), 32], [hand(0.08), 48], [hand(0.08, { x: 180, y: 100 }), 64]], start.state);
+    const { events } = run([[hand(0.08), 200], [hand(0.08, { x: 180, y: 100 }), 300]], start.state);
     expect(events).toEqual([{ type: 'release', tap: true, point: { x: 180, y: 100 } }]);
   });
 
   it('continues the pinch when the hand is missing for less than TRACKING_LOSS_MS', () => {
     const start = engaged();
     const { events, state } = run([
-      [{ kind: 'none' }, 32], [{ kind: 'tick' }, 100], [{ kind: 'none' }, 200], [{ kind: 'tick' }, 16 + TRACKING_LOSS_MS - 1], [hand(0.01), 16 + TRACKING_LOSS_MS - 1],
+      [{ kind: 'none' }, 150], [{ kind: 'tick' }, 200], [{ kind: 'none' }, 300], [{ kind: 'tick' }, 100 + TRACKING_LOSS_MS - 1], [hand(0.01), 100 + TRACKING_LOSS_MS - 1],
     ], start.state);
     expect(events).toEqual([]);
     expect(state.engaged).toBe(true);
@@ -278,10 +353,10 @@ describe('pinchStep', () => {
 
   it('loses an engaged pinch after TRACKING_LOSS_MS without a hand, and finds the hand again later', () => {
     const start = engaged();
-    const lost = run([[{ kind: 'none' }, 100], [{ kind: 'tick' }, 16 + TRACKING_LOSS_MS]], start.state);
+    const lost = run([[{ kind: 'none' }, 200], [{ kind: 'tick' }, 100 + TRACKING_LOSS_MS]], start.state);
     expect(lost.events).toEqual([{ type: 'lost', engaged: true }]);
     expect(lost.state.engaged).toBe(false);
-    const back = run([[{ kind: 'tick' }, 700], [hand(0.08), 716]], lost.state);
+    const back = run([[{ kind: 'tick' }, 800], [hand(0.08), 816]], lost.state);
     expect(types(back.events)).toEqual(['found']);
   });
 
@@ -293,15 +368,28 @@ describe('pinchStep', () => {
   });
 
   it('treats a hand that arrives after a long gap without ticks as lost and found', () => {
-    const seen = run([[hand(0.01), 0], [hand(0.01), 16]]);
-    const result = run([[hand(0.08), 16 + TRACKING_LOSS_MS + 50]], seen.state);
+    const seen = engaged();
+    const result = run([[hand(0.08), 100 + TRACKING_LOSS_MS + 50]], seen.state);
     expect(types(result.events)).toEqual(['lost', 'found']);
     expect(result.state.engaged).toBe(false);
   });
 
   it('counts only tracking frames toward a streak, not ticks', () => {
-    const { events } = run([[hand(0.01), 0], [{ kind: 'tick' }, 16], [{ kind: 'tick' }, 32]]);
+    const { events } = run([[hand(0.01), 0], [{ kind: 'tick' }, 100], [{ kind: 'tick' }, 200]]);
     expect(types(events)).toEqual(['found']);
+  });
+});
+
+describe('holdStep', () => {
+  it('needs both the time from the first qualifying frame and the minimum number of frames, and a non-qualifying frame ends the streak', () => {
+    const first = holdStep(0, null, true, 1000, 80);
+    expect(first).toEqual({ streak: 1, since: 1000, done: false });
+    expect(holdStep(first.streak, first.since, true, 1060, 80).done).toBe(false);
+    expect(holdStep(first.streak, first.since, true, 1080, 80)).toEqual({ streak: 2, since: 1000, done: true });
+    // Enough time in one frame is not enough: two frames are the minimum.
+    expect(holdStep(0, null, true, 1000, 0).done).toBe(false);
+    expect(holdStep(1, 1000, true, 1000, 0).done).toBe(true);
+    expect(holdStep(first.streak, first.since, false, 1100, 80)).toEqual({ streak: 0, since: null, done: false });
   });
 });
 
@@ -356,13 +444,13 @@ describe('pickTarget and settleStep', () => {
   });
 
   it('keeps the grabbed target when the cursor drifts while the fingers close', () => {
-    // Part a is left of x = 100 and part b right of it; the cursor drifts 6 px across the edge over 3 frames.
+    // Part a is left of x = 100 and part b right of it; the cursor drifts 6 px across the edge over the frames that engage the pinch.
     const scene = (point: Point): Target => part(point.x < 100 ? 'a' : 'b');
     let settle = settleStep(settleStep(initialSettleState(0), scene({ x: 95, y: 0 }), 0), scene({ x: 95, y: 0 }), 500);
     expect(targetKey(settle.settled)).toBe('o1:a');
     let pinch = initialPinchState();
     let grabbed: Target | null = null;
-    const frames: Array<[number, number, number]> = [[95, 0.08, 500], [98, 0.02, 516], [101, 0.02, 532]];
+    const frames: Array<[number, number, number]> = [[95, 0.08, 500], [98, 0.02, 540], [101, 0.02, 580], [101, 0.02, 620]];
     for (const [x, pinchM, time] of frames) {
       const cursor = { x, y: 0 };
       settle = settleStep(settle, pickTarget(cursor, [], scene), time);

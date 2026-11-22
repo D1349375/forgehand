@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CANCEL_NOTICE_MS, MIN_CONTROL_FPS, SPEED_HOLD_MS } from '../../src/hands/constants';
+import { CANCEL_NOTICE_MS, MIN_CONTROL_FPS, PINCH_ENGAGE_M, PINCH_RELEASE_M, SPEED_HOLD_MS } from '../../src/hands/constants';
 import { handGate, initialSpeedState, parseLossMs, parseMinFps, speedStep, type Gate, type SpeedState } from '../../src/hands/gate';
 import { handStatus, trackingDebugLine } from '../../src/hands/text';
 import type { TrackerStatus } from '../../src/hands/useHandTracking';
@@ -136,7 +136,7 @@ describe('parseMinFps (?hands-min-fps)', () => {
     expect(parseMinFps('?hands-min-fps=25')).toBe(25);
   });
   it('falls back for negative, non-numeric or non-finite values', () => {
-    for (const bad of ['-1', 'abc', 'NaN', 'Infinity', '1e999', '5fps']) expect(parseMinFps('?hands-min-fps=' + bad)).toBe(MIN_CONTROL_FPS);
+    for (const bad of ['-1', 'abc', 'NaN', 'Infinity', '1e999', '7fps']) expect(parseMinFps('?hands-min-fps=' + bad)).toBe(MIN_CONTROL_FPS);
   });
   it('uses the given fallback', () => {
     expect(parseMinFps('?hands-min-fps=x', 12)).toBe(12);
@@ -156,6 +156,28 @@ describe('speedStep with a custom threshold', () => {
     let low = initialSpeedState();
     for (let t = 0; t < 3; t++) low = speedStep(low, 5, t * 1000, 4);
     expect(low.slow).toBe(false);
+  });
+});
+
+describe('the default speed gate (Task 10)', () => {
+  it('is 5 frames per second: the 9-10 fps of the user laptop never locks hand control, 4 fps does', () => {
+    expect(MIN_CONTROL_FPS).toBe(5);
+    let laptop = initialSpeedState();
+    for (let t = 0; t < 6; t++) laptop = speedStep(laptop, 9, t * 1000);
+    expect(laptop.slow).toBe(false);
+    let slow = initialSpeedState();
+    for (let t = 0; t < 6; t++) slow = speedStep(slow, 4, t * 1000);
+    expect(slow.slow).toBe(true);
+  });
+});
+
+describe('trackingDebugLine pinch thresholds (Task 10)', () => {
+  it('shows the engage and release thresholds in mm, so the next webcam test can read them', () => {
+    expect(trackingDebugLine({ delegate: 'GPU', fps: 9, inferenceMs: 80, hands: 1, pinchMm: [26], pinchThresholdsMm: { engage: PINCH_ENGAGE_M * 1000, release: PINCH_RELEASE_M * 1000 } }))
+      .toBe('GPU · 每秒 9 幀 · 辨識 80 ms · 1 隻手 · 捏合 26 mm · 捏合門檻 40／55 mm');
+  });
+  it('leaves the line as it was without thresholds', () => {
+    expect(trackingDebugLine({ delegate: 'GPU', fps: 9, inferenceMs: 80, hands: 0, pinchMm: [] })).not.toContain('門檻');
   });
 });
 

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { SNAP_SETTLE_MS } from '../../shared/joint-constants';
 import { addJoint, addObject, emptyWorkspace, type ObjectTransform, type Workspace } from '../../shared/workspace';
-import { DRAG_GAIN, FIST_ENGAGE_FRAMES, FIST_RELEASE_FRAMES, TRACKING_LOSS_MS } from '../../src/hands/constants';
+import { DRAG_GAIN, FIST_ENGAGE_MS, FIST_RELEASE_MS, TRACKING_LOSS_MS } from '../../src/hands/constants';
 import {
   HandController, type AssemblePreview, type AssembleSession, type GrabSession, type HandPort, type HoldSession, type OrbitSession,
 } from '../../src/hands/controller';
@@ -77,6 +77,9 @@ describe('the assemble badge and debug line', () => {
 const VIEW = { left: 0, top: 0, width: 1000, height: 800 };
 const VIDEO = { width: 1000, height: 800 };
 const FRAME_MS = 33;
+/** Frames at FRAME_MS spacing that a fist needs to engage and to release. The first qualifying frame starts the clock, so one more than the time spans. */
+const FIST_ENGAGE_FRAMES = Math.ceil(FIST_ENGAGE_MS / FRAME_MS) + 1;
+const FIST_RELEASE_FRAMES = Math.ceil(FIST_RELEASE_MS / FRAME_MS) + 1;
 
 /** A hand whose palm centre is at client point (x, y): an open hand, or a fist. */
 function palmHand(x: number, y: number, mode: 'open' | 'fist'): HandSample {
@@ -560,5 +563,105 @@ describe('createAssembleSession on two boxes', () => {
     const { session, joiner } = rig();
     joiner.invalidate();
     expect(session.preview(NONE, NONE, 5000)).toBeNull();
+  });
+});
+
+// ---- Task 10: the snap stays latched while a hand opens ---------------------------------------------------------------------------
+
+describe('HandController, two fists: the freeze while a fist opens (Task 10)', () => {
+  /** A fist whose fingers have begun to open: the curl ratio is above the engage ratio and below the release ratio. */
+  const halfOpen = (at: readonly [number, number]): HandSample => ({ ...fist(at), curl: 1.1 });
+
+  it('keeps a ready snap latched while the joining fist opens: nothing is asked of the scene, and the confirmed release commits the join', () => {
+    const rig = assembling();
+    const session = rig.assembles[0]!;
+    session.ready = true;
+    rig.run([fist(first), fist(second)], 2);
+    expect(rig.view(1)!.badge).toBe('手勢：可以接合');
+    const previews = session.previews.length;
+    // The opening hand drifts, and the scene would now say "not ready"; the controller does not ask while a hand opens.
+    session.ready = false;
+    rig.run([fist(first), halfOpen([second[0] + 20, second[1]])], 3);
+    rig.run([fist(first), halfOpen([second[0] + 45, second[1] + 10])], 3);
+    expect(session.previews).toHaveLength(previews);
+    expect(rig.view(1)!.badge).toBe('手勢：可以接合');
+    expect(rig.last.link).toBeNull();
+    expect(session.commits).toEqual([]);
+    rig.run([fist(first), open([second[0] + 60, second[1] + 10])], FIST_RELEASE_FRAMES);
+    expect(session.commits).toEqual([true]);
+    expect(session.cancels).toBe(0);
+    expect(session.previews).toHaveLength(previews);
+    expect(rig.controller.stats).toMatchObject({ commits: 1, cancels: 0, joins: 1 });
+  });
+
+  it('latches the snap the same way when the first fist is the one that opens', () => {
+    const rig = assembling();
+    const session = rig.assembles[0]!;
+    session.ready = true;
+    rig.run([fist(first), fist(second)], 2);
+    const previews = session.previews.length;
+    session.ready = false;
+    rig.run([halfOpen([first[0] - 30, first[1]]), fist(second)], 6);
+    expect(session.previews).toHaveLength(previews);
+    rig.run([open([first[0] - 40, first[1]]), fist(second)], FIST_RELEASE_FRAMES);
+    expect(session.commits).toEqual([true]);
+    expect(rig.controller.stats.joins).toBe(1);
+  });
+
+  it('asks the scene again when the hands close before the release, so the existing rules can release the snap', () => {
+    const rig = assembling();
+    const session = rig.assembles[0]!;
+    session.ready = true;
+    rig.run([fist(first), fist(second)], 2);
+    const previews = session.previews.length;
+    rig.run([fist(first), halfOpen(second)], 4);
+    expect(session.previews).toHaveLength(previews);
+    session.ready = false;
+    rig.run([fist(first), fist(second)], 2);
+    expect(session.previews.length).toBeGreaterThan(previews);
+    expect(rig.view(1)!.badge).toBe('手勢：握住 Other');
+    rig.run([fist(first), open(second)], FIST_RELEASE_FRAMES);
+    expect(session.commits).toEqual([true]);
+    expect(rig.controller.stats.joins).toBe(0);
+  });
+
+  it('resumes the two holds without a jump: the offsets after closing again equal the last offsets before the freeze', () => {
+    const rig = assembling();
+    const session = rig.assembles[0]!;
+    for (let step = 1; step <= 4; step++) rig.run([fist([first[0] + 10 * step, first[1]]), fist([second[0] - 15 * step, second[1]])], 2);
+    rig.run([fist([first[0] + 40, first[1]]), fist([second[0] - 60, second[1]])], 10);
+    const before = session.previews.at(-1)!;
+    expect(before.owner.x).toBeGreaterThan(30);
+    expect(before.joiner.x).toBeLessThan(-50);
+    const count = session.previews.length;
+    // Both hands travel on while the joining fist opens.
+    for (let step = 1; step <= 4; step++) rig.run([fist([first[0] + 40 + 20 * step, first[1] + 10 * step]), halfOpen([second[0] - 60 - 25 * step, second[1] + 10 * step])], 2);
+    expect(session.previews).toHaveLength(count);
+    rig.run([fist([first[0] + 120, first[1] + 40]), fist([second[0] - 160, second[1] + 40])], 1);
+    expect(session.previews).toHaveLength(count + 1);
+    const after = session.previews.at(-1)!;
+    expect(after.owner.x).toBeCloseTo(before.owner.x, 6);
+    expect(after.owner.y).toBeCloseTo(before.owner.y, 6);
+    expect(after.joiner.x).toBeCloseTo(before.joiner.x, 6);
+    expect(after.joiner.y).toBeCloseTo(before.joiner.y, 6);
+    // And they follow again from there: the owner offset grows by what the (filtered) palm travelled since the resume.
+    const palmAtResume = rig.view(0)!.palm.x;
+    rig.run([fist([first[0] + 160, first[1] + 40]), fist([second[0] - 160, second[1] + 40])], 30);
+    expect(rig.view(0)!.palm.x - palmAtResume).toBeGreaterThan(30);
+    expect(session.previews.at(-1)!.owner.x).toBeCloseTo(before.owner.x + (rig.view(0)!.palm.x - palmAtResume), 3);
+  });
+
+  it('freezes a plain fist hold while the fist opens too, in the same rig', () => {
+    const rig = makeRig();
+    rig.run([open(first), open(second)], 4);
+    rig.run([fist(first), open(second)], FIST_ENGAGE_FRAMES);
+    rig.run([fist([first[0] + 60, first[1]]), open(second)], 30);
+    const hold = rig.holds[0]!;
+    const count = hold.previews.length;
+    rig.run([halfOpen([first[0] + 120, first[1]]), open(second)], 6);
+    expect(hold.previews).toHaveLength(count);
+    rig.run([open([first[0] + 140, first[1]]), open(second)], FIST_RELEASE_FRAMES);
+    expect(hold.commits).toBe(1);
+    expect(hold.previews).toHaveLength(count);
   });
 });
