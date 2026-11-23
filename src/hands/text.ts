@@ -66,9 +66,10 @@ export function shortenName(name: string, max: number = BADGE_NAME_MAX): string 
  * `target` is the settled target, or for a grab the grabbed part. `inert` marks a pinch that
  * may not act because the other hand's gesture runs. `gesture` tells the joining hand's badge (zoom, explode); `value` is the
  * explode percentage of the pull (requirement 95) or the signed angle of a rotate in degrees (requirement 98); `objectName` is the held
- * object's name; `ready` is the snap of an assemble: the joining fist's badge then reads 可以接合 instead of the held object.
+ * object's name; `ready` is the snap of an assemble: the joining hand's badge then reads 可以接合 instead of the held object.
+ * `input` is `pinch` for a hold that a pinch started (the two-pinch join, Task 11): 捏住 instead of 握住.
  */
-export function badgeText(view: { state: HandState; target: Target; gesture: GestureKind; value: number | null; objectName?: string; inert?: boolean; ready?: boolean }): string {
+export function badgeText(view: { state: HandState; target: Target; gesture: GestureKind; value: number | null; objectName?: string; inert?: boolean; ready?: boolean; input?: 'pinch' | 'fist' }): string {
   const name = view.target.kind === 'empty' ? '' : shortenName(view.target.label);
   switch (view.state) {
     case 'none': return '';
@@ -84,7 +85,9 @@ export function badgeText(view: { state: HandState; target: Target; gesture: Ges
     case 'fist': return '手勢：握拳';
     case 'hold':
       if (view.gesture === 'assemble' && view.ready) return '手勢：可以接合';
-      return view.objectName ? `手勢：握住 ${shortenName(view.objectName)}` : '手勢：握住';
+      return view.objectName
+        ? `手勢：${view.input === 'pinch' ? '捏住' : '握住'} ${shortenName(view.objectName)}`
+        : view.input === 'pinch' ? '手勢：捏住' : '手勢：握住';
     case 'tracked': return '手勢：待命';
   }
 }

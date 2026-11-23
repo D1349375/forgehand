@@ -8,7 +8,7 @@ import { fistStep, initialFistState, type FistEvent, type FistState } from './fi
 import { fistAllowed, type Gate } from './gate';
 import { joinGesture, type JoinContext, type JoinRule, type OwnerGesture, type TwoHandGesture } from './join';
 import { OneEuroFilter2D } from './one-euro';
-import { angleDelta, beyondDeadZone, pairAngle, pairSpan } from './pair';
+import { angleDelta, beyondDeadZone, knobAngle, pairAngle, pairSpan } from './pair';
 import { initialPinchState, pinchStep, type PinchEvent, type PinchInput, type PinchState } from './pinch';
 import { assignHands, dedupeHands } from './slots';
 import {
@@ -159,6 +159,11 @@ interface Joiner {
 interface Session {
   owner: HandSlot;
   kind: OwnerGesture;
+  /**
+   * What the owner's hand does: a pinch (a grab, an orbit, a press, and a hold that came from a grab in a two-pinch join) or a fist
+   * (a hold). It picks the owner's point (cursor or palm centre), the "moved" flag and the opening rule, so a hold can be either.
+   */
+  input: 'pinch' | 'fist';
   /** The scene's session; null for a press. */
   scene: GrabSession | HoldSession | OrbitSession | null;
   pressId?: string;
@@ -256,8 +261,10 @@ export class HandController {
     const session = this.session;
     if (!session) return;
     const joinerSlot = session.joiner?.slot ?? null;
-    // A grab needs full control; a hold needs the fist to be allowed (full control, or the exploded view); the rest stop only when off.
-    const endsAll = session.kind === 'grab' ? gate.level !== 'full' : session.kind === 'hold' ? !fistAllowed(gate) : gate.level === 'off';
+    // A grab needs full control, and so does a hold that a pinch started; a fist hold needs the fist to be allowed (full control, or the
+    // exploded view); the rest stop only when off.
+    const endsAll = session.kind === 'grab' || (session.kind === 'hold' && session.input === 'pinch')
+      ? gate.level !== 'full' : session.kind === 'hold' ? !fistAllowed(gate) : gate.level === 'off';
     if (endsAll) {
       if (isEditing(session.kind)) {
         this.cancelSession('gate');
@@ -269,7 +276,7 @@ export class HandController {
       return;
     }
     const joiner = session.joiner;
-    if (joiner && this.join(session.kind, { kind: joiner.input, target: joiner.target }, this.gate, this.contextOf(session)) !== joiner.gesture) {
+    if (joiner && this.join(this.ruleOwner(session), { kind: joiner.input, target: joiner.target }, this.gate, this.contextOf(session)) !== joiner.gesture) {
       if (joiner.assemble) {
         // A gate change away from full control cancels an assemble: both objects go back (requirement 62).
         this.cancelSession('gate');
@@ -282,10 +289,18 @@ export class HandController {
     }
   }
 
-  /** What the join rule may ask about the running gesture: the held object, and whether two objects are one assembly. */
+  /**
+   * The owner as the join rule knows it: a hold that a pinch started (the two-pinch join) is still the `grab` that the rule's
+   * `assemble` row was given, so a gate change asks the same question again and gets the same answer at full control.
+   */
+  private ruleOwner(session: Session): OwnerGesture {
+    return session.kind === 'hold' && session.input === 'pinch' ? 'grab' : session.kind;
+  }
+
+  /** What the join rule may ask about the running gesture: the held or grabbed object, and whether two objects are one assembly. */
   private contextOf(session: Session): JoinContext {
     return {
-      ownerObjectId: session.kind === 'hold' && session.target.kind === 'part' ? session.target.objectId : null,
+      ownerObjectId: (session.kind === 'hold' || session.kind === 'grab') && session.target.kind === 'part' ? session.target.objectId : null,
       sameAssembly: (a, b) => this.port.sameAssembly?.(a, b) ?? a === b,
     };
   }
@@ -426,7 +441,7 @@ export class HandController {
           this.blocked[slot] = 'passive';
           return;
         case 'press':
-          this.session = { owner: slot, kind: 'press', scene: null, pressId: action.id, target: settled, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null, frozen: false, applied: null };
+          this.session = { owner: slot, kind: 'press', input: 'pinch', scene: null, pressId: action.id, target: settled, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null, frozen: false, applied: null };
           return;
         case 'grab': {
           this.port.select(action.objectId, action.partId);
@@ -435,7 +450,7 @@ export class HandController {
             this.blocked[slot] = 'passive';
             return;
           }
-          this.session = { owner: slot, kind: 'grab', scene, target: settled, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null, frozen: false, applied: null };
+          this.session = { owner: slot, kind: 'grab', input: 'pinch', scene, target: settled, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null, frozen: false, applied: null };
           return;
         }
         case 'orbit': {
@@ -444,18 +459,62 @@ export class HandController {
             this.blocked[slot] = 'passive';
             return;
           }
-          this.session = { owner: slot, kind: 'orbit', scene, target: EMPTY_TARGET, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null, frozen: false, applied: null };
+          this.session = { owner: slot, kind: 'orbit', input: 'pinch', scene, target: EMPTY_TARGET, ref: track.cursor, moved: false, turned: false, missingSince: null, joiner: null, frozen: false, applied: null };
           return;
         }
       }
     }
     if (session.owner !== slot && !session.joiner) {
-      const gesture = this.join(session.kind, { kind: 'pinch', target: settled }, this.gate);
-      if (gesture) {
+      const gesture = this.join(this.ruleOwner(session), { kind: 'pinch', target: settled }, this.gate, this.contextOf(session));
+      // A port without holds or assembles cannot join: the pinch is inert, as a fist is.
+      const canAssemble = session.kind === 'grab' && session.target.kind === 'part' && settled.kind === 'part' && !!this.port.beginHold && !!this.port.beginAssemble;
+      if (gesture === 'assemble' && canAssemble) {
+        // The two-pinch join: the part grab gives way to two holds. If the scene refuses, the gesture is over (nothing to put back).
+        if (!this.startPinchAssemble(session, slot, settled)) this.abandonPinchAssemble(session, slot);
+        return;
+      }
+      if (gesture && gesture !== 'assemble') {
         this.startJoiner(session, slot, gesture, 'pinch', settled);
         return;
       }
     }
+    this.blocked[slot] = 'inert';
+    recordInert(this.stats);
+  }
+
+  /**
+   * The two-pinch join (requirements 108-111): the owner's part grab is cancelled (the part goes back, nothing is committed, and the
+   * switch is neither counted as a cancel nor reported), then both hands hold whole objects, A's assembly from the owner's cursor and B's
+   * from the joiner's, each measured from where its hand is now, so nothing jumps. False when the scene refuses; the grab is gone then.
+   */
+  private startPinchAssemble(session: Session, slot: HandSlot, target: Extract<Target, { kind: 'part' }>): boolean {
+    const held = session.target;
+    if (held.kind !== 'part') return false;
+    (session.scene as GrabSession).cancel();
+    const hold = this.port.beginHold?.(held.objectId, held.hit) ?? null;
+    if (!hold) return false;
+    const assemble = this.port.beginAssemble?.(hold, target.objectId, target.hit) ?? null;
+    if (!assemble) {
+      hold.cancel();
+      return false;
+    }
+    session.kind = 'hold';
+    session.scene = hold;
+    session.ref = { ...this.tracks[session.owner].cursor };
+    session.moved = false;
+    session.turned = false;
+    session.frozen = false;
+    session.applied = null;
+    this.startJoiner(session, slot, 'assemble', 'pinch', target);
+    session.joiner!.assemble = assemble;
+    recordAssemble(this.stats);
+    return true;
+  }
+
+  /** The scene refused the two holds after the grab was cancelled: the session ends and both pinches stay inert until they open. */
+  private abandonPinchAssemble(session: Session, slot: HandSlot): void {
+    this.session = null;
+    this.blocked[session.owner] = 'passive';
     this.blocked[slot] = 'inert';
     recordInert(this.stats);
   }
@@ -465,20 +524,28 @@ export class HandController {
     const owner = this.ownerPoint(session);
     const joinerPoint = input === 'fist' ? this.tracks[slot].palm : this.tracks[slot].cursor;
     const startValue = gesture === 'explode' ? Math.min(1, Math.max(0, this.port.explodeAmount?.() ?? 0)) : 0;
+    // A fist that turns a part like a knob reads its own angle; every other two-hand gesture reads the line between the hands.
+    const angle = input === 'fist' && gesture === 'rotate' ? knobAngle(this.tracks[slot].points) ?? 0 : pairAngle(owner, joinerPoint);
     session.joiner = {
       slot, gesture, input, target,
       startSpan: pairSpan(owner, joinerPoint), span: pairSpan(owner, joinerPoint),
-      lastAngle: pairAngle(owner, joinerPoint), angle: 0, startAngle: pairAngle(owner, joinerPoint), rotated: 0,
+      lastAngle: angle, angle: 0, startAngle: angle, rotated: 0,
       startValue, zoom: 1, explode: Math.round(startValue * 100) / 100,
-      assemble: null, ref: { ...this.tracks[slot].palm }, ready: false, applied: null,
+      assemble: null, ref: { ...joinerPoint }, ready: false, applied: null,
     };
     recordJoin(this.stats, gesture);
+  }
+
+  /** The angle a rotate joiner is measured by: the twist of its own hand for a fist (the knob), else the line from the owner to the joiner. */
+  private joinerAngle(session: Session, joiner: Joiner): number {
+    if (joiner.input === 'fist' && joiner.gesture === 'rotate') return knobAngle(this.tracks[joiner.slot].points) ?? joiner.lastAngle;
+    return pairAngle(this.ownerPoint(session), this.joinerPoint(joiner));
   }
 
   /** The point a gesture's owner is measured at: the palm centre of a fist, the cursor of a pinch. */
   private ownerPoint(session: Session): Point {
     const track = this.tracks[session.owner];
-    return session.kind === 'hold' ? track.palm : track.cursor;
+    return session.input === 'fist' ? track.palm : track.cursor;
   }
 
   /** The joining hand's point, by what it did. */
@@ -494,9 +561,19 @@ export class HandController {
     if (session.kind === 'grab') recordDrag(this.stats);
   }
 
+  /** An assemble that a pinch of this hand holds (the two-pinch join): the session has the assemble joiner and `slot` is one of its hands, by a pinch. */
+  private pinchAssembles(session: Session | null, slot: HandSlot): boolean {
+    const joiner = session?.joiner;
+    if (!session || !joiner?.assemble) return false;
+    return (session.owner === slot && session.input === 'pinch') || (joiner.slot === slot && joiner.input === 'pinch');
+  }
+
   private onRelease(slot: HandSlot, tap: boolean): void {
     const session = this.session;
-    if (session && session.owner === slot) {
+    if (this.pinchAssembles(session, slot)) {
+      // Either pinch opening ends the assemble for both hands, as either fist does (requirement 110); the other pinch is inert until it opens.
+      this.commitSession(true);
+    } else if (session && session.owner === slot) {
       this.finishOnRelease(session, tap);
     } else if (session?.joiner?.slot === slot) {
       this.leaveJoiner();
@@ -510,7 +587,12 @@ export class HandController {
     this.blocked[slot] = null;
     if (!engaged) return;
     const session = this.session;
-    if (session && session.owner === slot) {
+    if (this.pinchAssembles(session, slot)) {
+      // Either hand lost: both holds follow ON_TRACKING_LOSS, and a joint is never created (requirement 110).
+      this.noteGap(session!, now);
+      if (ON_TRACKING_LOSS === 'cancel') this.cancelSession('loss');
+      else this.commitSession(false);
+    } else if (session && session.owner === slot) {
       this.noteGap(session, now);
       if (session.kind === 'grab') {
         if (ON_TRACKING_LOSS === 'cancel') this.cancelSession('loss');
@@ -545,7 +627,7 @@ export class HandController {
     const session = this.session;
     if (session) {
       // Another hand's gesture runs: the fist joins it only if the rule has a row for it (the assemble row of a hold), else it is inert.
-      const gesture = session.owner !== slot && !session.joiner ? this.join(session.kind, { kind: 'fist', target }, this.gate, this.contextOf(session)) : null;
+      const gesture = session.owner !== slot && !session.joiner ? this.join(this.ruleOwner(session), { kind: 'fist', target }, this.gate, this.contextOf(session)) : null;
       if (gesture === 'assemble' && target.kind === 'part') {
         // The scene may refuse (an object it does not know, the mouse busy): the fist is inert then.
         const assemble = this.port.beginAssemble?.(session.scene as HoldSession, target.objectId, target.hit) ?? null;
@@ -569,7 +651,7 @@ export class HandController {
     this.port.activate?.(action.objectId);
     const scene = this.port.beginHold?.(action.objectId, action.hit) ?? null;
     if (!scene) return;
-    this.session = { owner: slot, kind: 'hold', scene, target, ref: track.palm, moved: false, turned: false, missingSince: null, joiner: null, frozen: false, applied: null };
+    this.session = { owner: slot, kind: 'hold', input: 'fist', scene, target, ref: track.palm, moved: false, turned: false, missingSince: null, joiner: null, frozen: false, applied: null };
   }
 
   /** Puts an engaged pinch of this hand away without committing anything: its own session ends, or it leaves the gesture it joined. */
@@ -693,6 +775,8 @@ export class HandController {
       this.blocked[joiner.slot] = 'passive';
       recordInert(this.stats);
     }
+    // In a two-pinch join either pinch can end the gesture while the other is still closed: that one stays inert until it opens.
+    if (joiner?.assemble && session.input === 'pinch' && this.tracks[session.owner].pinch.engaged) this.blocked[session.owner] = 'passive';
   }
 
   /** The joiner leaves; its effect stays. The owner continues from where it is, re-based so nothing jumps. */
@@ -734,7 +818,7 @@ export class HandController {
       } else {
         this.noteGap(session, now);
         // The owner moves once it has left the dead zone: its pinch for a grab or an orbit, its fist for a hold.
-        const moved = session.kind === 'hold' ? owner.fist.moved : owner.pinch.moved;
+        const moved = session.input === 'fist' ? owner.fist.moved : owner.pinch.moved;
         if (!frozen && !session.joiner && moved && session.scene) {
           const point = this.ownerPoint(session);
           const offset = { x: point.x - session.ref.x, y: point.y - session.ref.y };
@@ -757,8 +841,10 @@ export class HandController {
       const from = this.ownerPoint(this.session);
       const to = this.joinerPoint(joined);
       const span = pairSpan(from, to);
-      const angle = pairAngle(from, to);
-      if (!frozen && span >= TWO_HAND_MIN_SPAN_PX && joined.span >= TWO_HAND_MIN_SPAN_PX) joined.angle += angleDelta(joined.lastAngle, angle);
+      const angle = this.joinerAngle(this.session, joined);
+      // A fist that turns the part like a knob reads its own twist, wherever it is and however far from the owner (requirement 112).
+      const knob = joined.input === 'fist' && joined.gesture === 'rotate';
+      if (!frozen && (knob || (span >= TWO_HAND_MIN_SPAN_PX && joined.span >= TWO_HAND_MIN_SPAN_PX))) joined.angle += angleDelta(joined.lastAngle, angle);
       joined.lastAngle = angle;
       joined.span = span;
       if (!frozen && joined.gesture === 'zoom' && this.session.kind === 'orbit') {
@@ -822,7 +908,7 @@ export class HandController {
     if (session.kind === 'press') return false;
     const joiner = session.joiner;
     if (!this.present[session.owner] || (joiner && !this.present[joiner.slot])) return session.frozen;
-    const opening = this.isOpening(this.tracks[session.owner], session.kind === 'hold' ? 'fist' : 'pinch')
+    const opening = this.isOpening(this.tracks[session.owner], session.input)
       || (joiner !== null && this.isOpening(this.tracks[joiner.slot], joiner.input));
     if (opening) {
       session.frozen = true;
@@ -854,7 +940,7 @@ export class HandController {
     if (!joiner) return;
     const to = this.joinerPoint(joiner);
     joiner.startSpan = pairSpan(owner, to);
-    joiner.startAngle = pairAngle(owner, to);
+    joiner.startAngle = this.joinerAngle(session, joiner);
     joiner.lastAngle = joiner.startAngle;
     joiner.angle = 0;
     joiner.rotated = 0;
@@ -870,11 +956,16 @@ export class HandController {
     const assemble = joiner.assemble!;
     const owner = this.tracks[session.owner];
     const second = this.tracks[joiner.slot];
-    const ownerOffset = owner.fist.moved ? { x: owner.palm.x - session.ref.x, y: owner.palm.y - session.ref.y } : { x: 0, y: 0 };
-    const joinerOffset = second.fist.moved ? { x: second.palm.x - joiner.ref.x, y: second.palm.y - joiner.ref.y } : { x: 0, y: 0 };
+    // Each hand moves its object by its own point (the palm of a fist, the cursor of a pinch) once it has left its dead zone.
+    const ownerPoint = this.ownerPoint(session);
+    const joinerPoint = this.joinerPoint(joiner);
+    const ownerMoved = session.input === 'fist' ? owner.fist.moved : owner.pinch.moved;
+    const joinerMoved = joiner.input === 'fist' ? second.fist.moved : second.pinch.moved;
+    const ownerOffset = ownerMoved ? { x: ownerPoint.x - session.ref.x, y: ownerPoint.y - session.ref.y } : { x: 0, y: 0 };
+    const joinerOffset = joinerMoved ? { x: joinerPoint.x - joiner.ref.x, y: joinerPoint.y - joiner.ref.y } : { x: 0, y: 0 };
     const result = assemble.preview(ownerOffset, joinerOffset, now);
-    session.applied = { ...owner.palm };
-    joiner.applied = { ...second.palm };
+    session.applied = { ...ownerPoint };
+    joiner.applied = { ...joinerPoint };
     if (!result) {
       // The scene changed under one of the holds: both objects go back, and both fists stay inert until they open.
       const slot = joiner.slot;
@@ -901,14 +992,14 @@ export class HandController {
     return session.joiner ? session.joiner.gesture : session.kind;
   }
 
-  private stateOf(slot: HandSlot, track: Track): { state: HandState; target: Target; inert: boolean; objectName?: string; ready?: boolean } {
+  private stateOf(slot: HandSlot, track: Track): { state: HandState; target: Target; inert: boolean; objectName?: string; ready?: boolean; input?: 'pinch' | 'fist' } {
     const settled = track.settle.settled;
     const session = this.session;
     if (session?.owner === slot) {
       if (session.kind === 'grab') return { state: 'grab', target: session.target, inert: false };
       if (session.kind === 'orbit') return { state: 'orbit', target: settled, inert: false };
       if (session.kind === 'hold') {
-        return { state: 'hold', target: settled, inert: false, objectName: session.target.kind === 'part' ? session.target.objectName : undefined };
+        return { state: 'hold', target: settled, inert: false, objectName: session.target.kind === 'part' ? session.target.objectName : undefined, input: session.input };
       }
       return { state: 'hover', target: settled, inert: false };
     }
@@ -916,9 +1007,9 @@ export class HandController {
       const joiner = session.joiner;
       // The joining fist of an assemble holds the second object (requirement 63): the same state as the owner's hold, and a ready snap says so.
       if (joiner.assemble) {
-        return { state: 'hold', target: settled, inert: false, objectName: joiner.target.kind === 'part' ? joiner.target.objectName : undefined, ready: joiner.ready };
+        return { state: 'hold', target: settled, inert: false, objectName: joiner.target.kind === 'part' ? joiner.target.objectName : undefined, ready: joiner.ready, input: joiner.input };
       }
-      return { state: 'join', target: settled, inert: false };
+      return { state: 'join', target: settled, inert: false, input: joiner.input };
     }
     const blocked = this.blocked[slot];
     if (blocked) return { state: 'locked', target: settled, inert: blocked === 'inert' };
@@ -936,14 +1027,16 @@ export class HandController {
     for (const slot of [0, 1] as const) {
       const track = this.tracks[slot];
       if (!this.visible(track, now)) continue;
-      const { state, target, inert, objectName, ready } = this.stateOf(slot, track);
+      const { state, target, inert, objectName, ready, input } = this.stateOf(slot, track);
       // The joining hand of a pull shows the explode percentage (requirement 95).
       // The joining hand of a turn shows the signed angle so far in degrees (requirement 98).
       const joiner = state === 'join' ? this.session?.joiner : null;
       const value = joiner?.gesture === 'explode' ? Math.round(joiner.explode * 100) : joiner?.gesture === 'rotate' ? Math.round(joiner.rotated) : null;
       views.push({
         slot, state, targetKey: targetKey(track.settle.settled), points: track.points, cursor: track.cursor, palm: track.palm,
-        badge: badgeText({ state, target, gesture, value, objectName, inert, ready }),
+        badge: badgeText({ state, target, gesture, value, objectName, inert, ready, input }),
+        // Only what differs from the default of the state is exposed: a hold by a pinch, a join by a fist (the knob).
+        ...((state === 'hold' && input === 'pinch') || (state === 'join' && input === 'fist') ? { input } : {}),
       });
     }
     const session = this.session;

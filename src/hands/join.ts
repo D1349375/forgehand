@@ -28,16 +28,25 @@ export type JoinRule = (owner: OwnerGesture, joiner: JoinInput, gate: Gate, cont
  *   hold + pinch -> explode, at full control or while the exploded view is open (Task 7);
  *   hold + fist over a part of another object, not in the held object's assembly -> assemble, at full control only (assembly-joints Task 6).
  *   grab + pinch -> rotate, at full control only (Task 8).
- * The joining hand's own target is read by the assemble row only.
+ *   grab + pinch on a part of another object, not in the grabbed object's assembly -> assemble, at full control only
+ *     (hand-manipulation Task 11: the two-pinch join; the part grab is cancelled and both hands hold whole objects);
+ *   grab + pinch on anything else -> rotate by circling, grab + fist (anywhere) -> rotate by the twist of the fist, the knob (Task 11).
+ * The joining hand's own target is read by the two assemble rows only.
  */
 export const joinGesture: JoinRule = (owner, joiner, gate, context) => {
   if (owner === 'orbit' && joiner.kind === 'pinch' && gate.level !== 'off') return 'zoom';
   if (owner === 'hold' && joiner.kind === 'pinch' && fistAllowed(gate)) return 'explode';
-  if (owner === 'grab' && joiner.kind === 'pinch' && gate.level === 'full') return 'rotate';
-  if (owner === 'hold' && joiner.kind === 'fist' && joiner.target.kind === 'part' && gate.level === 'full' && context && context.ownerObjectId !== null) {
-    const held = context.ownerObjectId;
-    const other = joiner.target.objectId;
-    if (other !== held && !context.sameAssembly(held, other)) return 'assemble';
+  if ((owner === 'hold' && joiner.kind === 'fist') || (owner === 'grab' && joiner.kind === 'pinch')) {
+    if (joinsAnotherObject(joiner, gate, context)) return 'assemble';
   }
+  if (owner === 'grab' && gate.level === 'full') return 'rotate';
   return null;
 };
+
+/** The joining hand is over a part of an object that is not the owner's object and not in its assembly, at full control, with a context to say so. */
+function joinsAnotherObject(joiner: JoinInput, gate: Gate, context: JoinContext | undefined): boolean {
+  if (joiner.target.kind !== 'part' || gate.level !== 'full' || !context || context.ownerObjectId === null) return false;
+  const held = context.ownerObjectId;
+  const other = joiner.target.objectId;
+  return other !== held && !context.sameAssembly(held, other);
+}

@@ -9,7 +9,7 @@ import { explodeAmount } from '../../src/hands/drag';
 import type { Gate } from '../../src/hands/gate';
 import { joinGesture, type JoinRule } from '../../src/hands/join';
 import { handSample } from '../../src/hands/mapping';
-import { angleDelta, beyondDeadZone, pairAngle, pairSpan } from '../../src/hands/pair';
+import { angleDelta, beyondDeadZone, knobAngle, pairAngle, pairSpan } from '../../src/hands/pair';
 import { badgeBox, drawArc, drawBadge, drawLink, drawRing, drawSquare, type Box } from '../../src/hands/skeleton';
 import { createStats } from '../../src/hands/stats';
 import { HAND_COLOUR, LINK_COLOUR, overlayStyle } from '../../src/hands/style';
@@ -42,12 +42,12 @@ const PALM_DY = (() => { const sample = hand(500, 400); return sample.palm.y - s
 /**
  * A hand with its palm centre at client point (x, y): a fist, or an open hand (pinching when closed). The palm stays where it is while
  * the fingers curl, so a hand can go from open to pinching to fist without moving. `thumbIn` puts the thumb on the index finger of a fist
- * (a real fist does), so it has a short thumb-index distance.
+ * (a real fist does), so it has a short thumb-index distance. `roll` turns the hand on screen, in degrees, clockwise (Task 11).
  */
-function palmHand(x: number, y: number, mode: 'open' | 'pinch' | 'fist', thumbIn = false): HandSample {
+function palmHand(x: number, y: number, mode: 'open' | 'pinch' | 'fist', thumbIn = false, roll = 0, side: 'left' | 'right' = 'right'): HandSample {
   const fist = mode === 'fist';
   const cursor = clientToNormalized({ x, y: fist ? y : y - PALM_DY }, VIEW, VIDEO);
-  const sample = handSample(syntheticHand({ cursor, pinchM: mode === 'pinch' ? CLOSED : OPEN, fist }), VIEW, VIDEO)!;
+  const sample = handSample(syntheticHand({ cursor, pinchM: mode === 'pinch' ? CLOSED : OPEN, fist, roll, side, aspect: VIDEO.width / VIDEO.height }), VIEW, VIDEO)!;
   return thumbIn ? { ...sample, pinchM: CLOSED } : sample;
 }
 
@@ -220,14 +220,14 @@ describe('pair geometry', () => {
 
 describe('joinGesture', () => {
   const AGENT: Gate = { level: 'view-only', reason: 'agent' };
-  it('has three rows for pinches and fists without the assemble context: orbit + pinch is a zoom unless hand control is off (Task 6), hold + pinch is an explode at full control or while exploded (Task 7), grab + pinch is a rotate at full control only (Task 8); every other input is null', () => {
+  it('has these rows without the assemble context: orbit + pinch is a zoom unless hand control is off (Task 6), hold + pinch is an explode at full control or while exploded (Task 7), grab + pinch is a rotate by circling and grab + fist a rotate by the knob, both at full control only (Tasks 8 and 11); every other input is null', () => {
     for (const owner of ['press', 'grab', 'orbit', 'hold'] as const) {
       for (const kind of ['pinch', 'fist'] as const) {
         for (const target of [EMPTY_TARGET, part('o1', 'p1')]) {
           for (const gate of [FULL, VIEW_ONLY, AGENT, OFF]) {
             const zoom = owner === 'orbit' && kind === 'pinch' && gate.level !== 'off';
             const explode = owner === 'hold' && kind === 'pinch' && (gate.level === 'full' || (gate.level === 'view-only' && gate.reason === 'exploded'));
-            const rotate = owner === 'grab' && kind === 'pinch' && gate.level === 'full';
+            const rotate = owner === 'grab' && gate.level === 'full';
             expect(joinGesture(owner, { kind, target }, gate)).toBe(zoom ? 'zoom' : explode ? 'explode' : rotate ? 'rotate' : null);
           }
         }
@@ -1400,20 +1400,24 @@ describe('HandController, fist (Task 7, the real joinGesture)', () => {
   });
 
   describe('another gesture runs', () => {
-    it('is inert while the other hand grabs: locked, 另一手操作中, no hold', () => {
+    it('joins a part grab as the knob rotate since Task 11 instead of being inert: join state, 手勢：雙手旋轉 0°, no hold', () => {
       const rig = makeRig({ pick: () => part('o1', 'p1', 'Arm') });
       rig.run([open(owner), open(second)], 6);
       rig.run([pinching(owner), open(second)], 3);
       rig.run([pinching(owner), fist(second)], FIST_ENGAGE_FRAMES + 1);
       expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1']);
-      expect(rig.view(1)!.state).toBe('locked');
-      expect(rig.view(1)!.badge).toBe('手勢：另一手操作中');
+      expect(rig.view(1)!.state).toBe('join');
+      expect(rig.view(1)!.input).toBe('fist');
+      expect(rig.view(1)!.badge).toBe('手勢：雙手旋轉 0°');
       expect(rig.view(0)!.state).toBe('grab');
-      expect(rig.controller.stats.inert).toBe(1);
-      expect(rig.controller.twoHand).toBeNull();
-      expect(rig.last.link).toBeNull();
-      // It stays inert until the fist opens, and acts again afterwards.
+      expect(rig.controller.stats.inert).toBe(0);
+      expect(rig.controller.twoHand).toMatchObject({ gesture: 'rotate' });
+      expect(rig.last.gesture).toBe('rotate');
+      expect(rig.last.link).not.toBeNull();
+      // The fist opens: it leaves, and the owner goes on grabbing.
       rig.run([pinching(owner), open(second)], FIST_RELEASE_FRAMES + 1);
+      expect(rig.controller.twoHand).toBeNull();
+      expect(rig.last.gesture).toBe('grab');
       expect(rig.view(1)!.state).not.toBe('locked');
     });
 
@@ -2125,5 +2129,312 @@ describe('HandController, release timing and the freeze while a hand opens (Task
       expect(rig.explodes).toHaveLength(calls);
       expect(hold.previews).toEqual([]);
     });
+  });
+});
+
+// ---- Task 11: the fist knob ------------------------------------------------------------------------------------------------------
+
+describe('HandController, fist knob (Task 11, the real joinGesture)', () => {
+  const owner: [number, number] = [200, 300];
+  const second: [number, number] = [700, 300];
+  const PINCH_RELEASE_FRAMES = Math.ceil(PINCH_RELEASE_MS / FRAME_MS) + 1;
+  const onPart = () => part('o1', 'p1', 'Arm');
+  const open = (at: readonly [number, number]) => palmHand(at[0], at[1], 'open');
+  const pinching = (at: readonly [number, number]) => palmHand(at[0], at[1], 'pinch');
+  /** A fist at a palm position, turned `roll` degrees clockwise on screen. */
+  const knob = (at: readonly [number, number], roll = 0, side: 'left' | 'right' = 'right') => palmHand(at[0], at[1], 'fist', false, roll, side);
+  /** A fist whose fingers have begun to open (the curl ratio is between the engage and the release ratio), turned `roll` degrees. */
+  const opening = (at: readonly [number, number], roll: number): HandSample => ({ ...knob(at, roll), curl: 1.1 });
+  const last = <T>(values: T[]): T => values[values.length - 1]!;
+
+  /** The first hand pinches a part, then the second hand closes into a fist anywhere: they join as the knob. */
+  function knobbing(options: Parameters<typeof makeRig>[0] = {}, side: 'left' | 'right' = 'right') {
+    const rig = makeRig({ pick: onPart, ...options });
+    rig.run([open(owner), open(second)], 6);
+    rig.run([pinching(owner), open(second)], 3);
+    rig.run([pinching(owner), knob(second, 0, side)], FIST_ENGAGE_FRAMES + 1);
+    return rig;
+  }
+  /** The fist twists in steps of 10 degrees from `from` to `to`, then settles. */
+  function twist(rig: Rig, from: number, to: number, at: readonly [number, number] = second, side: 'left' | 'right' = 'right', ownerAt: readonly [number, number] = owner) {
+    const step = to >= from ? 10 : -10;
+    for (let degrees = from + step; step > 0 ? degrees < to : degrees > to; degrees += step) rig.run([pinching(ownerAt), knob(at, degrees, side)], 3);
+    rig.run([pinching(ownerAt), knob(at, to, side)], 12);
+  }
+
+  it('joins a part grab as a rotate through the fist: join state with the fist mark, 手勢：雙手旋轉 0°, a link, no arc yet and nothing turned', () => {
+    const rig = knobbing();
+    expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1']);
+    expect(rig.view(0)!.state).toBe('grab');
+    expect(rig.view(1)!.state).toBe('join');
+    expect(rig.view(1)!.input).toBe('fist');
+    expect(overlayStyle(rig.view(1)!).mark).toBe('square-filled');
+    expect(rig.view(1)!.badge).toBe('手勢：雙手旋轉 0°');
+    expect(rig.last.gesture).toBe('rotate');
+    expect(rig.last.link).not.toBeNull();
+    expect(rig.last.arc).toBeNull();
+    expect(rig.controller.stats.twoHand).toEqual({ rotate: 1 });
+    expect(rig.controller.stats.inert).toBe(0);
+    expect(rig.holds).toHaveLength(0);
+    expect(rig.grabs[0]!.rotates).toEqual([]);
+  });
+
+  it('turns the part clockwise for a clockwise twist and the other way for the other, by the angle less the dead zone', () => {
+    const rig = knobbing();
+    twist(rig, 0, 30);
+    expect(rig.controller.twoHand!.angle).toBeCloseTo(30, 0);
+    expect(last(rig.grabs[0]!.rotates)).toBeCloseTo(25, 0);
+    expect(rig.view(1)!.badge).toBe('手勢：雙手旋轉 25°');
+    twist(rig, 30, -30);
+    expect(last(rig.grabs[0]!.rotates)).toBeCloseTo(-25, 0);
+    expect(rig.view(1)!.badge).toBe('手勢：雙手旋轉 -25°');
+    expect(rig.grabs[0]!.commits).toBe(0);
+    expect(rig.grabs[0]!.cancels).toBe(0);
+  });
+
+  it('draws the arc at the owner cursor from the angle of the fist at engage to the angle shown', () => {
+    const rig = knobbing();
+    twist(rig, 0, 3);
+    expect(rig.last.arc).toBeNull();
+    twist(rig, 3, 40);
+    const arc = rig.last.arc!;
+    expect(arc.centre).toEqual(rig.view(0)!.cursor);
+    expect(arc.toDeg - arc.fromDeg).toBeCloseTo(35, 0);
+  });
+
+  it('ignores a twist smaller than the dead zone and does not jump when it leaves it', () => {
+    const rig = knobbing();
+    twist(rig, 0, ROTATE_DEAD_ZONE_DEG - 1);
+    expect(rig.grabs[0]!.rotates).toEqual([]);
+    expect(rig.view(1)!.badge).toBe('手勢：雙手旋轉 0°');
+    // One degree at a time: the first angle sent must be small, as the dead zone is taken off the turn.
+    for (let degrees = ROTATE_DEAD_ZONE_DEG; degrees <= ROTATE_DEAD_ZONE_DEG + 8; degrees++) rig.run([pinching(owner), knob(second, degrees)], 3);
+    rig.run([pinching(owner), knob(second, ROTATE_DEAD_ZONE_DEG + 8)], 12);
+    expect(rig.grabs[0]!.rotates.length).toBeGreaterThan(0);
+    expect(Math.abs(rig.grabs[0]!.rotates[0]!)).toBeLessThan(3);
+    expect(last(rig.grabs[0]!.rotates)).toBeCloseTo(8, 0);
+  });
+
+  it('accumulates across ±180° instead of wrapping back', () => {
+    const rig = knobbing();
+    // The wrist-to-knuckle vector of the synthetic hand points up, so it crosses 180° after about 278° of turning.
+    twist(rig, 0, 300);
+    expect(rig.controller.twoHand!.angle).toBeCloseTo(300, 0);
+    expect(last(rig.grabs[0]!.rotates)).toBeCloseTo(295, 0);
+    twist(rig, 300, -200);
+    expect(rig.controller.twoHand!.angle).toBeCloseTo(-200, 0);
+    expect(last(rig.grabs[0]!.rotates)).toBeCloseTo(-195, 0);
+  });
+
+  it('reads the twist wherever the fist is and however close it is to the owner: the position moves nothing', () => {
+    const rig = knobbing();
+    // The span is measured from the owner's cursor (the pinch midpoint, above its palm) to the fist's palm: this place is about 46 px from it.
+    const near: [number, number] = [240, 250];
+    // Move the fist next to the owner in small steps (a jump beyond HAND_MATCH_PX is a new hand), then twist it there.
+    for (let x = second[0] - 25; x >= near[0] + 10; x -= 25) rig.run([pinching(owner), knob([x, second[1]], 0)], 2);
+    rig.run([pinching(owner), knob(near, 0)], 12);
+    expect(rig.controller.twoHand!.gesture).toBe('rotate');
+    expect(rig.controller.twoHand!.span).toBeLessThan(TWO_HAND_MIN_SPAN_PX);
+    expect(rig.grabs[0]!.rotates).toEqual([]);
+    twist(rig, 0, 30, near);
+    expect(last(rig.grabs[0]!.rotates)).toBeCloseTo(25, 0);
+    // Carry it across the view at the same twist: the turn stays where it is, and nothing previews.
+    const sent = rig.grabs[0]!.rotates.length;
+    for (let x = near[0] + 25; x <= 900; x += 25) rig.run([pinching(owner), knob([x, near[1] + (x - near[0]) / 4], 30)], 2);
+    rig.run([pinching(owner), knob([900, near[1] + (900 - near[0]) / 4], 30)], 12);
+    // Floating-point noise may resend the same turn; no other angle is ever sent.
+    for (const angle of rig.grabs[0]!.rotates.slice(sent)) expect(angle).toBeCloseTo(25, 6);
+    expect(rig.grabs[0]!.previews).toEqual([]);
+    expect(rig.controller.twoHand!.angle).toBeCloseTo(30, 0);
+  });
+
+  it('turns the same way for a hand drawn as a left hand', () => {
+    const rig = knobbing({}, 'left');
+    twist(rig, 0, 30, second, 'left');
+    expect(last(rig.grabs[0]!.rotates)).toBeCloseTo(25, 0);
+    twist(rig, 30, -30, second, 'left');
+    expect(last(rig.grabs[0]!.rotates)).toBeCloseTo(-25, 0);
+  });
+
+  it('holds the part still while the fist turns: the owner moving does not preview', () => {
+    const rig = knobbing();
+    twist(rig, 0, 30);
+    for (let x = owner[0] + 25; x <= owner[0] + 150; x += 25) rig.run([pinching([x, owner[1]]), knob(second, 30)], 3);
+    rig.run([pinching([owner[0] + 150, owner[1]]), knob(second, 30)], 10);
+    expect(rig.grabs[0]!.previews).toEqual([]);
+    expect(rig.last.gesture).toBe('rotate');
+  });
+
+  it('keeps the rotation and re-bases the owner when the fist opens, then the owner moves the part on and its release commits once', () => {
+    const rig = knobbing();
+    twist(rig, 0, 30);
+    const grab = rig.grabs[0]!;
+    const sent = grab.rotates.length;
+    rig.run([pinching(owner), open(second)], FIST_RELEASE_FRAMES + 1);
+    expect(grab.rebases).toBe(1);
+    expect(grab.rotates).toHaveLength(sent);
+    expect(rig.last.gesture).toBe('grab');
+    expect(rig.last.arc).toBeNull();
+    expect(rig.view(1)!.state).not.toBe('join');
+    for (let x = owner[0] + 25; x <= owner[0] + 100; x += 25) rig.run([pinching([x, owner[1]]), open(second)], 3);
+    rig.run([pinching([owner[0] + 100, owner[1]]), open(second)], 20);
+    expect(grab.previews.length).toBeGreaterThan(0);
+    expect(grab.rotates).toHaveLength(sent);
+    rig.run([open([owner[0] + 100, owner[1]]), open(second)], PINCH_RELEASE_FRAMES + 1);
+    expect(grab.commits).toBe(1);
+    expect(grab.cancels).toBe(0);
+  });
+
+  it('commits once when the owner lets go, although it never moved, and leaves the fist closed and inert', () => {
+    const rig = knobbing();
+    twist(rig, 0, 30);
+    expect(rig.grabs[0]!.previews).toEqual([]);
+    rig.run([open(owner), knob(second, 30)], PINCH_RELEASE_FRAMES + 1);
+    expect(rig.grabs[0]!.commits).toBe(1);
+    expect(rig.grabs[0]!.cancels).toBe(0);
+    expect(rig.last.gesture).toBe('none');
+    expect(rig.controller.twoHand).toBeNull();
+    // The fist that is still closed holds nothing and turns nothing.
+    rig.run([open(owner), knob(second, 90)], 10);
+    expect(rig.grabs[0]!.rotates.at(-1)).toBeCloseTo(25, 0);
+    expect(rig.log).toEqual(['select o1:p1', 'beginGrab o1:p1', 'grab.commit']);
+  });
+
+  it('cancels quietly, like a tap, when the fist only stayed inside the dead zone', () => {
+    const rig = knobbing();
+    twist(rig, 0, ROTATE_DEAD_ZONE_DEG - 2);
+    rig.run([open(owner), knob(second, ROTATE_DEAD_ZONE_DEG - 2)], PINCH_RELEASE_FRAMES + 1);
+    expect(rig.grabs[0]!.commits).toBe(0);
+    expect(rig.grabs[0]!.cancels).toBe(1);
+    expect(rig.cancelled).toEqual([]);
+  });
+
+  it('cancels the grab and its turn when the owner is lost for longer than TRACKING_LOSS_MS, and when the gate leaves full control', () => {
+    const lost = knobbing();
+    twist(lost, 0, 30);
+    lost.run([knob(second, 30)], Math.ceil(TRACKING_LOSS_MS / FRAME_MS) + 2);
+    expect(lost.grabs[0]!.cancels).toBe(1);
+    expect(lost.cancelled).toEqual(['loss']);
+    expect(lost.last.gesture).toBe('none');
+
+    const gated = knobbing();
+    twist(gated, 0, 30);
+    gated.controller.setGate(VIEW_ONLY);
+    expect(gated.grabs[0]!.cancels).toBe(1);
+    expect(gated.cancelled).toEqual(['gate']);
+  });
+
+  it('freezes the turn while the fist opens, keeps the shown turn on the release, and measures again from the re-base when the fist closes', () => {
+    const rig = knobbing();
+    twist(rig, 0, 30);
+    const grab = rig.grabs[0]!;
+    const sent = grab.rotates.length;
+    expect(last(grab.rotates)).toBeCloseTo(25, 0);
+    // The fingers open while the wrist keeps turning: nothing is applied.
+    for (let degrees = 40; degrees <= 70; degrees += 10) rig.run([pinching(owner), opening(second, degrees)], 3);
+    rig.run([pinching(owner), opening(second, 70)], 10);
+    expect(grab.rotates).toHaveLength(sent);
+    expect(grab.rebases).toBe(0);
+    expect(rig.last.gesture).toBe('rotate');
+    // Closing again resumes from the current angle: one re-base, nothing jumps.
+    rig.run([pinching(owner), knob(second, 70)], 4);
+    expect(grab.rebases).toBe(1);
+    expect(grab.rotates).toHaveLength(sent);
+    expect(rig.controller.twoHand!.angle).toBeCloseTo(0, 0);
+    twist(rig, 70, 100);
+    expect(last(grab.rotates)).toBeCloseTo(25, 0);
+    // A fist that opens for good: the release leaves the shown turn as it was and the owner continues.
+    const shown = grab.rotates.length;
+    rig.run([pinching(owner), { ...knob(second, 100), curl: 1.4 }], FIST_RELEASE_FRAMES + 1);
+    expect(grab.rotates).toHaveLength(shown);
+    expect(rig.last.gesture).toBe('grab');
+    expect(grab.commits).toBe(0);
+  });
+
+  it('is not a knob when the fist came first: a fist that holds an object and then a pinch is still the explode', () => {
+    const rig = makeRig({ pick: onPart });
+    rig.run([open(owner), open(second)], 4);
+    rig.run([knob(owner), open(second)], FIST_ENGAGE_FRAMES);
+    rig.run([knob(owner), pinching(second)], 4);
+    expect(rig.last.gesture).toBe('explode');
+    expect(rig.controller.stats.twoHand).toEqual({ explode: 1 });
+    expect(rig.grabs).toHaveLength(0);
+  });
+
+  it('joins nothing when the fist was already closed before the grab began: it must open and close again', () => {
+    const rig = makeRig({ pick: point => (point.x < 500 ? onPart() : EMPTY_TARGET) });
+    rig.run([open(owner), open(second)], 4);
+    rig.run([open(owner), knob(second)], FIST_ENGAGE_FRAMES + 1);
+    expect(rig.view(1)!.state).toBe('fist');
+    rig.run([pinching(owner), knob(second)], 3 + PINCH_ENGAGE_FRAMES);
+    expect(rig.view(0)!.state).toBe('grab');
+    twist(rig, 0, 40);
+    expect(rig.controller.twoHand).toBeNull();
+    expect(rig.view(1)!.state).toBe('fist');
+    expect(rig.grabs[0]!.rotates).toEqual([]);
+    // Open and close again over the same hand: now it joins.
+    rig.run([pinching(owner), open(second)], FIST_RELEASE_FRAMES + 2);
+    rig.run([pinching(owner), knob(second)], FIST_ENGAGE_FRAMES + 1);
+    expect(rig.controller.twoHand).toMatchObject({ gesture: 'rotate' });
+  });
+
+  it('is not there without fists: with fistEnabled false a closed second hand joins nothing', () => {
+    const rig = makeRig({ pick: onPart, fistEnabled: false });
+    rig.run([open(owner), open(second)], 6);
+    rig.run([pinching(owner), open(second)], 3);
+    rig.run([pinching(owner), knob(second)], FIST_ENGAGE_FRAMES + 3);
+    expect(rig.controller.twoHand).toBeNull();
+    expect(rig.view(1)!.state).not.toBe('join');
+  });
+
+  it('does not exist below full control: at view-only the first pinch turns the view and a fist is inert', () => {
+    const rig = makeRig({ pick: onPart });
+    rig.controller.setGate(VIEW_ONLY);
+    rig.run([open(owner), open(second)], 6);
+    rig.run([pinching(owner), open(second)], 3);
+    rig.run([pinching(owner), knob(second)], FIST_ENGAGE_FRAMES + 1);
+    expect(rig.log).toEqual(['beginOrbit']);
+    expect(rig.controller.twoHand).toBeNull();
+    expect(rig.view(1)!.state).not.toBe('join');
+  });
+});
+
+describe('knobAngle (Task 11)', () => {
+  const pointsOf = (roll: number, side: 'left' | 'right' = 'right') => handSample(
+    syntheticHand({ cursor: { x: 0.5, y: 0.5 }, pinchM: 0.08, fist: true, roll, side, aspect: VIDEO.width / VIDEO.height }), VIEW, VIDEO)!.points;
+  const turn = (from: number, to: number, side: 'left' | 'right' = 'right') => angleDelta(knobAngle(pointsOf(from, side))!, knobAngle(pointsOf(to, side))!);
+  /** What a mirror does to the same frame: every x runs the other way. */
+  const mirrored = (points: readonly Point[]): Point[] => points.map(point => ({ x: VIEW.width - point.x, y: point.y }));
+
+  it('grows clockwise on screen, for either hand, and is the wrist-to-middle-knuckle direction', () => {
+    expect(turn(0, 30)).toBeCloseTo(30, 6);
+    expect(turn(0, -30)).toBeCloseTo(-30, 6);
+    expect(turn(0, 30, 'left')).toBeCloseTo(30, 6);
+    expect(turn(10, 100)).toBeCloseTo(90, 6);
+    const points = pointsOf(0);
+    expect(knobAngle(points)).toBeCloseTo(pairAngle(points[0]!, points[9]!), 9);
+    // The synthetic hand points up on screen: the vector from the wrist to the knuckle has a negative y.
+    expect(points[9]!.y).toBeLessThan(points[0]!.y);
+  });
+
+  it('wraps across ±180° one step at a time', () => {
+    // The base vector points up (about -98°), so 270° and 290° of roll are on either side of the ±180° seam.
+    expect(turn(270, 290)).toBeCloseTo(20, 6);
+    expect(turn(290, 270)).toBeCloseTo(-20, 6);
+    expect(turn(0, 190)).toBeCloseTo(-170, 6);
+  });
+
+  it('is read in display space: the frame that is flipped before tracking gives the turn the user sees, and a raw (unflipped) frame gives the opposite sign', () => {
+    // The landmarks of the app are those of the flipped (display) frame: a clockwise turn on screen is positive.
+    expect(turn(0, 30)).toBeCloseTo(30, 6);
+    // The same hand in the unflipped camera frame turns the other way round, which is why the mirrored view must be read in display space.
+    const raw = (roll: number) => knobAngle(mirrored(pointsOf(roll)))!;
+    expect(angleDelta(raw(0), raw(30))).toBeCloseTo(-30, 6);
+  });
+
+  it('is null for fewer than 10 points and for a vector of zero length', () => {
+    expect(knobAngle([])).toBeNull();
+    expect(knobAngle(pointsOf(0).slice(0, 9))).toBeNull();
+    expect(knobAngle(pointsOf(0).map(() => ({ x: 10, y: 10 })))).toBeNull();
   });
 });

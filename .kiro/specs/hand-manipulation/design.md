@@ -700,6 +700,7 @@ Nine tasks (R71). Tasks 1–2 are done; Tasks 3–5 finish the P0 core; Tasks 6�
 | 8 | P1 two-hand rotate: join row, `rotateAboutView`, grab `rotate`, `both` notice, arc, e2e, README and manual lines | 55 (R stays), 82 (rotate row), 96–98, 70, 72 |
 | 9 | P1 agent switch: `set_camera_image`, optional `cameraHidden`, `AGENT_INSTRUCTIONS` line, client apply, unit tests, e2e, README and manual lines | 54 (tool lists), 99, 100, 70, 72 |
 | 10 | After the webcam test (2026-11-22, §16): wider pinch thresholds, engage and release in ms with a two-frame minimum, freeze while a hand opens with a re-based resume, latched snap, speed gate 5, thresholds in the debug line, tests, README and manual line | 20, 40, 45, 47, 74, 89 (changed numbers), 101–107 |
+| 11 | After the webcam test (2026-11-22, §17): the join with two pinches (a pinch on another object while a part is grabbed → assemble, with the switch to two holds) and the fist knob (a fist while a part is grabbed → rotate by the twist), join rule rows, pinch feedback, `roll` in the synthetic hand, tests, README and manual lines | 82 (the grab rows), 108–116 |
 
 Requirements 65 and 67–69 apply to every task; 71 is satisfied by `tasks.md` itself. Requirements 56–62 are removed.
 
@@ -793,3 +794,85 @@ In `HandController`:
 
 - A hand held between 40 and 55 mm freezes the gesture without releasing it; the user opens further or closes again. The debug line shows the distance and the thresholds so the next test can tell if 55 mm is too wide.
 - The 40 mm freeze threshold is the engage threshold, so a pinch that sits near 40 mm while moving freezes and resumes (each with a re-base) frame by frame; nothing jumps, but the part follows in steps. If that shows on the webcam, a separate, larger freeze threshold is the knob.
+
+## 17. Join with two pinches and the fist knob (Task 11, R108–R116)
+
+The two remaining decisions of the webcam test of 2026-11-22. Everything not named here stays as designed. The scene (`SceneViewport.tsx`, `hand-sessions.ts`) and `App.tsx` do not change: the pinch join reuses `beginObjectHold`, `beginAssemble` and `onAssemble` of `assembly-joints` Task 6, and the knob reuses the grab session's `rotate`.
+
+### 17.1 The join rule (`join.ts`, R108, R112, R115)
+
+Two rows for the owner `grab`, before the existing `grab` + `pinch` → `rotate` row:
+
+| Owner | Joiner | Gate | Result |
+|---|---|---|---|
+| `grab` | `pinch` on a part of another object, not in the grabbed object's assembly | `full` | `assemble` |
+| `grab` | `pinch` on anything else | `full` | `rotate` (the Task 8 row, unchanged) |
+| `grab` | `fist` | `full` | `rotate` (the knob) |
+
+The assemble row is the same test as the fist row (`context.ownerObjectId`, `sameAssembly`), so it applies only when the optional context is passed; without a context a pinch on a grab is a `rotate`, as before. `JoinContext.ownerObjectId` is now also set while the owner `grab`s a part (the grabbed part's object); until now it was set for a `hold` only.
+
+### 17.2 What the controller needs to know about the owner's input (R109–R111)
+
+An assemble can now be held by pinches, and `Session.kind` is `hold` after the switch, so the controller needs the input of the owner, not only the gesture:
+
+- `Session.input: 'pinch' | 'fist'` (new): `'fist'` for a hold started by a fist, `'pinch'` for a grab, an orbit, a press, and a hold that came from a grab. It replaces the tests `session.kind === 'hold'` that stood for "this is a fist": `ownerPoint` (the cursor for a pinch, the palm centre for a fist), the moved flag that lets the owner's offset count (`track.pinch.moved` or `track.fist.moved`), the opening rule of `updateFreeze`, and `stepAssemble`'s offsets.
+- `ruleOwner(session)`: the owner as the join rule knows it, `'grab'` for a hold that came from a pinch, else `session.kind`. `setGate` and `contextOf` use it, so the re-check of the join row on a gate change gives `assemble` again at `full` and fails below it. `setGate` ends a pinch hold when the level leaves `full` (a fist hold also survives the exploded view, requirement 94; an assemble does not, see `assembly-joints` requirement 62).
+- `startJoiner` measures the joiner's `ref` from its own point: the palm for a fist, the cursor for a pinch. `Joiner.applied` and `Session.applied` store those points, so a resume after a freeze shifts the references of the right points.
+- `endSession` also marks the owner `passive` (no inert count) when its pinch is still engaged, as it already does for the joiner. The joiner's pinch can now end an assemble while the owner still pinches, so the owner must stay inert until it opens.
+
+### 17.3 The switch (`startPinchAssemble`, R109)
+
+Called from `onEngage` when the join rule gives `assemble` for a pinch joiner. In this order:
+
+1. Cancel the owner's grab through `GrabSession.cancel()`, without `recordCancel` and without `onCancelled`: the part goes back to its stored position and the scene enables the gizmo again.
+2. `port.beginHold(ownerObjectId, ownerHit)`, with the grab's target as the held point (only its depth matters, so the part's cancelled move does not matter). A hold is not refused because another session runs and the owner's object is already the active one (the grab selected the part), so no `activate` call is needed.
+3. `port.beginAssemble(hold, objectId, hit)` with the joiner's settled target, which is the same call as for two fists.
+4. The session becomes `{ kind: 'hold', scene: hold, input: 'pinch', ref: the owner's current cursor }` and the joiner `{ gesture: 'assemble', input: 'pinch', assemble, ref: the joiner's current cursor }`. `moved`, `turned` and `frozen` start at false: the owner's drag so far is not part of the hold. From here the controller is the one of `assembly-joints` design §10.4 with a pinch instead of the fist.
+
+Step 1 cannot be undone, so a refusal in step 2 or 3 (an object the scene does not know, or the mouse busy, which cannot be the case while a grab runs) ends the gesture: a started hold is cancelled, the session is dropped, both hands are marked `passive` and the second pinch is counted as inert. This is a deliberate trade against calling the holds first: the grab's `onEnd` enables the gizmo again, which would be wrong while a hold runs.
+
+### 17.4 Release, loss and cancel with pinches (R110)
+
+The pinch events now reach the assemble the way the fist events do:
+
+- `onRelease(slot)`: when the session has an `assemble` joiner and `slot` is the owner or the joiner **and that hand's input is a pinch**, `commitSession(true)`; the other hand is left inert by `endSession`. (The fist events keep their own handler, `onFistRelease`.)
+- `onLost(slot, engaged)`: an `assemble` session whose owner or joiner (pinch) is lost follows `ON_TRACKING_LOSS` for both objects (`cancelSession('loss')` or `commitSession(false)`), after `noteGap`. Before this task a lost owner of a `hold` ended quietly; a joiner's loss ended an assemble through `leaveJoiner`.
+- `leaveJoiner` still cancels an assemble quietly: it is reached when the joining hand's pinch is dropped because the same hand closed into a fist (§17.7).
+
+### 17.5 Feedback (R111)
+
+`HandView` gains `input?: 'pinch' | 'fist'`, set for the states `hold` and `join`, and `overlayStyle` and `badgeText` read it:
+
+| State | Input | Mark | Badge |
+|---|---|---|---|
+| `hold` | `fist` or absent | filled square at the palm | 手勢：握住 {name} |
+| `hold` | `pinch` | filled ring at the cursor | 手勢：捏住 {name} |
+| `hold`, snap ready, joining hand | either | as above | 手勢：可以接合 |
+| `join` | `pinch` or absent | filled ring at the cursor | as before |
+| `join` | `fist` (the knob) | filled square at the palm | 手勢：雙手旋轉 {n}° |
+
+### 17.6 The knob (R112–R114)
+
+- `pair.ts`: `knobAngle(points: readonly Point[]): number | null`, `pairAngle(points[0], points[9])` (the wrist to the middle knuckle), or null for fewer than 10 points or a zero-length vector. Positive is clockwise on screen, like `pairAngle`. The points are the sample's client-pixel landmarks, which are in display space (R7), so the mirrored camera view is already taken into account: the image is flipped before tracking, and a fist that turns clockwise on screen has a growing angle whether the view is mirrored or not. No new constant: a degenerate vector is the only guard, and `ROTATE_DEAD_ZONE_DEG` filters the jitter of a normal hand (a one-pixel jitter on a 70 px wrist–knuckle vector is below one degree).
+- `follow`: a joiner whose input is a fist and whose gesture is `rotate` reads `knobAngle` of its own track instead of `pairAngle(owner, joiner)`, and accumulates `angleDelta` frame by frame regardless of the distance between the hands (`TWO_HAND_MIN_SPAN_PX` does not apply). An unreadable angle keeps the last one. The rest is the Task 8 path: `beyondDeadZone(angle, ROTATE_DEAD_ZONE_DEG)`, `grab.rotate`, `turned`, `rotated` for the badge, the arc from `startAngle` to `startAngle + rotated`, the link line from the owner's cursor to the fist's palm.
+- `startJoiner` and `resume` take the starting angle from the same function (`joinerAngle`), so a knob starts from the fist's angle at engage and a resume after a freeze starts from its current angle.
+- The fist engages through the existing path (`onFistEngage` → `join(ruleOwner, { kind: 'fist', target }, gate, context)` → `startJoiner`). `FIST_ENABLED = false` never computes the fist, so there is no knob.
+- Freeze (R101, R114): `isOpening` of a fist joiner already uses the fist rule, so a fist that opens freezes the turn; the fist's release re-bases the owner as any joiner's leaving does.
+
+### 17.7 Interactions to know
+
+- A hand that closes into a fist passes through a short thumb–index distance (R90). If it is the second hand and it stays below `PINCH_ENGAGE_M` for `PINCH_ENGAGE_MS` while the curl ratio is above `FIST_ENGAGE_RATIO`, its pinch engages first and joins as a rotate by circling (or, over a part of another object, as an assemble), and when the fist then engages `dropPinch` makes the pinch leave: the rotate keeps its effect, and an assemble is dropped (both objects go back, nothing is committed) because a pinch that leaves an assemble ends it. This is the cost of starting an assemble on the pinch. The manual list watches for it (§17.9).
+- A pinch assemble does not touch the exploded view: the grab that precedes it cannot start there.
+
+### 17.8 Synthetic hand and tests (R116)
+
+- `tests/fixtures/synthetic-hand.ts`: `roll?: number` (degrees, positive clockwise on screen, default 0). The hand turns in the image plane about the point `cursor` places (the pinch midpoint of an open hand, the palm centre of a fist). `aspect?: number` (video width ÷ height, default 1) keeps the turn a true rotation on screen, because normalised x and y are different lengths on a non-square frame. The world landmarks turn by the same angle. `tests/e2e/fake-hands.ts`: `FakeHand.roll` (it passes the video's aspect itself).
+- `tests/unit/hand-controller.test.ts`: the rows of `joinGesture`; the controller with the real rule: grab + fist → rotate, the knob angle (sign, wrap across ±180°, dead zone, no dependence on the fist's position or on the distance between the hands, a mirrored hand), a fist opening freezes the knob and a resume does not jump; the owner's move holds still; the fist's release keeps the rotation and re-bases; `knobAngle` itself.
+- `tests/unit/hand-assemble.test.ts`: grab + pinch on another object → `assemble`; the switch (the grab cancelled, nothing committed, two holds and one assemble started, `ref` at the current cursors so the first offsets are zero, the part-grab's drag does not carry over); the pinch offsets reach the assemble; a ready snap commits a join on release of either pinch, and stays latched while a pinch opens; no ready snap commits the moves; loss and gate follow the fist rules; pinch on the same object, the same assembly, empty space → rotate by circling; hold + pinch → explode; badges and marks.
+- `tests/e2e/hand-control.spec.ts` / `assembly-hands.spec.ts`: two pinches join the two demo objects, a fist knob turns a held part, a second pinch on the same object still rotates by circling.
+
+### 17.9 Risks
+
+- **A closing fist can start an assemble by accident** (§17.7). If it shows on the webcam, the knob is to start the assemble only when the joining pinch has stayed for longer (a separate, longer engage time for it) or to require the pinch's curl ratio to be above a value that a closing fist does not reach.
+- **Wrist jitter.** The twist angle is read from two raw landmarks, not filtered. If small wrist movements turn the part, raise `ROTATE_DEAD_ZONE_DEG` or filter the angle.
+- **Direction.** The sign was derived from the display-space landmarks and checked in unit tests with rolled synthetic hands. The webcam check confirms it with a real hand.

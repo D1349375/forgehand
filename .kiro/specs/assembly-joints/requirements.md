@@ -233,6 +233,8 @@ Snap detection, checks, recommendations, tolerances and features are local rules
 62. **Loss and cancel.** If either hand is lost for longer than `TRACKING_LOSS_MS`, or any cancel reason of `hand-manipulation` requirement 39 applies, both holds follow `ON_TRACKING_LOSS`: `'cancel'` puts both objects back; `'keep'` commits both moves as one undo step. A joint is never created on loss or cancel.
 63. Overlay and debug: `data-gesture` is `assemble` during the gesture; the joiner's state is `hold` with the badge 手勢：握住 {object name} until ready; `?hands=debug` adds the snap gap in mm, the angle, the overlap in mm² and a join counter. No assemble step sends anything to the server.
 
+*Note (2026-11-22, `hand-manipulation` Task 11, requirements 108–111).* The same assemble session is also started with two pinches: while one hand grabs a part of object A and the other hand pinches a part of another object outside A's assembly, the part grab is cancelled and both hands hold whole objects. Requirements 58 and 60–63 then apply with pinches instead of fists (either pinch opening ends the gesture, the badge reads 手勢：捏住 {object name}). The row of requirement 59 and the two-fist join are unchanged.
+
 ### Agent
 
 64. Four new server tools, project scope, local (no model call), with Traditional Chinese labels:

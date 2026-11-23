@@ -46,6 +46,11 @@ export interface HandView {
   palm: Point;
   /** Badge text, drawn from Task 5. */
   badge: string | null;
+  /**
+   * What the hand is doing, for the states `hold` and `join` (Task 11): a pinch holds with a ring at the cursor and a fist with a
+   * square at the palm, whichever gesture it is part of. Absent means the default of the state (a fist hold, a pinch join).
+   */
+  input?: 'pinch' | 'fist';
 }
 /** What the overlay draws and exposes for one frame. */
 export interface OverlayFrame {

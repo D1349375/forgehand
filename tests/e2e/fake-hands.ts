@@ -77,6 +77,8 @@ export interface FakeHand {
   pinchM: number;
   /** A closed fist (Task 7); its curl ratio is about 0.65. */
   fist?: boolean;
+  /** Turns the hand in the image plane, in degrees, clockwise on screen (Task 11); a fist twisted like a knob. Default 0. */
+  roll?: number;
 }
 
 /** Shows up to two synthetic hands, in slot order (the first is hand 0); an empty array hides all hands. */
@@ -94,6 +96,7 @@ export async function showHands(page: Page, hands: readonly FakeHand[]): Promise
   if (!geometry?.video.width || !geometry.video.height) throw new Error('showHands: the camera video has no frame yet');
   await postHands(page, hands.map((hand, index) => syntheticHand({
     cursor: clientToNormalized(hand.at, geometry.view, geometry.video), pinchM: hand.pinchM, side: index === 0 ? 'right' : 'left', fist: hand.fist,
+    roll: hand.roll, aspect: geometry.video.width / geometry.video.height,
   })));
 }
 

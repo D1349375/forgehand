@@ -22,14 +22,16 @@ export interface OverlayStyle {
  * hollow ring = over a target, a filled ring and thicker lines = acting, grey
  * dashes = locked. Both hands share one colour.
  */
-export function overlayStyle(view: { state: HandState }): OverlayStyle {
+export function overlayStyle(view: { state: HandState; input?: 'pinch' | 'fist' }): OverlayStyle {
   switch (view.state) {
     case 'locked': return { colour: LOCKED_COLOUR, dashed: true, lineWidth: 2, mark: 'none' };
     case 'hover': return { colour: HAND_COLOUR, dashed: false, lineWidth: 2, mark: 'ring-hollow' };
     case 'grab':
-    case 'orbit':
-    case 'join': return { colour: HAND_COLOUR, dashed: false, lineWidth: 3.5, mark: 'ring-filled' };
-    case 'hold': return { colour: HAND_COLOUR, dashed: false, lineWidth: 3.5, mark: 'square-filled' };
+    case 'orbit': return { colour: HAND_COLOUR, dashed: false, lineWidth: 3.5, mark: 'ring-filled' };
+    // A joining hand is a pinch by default, except the knob fist of a rotate (Task 11): a square at its palm.
+    case 'join': return { colour: HAND_COLOUR, dashed: false, lineWidth: 3.5, mark: view.input === 'fist' ? 'square-filled' : 'ring-filled' };
+    // A hold is a fist by default, except the holds of a two-pinch join (Task 11): a ring at the cursor.
+    case 'hold': return { colour: HAND_COLOUR, dashed: false, lineWidth: 3.5, mark: view.input === 'pinch' ? 'ring-filled' : 'square-filled' };
     case 'fist': return { colour: HAND_COLOUR, dashed: false, lineWidth: 2, mark: 'square-hollow' };
     case 'tracked':
     case 'none': return { colour: HAND_COLOUR, dashed: false, lineWidth: 2, mark: 'none' };

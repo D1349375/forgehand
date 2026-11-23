@@ -527,9 +527,10 @@ test.describe('T5 pinch-move, orbit and the rest of the P0 core', () => {
     expect(calls).toEqual(['generate']);
   });
 
-  // A second pinch while the first hand grabs is a rotate since Task 8 (see "T8 two-hand rotate"); a second hand that makes a fist
-  // has no row in the join rule, so it is the inert case that stays.
-  test("a second hand's fist is inert while the first hand drags", async ({ page }) => {
+  // A second pinch while the first hand grabs is a rotate since Task 8 (see "T8 two-hand rotate"), and a second hand that makes a fist
+  // is the knob rotate since Task 11 (see "T11 fist knob"). A fist that does not turn changes nothing: this case keeps its check that
+  // only the first hand's move is committed, and that the first hand's move holds still while the fist is there.
+  test("a second hand's fist that does not turn changes nothing while the first hand drags: the move holds still and only it is committed", async ({ page }) => {
     const calls = modelCalls(page);
     await demoAndCamera(page);
     const offset = await palmOffset(page);
@@ -547,10 +548,10 @@ test.describe('T5 pinch-move, orbit and the rest of the P0 core', () => {
         others: [second(false)],
         during: async () => {
           await showHands(page, [{ at: shift(housing, 0, 70), pinchM: PINCH }, second(true)]);
-          await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'locked');
+          await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'join');
           await showHands(page, [{ at: shift(housing, 0, 70), pinchM: PINCH }, second(true, shift(battery, 60))]);
           await expect(sceneCanvas(page)).toHaveAttribute('data-selected-ids', 'housing');
-          await expect(overlay(page)).toHaveAttribute('data-gesture', 'grab');
+          await expect(overlay(page)).toHaveAttribute('data-gesture', 'rotate');
           await expect(overlay(page)).toHaveAttribute('data-hand-state', 'grab');
         },
       });
@@ -1289,6 +1290,119 @@ test.describe('T8 two-hand rotate', () => {
     await undoButton(page).click();
     await expect.poll(() => modelRows(page), { timeout: 20_000 }).toEqual(before);
     await expect(undoButton(page)).toBeDisabled();
+    expect(calls).toEqual([]);
+  });
+});
+
+// ---- Task 11: the fist knob ---------------------------------------------------------------------------------------------------
+
+/** A fist at a palm point, twisted `roll` degrees clockwise on screen. */
+const knobAt = (at: Pt, roll: number): FakeHand => ({ ...fistAt(at), roll });
+/**
+ * The first hand grabs 外殼; the second hand is shown open with its palm at `second` and then closes into a fist there (the open hand
+ * and the fist share one palm, so the hand keeps its slot): they join as the knob. Every attempt starts with no hand in either slot.
+ */
+async function startKnobOnce(page: Page, objectId: string, owner: Pt, second: Pt, offset: Pt) {
+  await hideHand(page);
+  await expect(overlay(page)).toHaveAttribute('data-hand-state', 'none', { timeout: 45_000 });
+  await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'none', { timeout: 45_000 });
+  await showHands(page, [{ at: owner, pinchM: OPEN }]);
+  await expect(overlay(page)).toHaveAttribute('data-hand-target', `${objectId}:housing`, { timeout: 45_000 });
+  await showHands(page, [{ at: owner, pinchM: OPEN }, openFor(second, offset)]);
+  await expect(overlay(page)).toHaveAttribute('data-hand-count', '2', { timeout: 45_000 });
+  await showHands(page, [{ at: owner, pinchM: PINCH }, openFor(second, offset)]);
+  await expect(overlay(page)).toHaveAttribute('data-hand-state', 'grab', { timeout: 10_000 });
+  await showHands(page, [{ at: owner, pinchM: PINCH }, fistAt(second)]);
+  await expect(overlay(page)).toHaveAttribute('data-gesture', 'rotate', { timeout: 15_000 });
+  await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'join');
+}
+
+test.describe('T11 fist knob', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(handsUrl({ debug: true }));
+  });
+
+  test('twisting a fist like a knob turns the grabbed part clockwise on screen, in one undo step, and its position stays', async ({ page }) => {
+    const calls = modelCalls(page);
+    await demoAndCamera(page);
+    const offset = await palmOffset(page);
+    const objectId = (await sceneCanvas(page).getAttribute('data-active-object-id'))!;
+    const before = await modelRows(page);
+    const objects = await sceneCanvas(page).getAttribute('data-object-json');
+    const { owner, second } = await rotateRig(page);
+    const knob = second(0);
+    const start = await childAngle(page);
+    await attempts(page, owner, [openFor(knob, offset)], () => startKnobOnce(page, objectId, owner, knob, offset));
+    await expect(undoButton(page)).toBeDisabled();
+    // Closing the fist alone changes nothing.
+    await someFrames(page);
+    expect(Math.abs(wrapDegrees((await childAngle(page)) - start))).toBeLessThan(2);
+
+    // 40° clockwise on screen, less the 5° dead zone, turns the part about 35° clockwise: the child follows the part on screen.
+    await showHands(page, [{ at: owner, pinchM: PINCH }, knobAt(knob, 20)]);
+    await someFrames(page, 6);
+    await showHands(page, [{ at: owner, pinchM: PINCH }, knobAt(knob, 40)]);
+    await expect.poll(async () => wrapDegrees((await childAngle(page)) - start), { timeout: 30_000 }).toBeGreaterThan(12);
+    await someFrames(page, 10);
+    const turned = wrapDegrees((await childAngle(page)) - start);
+    expect(turned).toBeLessThan(60);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'rotate');
+    await expect(page.getByTestId('hand-debug')).toContainText('雙手 1');
+    // A preview only: no data change, no undo step.
+    expect(await modelRows(page)).toEqual(before);
+    expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
+    await expect(undoButton(page)).toBeDisabled();
+
+    // The fist opens: the turn stays, and the first hand carries on with the part.
+    await showHands(page, [{ at: owner, pinchM: PINCH }, openFor(knob, offset)]);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'grab', { timeout: 20_000 });
+    await someFrames(page);
+    expect(Math.abs(wrapDegrees((await childAngle(page)) - start) - turned)).toBeLessThan(3);
+    expect(await modelRows(page)).toEqual(before);
+
+    // The first hand lets go: one commit, which turns 外殼 and nothing else.
+    await showHands(page, [{ at: owner, pinchM: OPEN }, openFor(knob, offset)]);
+    await expect.poll(async () => JSON.stringify(housingOf(await modelRows(page))[2]), { timeout: 45_000 }).not.toBe(JSON.stringify(housingOf(before)[2]));
+    const after = await modelRows(page);
+    expect(housingOf(after)[1]).toEqual(housingOf(before)[1]);
+    expect(housingOf(after)[3]).toEqual(housingOf(before)[3]);
+    expect(withoutHousing(after)).toEqual(withoutHousing(before));
+    expect(await sceneCanvas(page).getAttribute('data-object-json')).toBe(objects);
+    await expect(page.getByText('已旋轉零件，可按「復原」回到上一步。').first()).toBeVisible();
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'none');
+    // One undo step puts the turn back.
+    await undoButton(page).click();
+    await expect.poll(() => modelRows(page), { timeout: 20_000 }).toEqual(before);
+    await expect(undoButton(page)).toBeDisabled();
+    expect(calls).toEqual([]);
+  });
+
+  test('a twist the other way turns the part the other way, and a twist smaller than the dead zone changes nothing', async ({ page }) => {
+    const calls = modelCalls(page);
+    await demoAndCamera(page);
+    const offset = await palmOffset(page);
+    const objectId = (await sceneCanvas(page).getAttribute('data-active-object-id'))!;
+    const before = await modelRows(page);
+    const { owner, second } = await rotateRig(page);
+    const knob = second(0);
+    const start = await childAngle(page);
+    await attempts(page, owner, [openFor(knob, offset)], () => startKnobOnce(page, objectId, owner, knob, offset));
+    // 3° is inside the 5° dead zone.
+    await showHands(page, [{ at: owner, pinchM: PINCH }, knobAt(knob, 3)]);
+    await someFrames(page, 12);
+    expect(Math.abs(wrapDegrees((await childAngle(page)) - start))).toBeLessThan(2);
+    // 30° anticlockwise turns the part anticlockwise.
+    await showHands(page, [{ at: owner, pinchM: PINCH }, knobAt(knob, -15)]);
+    await someFrames(page, 6);
+    await showHands(page, [{ at: owner, pinchM: PINCH }, knobAt(knob, -30)]);
+    await expect.poll(async () => wrapDegrees((await childAngle(page)) - start), { timeout: 30_000 }).toBeLessThan(-10);
+    // Letting go of both hands commits the turn once; one undo puts it back.
+    await showHands(page, [{ at: owner, pinchM: PINCH }, openFor(knob, offset)]);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'grab', { timeout: 20_000 });
+    await showHands(page, [{ at: owner, pinchM: OPEN }, openFor(knob, offset)]);
+    await expect.poll(async () => JSON.stringify(housingOf(await modelRows(page))[2]), { timeout: 45_000 }).not.toBe(JSON.stringify(housingOf(before)[2]));
+    await undoButton(page).click();
+    await expect.poll(() => modelRows(page), { timeout: 20_000 }).toEqual(before);
     expect(calls).toEqual([]);
   });
 });

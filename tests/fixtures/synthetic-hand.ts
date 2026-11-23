@@ -15,6 +15,17 @@ export interface SyntheticHandOptions {
    * 6 cm from the index tip (no pinch). `cursor` then places the palm centre instead of the pinch midpoint, and `pinchM` is ignored.
    */
   fist?: boolean;
+  /**
+   * Turns the hand in the image plane about the point cursor places (the pinch midpoint of an open hand, the palm centre of a fist),
+   * in degrees; positive is clockwise on screen (y grows down), like pairAngle. The world landmarks turn by the same angle, so
+   * distances (pinch, curl) do not change. Default 0.
+   */
+  roll?: number;
+  /**
+   * Width divided by height of the video frame, default 1. Normalised x and y are different lengths on a non-square frame, so the
+   * `roll` is applied on a scale where they are equal, which makes it a true rotation on screen.
+   */
+  aspect?: number;
 }
 
 /** Hand height in metres (wrist to middle fingertip) in the local layout below. */
@@ -63,7 +74,7 @@ function localLayout(pinchM: number, fist: boolean): Pair[] {
 }
 
 /** 21 image landmarks, and 21 world landmarks unless `world: false`. Used by unit tests and the e2e fake worker. */
-export function syntheticHand({ cursor, pinchM, size = 0.25, side = 'right', world = true, fist = false }: SyntheticHandOptions): HandLandmarks {
+export function syntheticHand({ cursor, pinchM, size = 0.25, side = 'right', world = true, fist = false, roll = 0, aspect = 1 }: SyntheticHandOptions): HandLandmarks {
   const flip = side === 'left' ? -1 : 1;
   const local = localLayout(pinchM, fist).map(([x, y]) => [x * flip, y] as Pair);
   const palm = [0, 5, 9, 13, 17].map(index => local[index]!);
@@ -71,10 +82,25 @@ export function syntheticHand({ cursor, pinchM, size = 0.25, side = 'right', wor
   // The cursor is the pinch midpoint of an open hand and the palm centre of a fist.
   const origin: Pair = fist ? centre : [0, 0];
   const scale = size / LAYOUT_HEIGHT_M;
-  const points: Landmark[] = local.map(([x, y]) => ({ x: cursor.x + (x - origin[0]) * scale, y: cursor.y + (y - origin[1]) * scale, z: 0, visibility: 1 }));
+  const angle = (roll * Math.PI) / 180;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const points: Landmark[] = local.map(([x, y]) => {
+    // On a scale where normalised x and y are equal, so the roll is a true rotation on screen.
+    const dx = (x - origin[0]) * scale * aspect;
+    const dy = (y - origin[1]) * scale;
+    return { x: cursor.x + (dx * cos - dy * sin) / aspect, y: cursor.y + dx * sin + dy * cos, z: 0, visibility: 1 };
+  });
   const result: HandLandmarks = { points, side };
   if (!world) return result;
-  return { ...result, world: local.map(([x, y]) => ({ x: x - centre[0], y: y - centre[1], z: 0, visibility: 1 })) };
+  return {
+    ...result,
+    world: local.map(([x, y]) => {
+      const dx = x - centre[0];
+      const dy = y - centre[1];
+      return { x: dx * cos - dy * sin, y: dx * sin + dy * cos, z: 0, visibility: 1 };
+    }),
+  };
 }
 
 /**
