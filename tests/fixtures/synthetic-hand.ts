@@ -22,6 +22,18 @@ export interface SyntheticHandOptions {
    */
   roll?: number;
   /**
+   * A pinch with the other three fingers curled (Task 12): the middle, ring and little fingertips sit 35 % of the way from their
+   * knuckle to the wrist, like a fist's, while the thumb and index finger make the pinch at `cursor`. Ignored with `fist`.
+   */
+  curledFingers?: boolean;
+  /**
+   * With `curledFingers`: the index fingertip is drawn in toward the wrist until its tip-to-wrist distance is this multiple of its
+   * knuckle-to-wrist distance (the index finger bends toward the thumb in a tight pinch), and the thumb tip follows it. This is the
+   * curl ratio of the index finger, which is the largest of the four while the other fingers are curled. Default: the index stays
+   * extended (ratio about 1.37).
+   */
+  indexRatio?: number;
+  /**
    * Width divided by height of the video frame, default 1. Normalised x and y are different lengths on a non-square frame, so the
    * `roll` is applied on a scale where they are equal, which makes it a true rotation on screen.
    */
@@ -42,7 +54,7 @@ const lerp = (a: Pair, b: Pair, t: number): Pair => [a[0] + (b[0] - a[0]) * t, a
  * centred on the origin. With `fist` the fingertips are curled to 35 % of the way from the knuckle to the wrist, and the thumb tip
  * sits 6 cm from the index tip.
  */
-function localLayout(pinchM: number, fist: boolean): Pair[] {
+function localLayout(pinchM: number, fist: boolean, curledFingers = false, indexRatio?: number): Pair[] {
   const half = pinchM / 2;
   const points: Pair[] = Array.from({ length: 21 }, () => [0, 0] as Pair);
   points[0] = [0, 0.14];
@@ -58,7 +70,7 @@ function localLayout(pinchM: number, fist: boolean): Pair[] {
     [17, [0.04, 0.05], [0.04, -0.01]],
   ];
   for (const [base, knuckle, open] of fingers) {
-    const tip = fist ? lerp(knuckle, wrist, 0.35) : open;
+    const tip = fist || (curledFingers && base !== 5) ? lerp(knuckle, wrist, 0.35) : open;
     points[base] = knuckle;
     points[base + 1] = lerp(knuckle, tip, 1 / 3);
     points[base + 2] = lerp(knuckle, tip, 2 / 3);
@@ -70,13 +82,31 @@ function localLayout(pinchM: number, fist: boolean): Pair[] {
     points[4] = [index[0] - FIST_THUMB_GAP_M, index[1]];
     points[3] = lerp(points[2]!, points[4]!, 0.5);
   }
+  if (!fist && curledFingers && indexRatio !== undefined) {
+    // Draw the index tip in along the line from the wrist until its tip-to-wrist distance is `indexRatio` times the knuckle-to-wrist
+    // distance, put the thumb tip `pinchM` to its left, and move everything so that the pinch midpoint is the origin again.
+    const knuckle = points[5]!;
+    const tip = points[8]!;
+    const base = Math.hypot(knuckle[0] - wrist[0], knuckle[1] - wrist[1]);
+    const length = Math.hypot(tip[0] - wrist[0], tip[1] - wrist[1]);
+    const bent: Pair = [wrist[0] + ((tip[0] - wrist[0]) / length) * indexRatio * base, wrist[1] + ((tip[1] - wrist[1]) / length) * indexRatio * base];
+    points[8] = bent;
+    points[7] = lerp(knuckle, bent, 2 / 3);
+    points[6] = lerp(knuckle, bent, 1 / 3);
+    points[4] = [bent[0] - pinchM, bent[1]];
+    points[3] = lerp(points[2]!, points[4]!, 0.5);
+    const mid: Pair = [(points[4]![0] + bent[0]) / 2, (points[4]![1] + bent[1]) / 2];
+    return points.map(([x, y]) => [x - mid[0], y - mid[1]] as Pair);
+  }
   return points;
 }
 
 /** 21 image landmarks, and 21 world landmarks unless `world: false`. Used by unit tests and the e2e fake worker. */
-export function syntheticHand({ cursor, pinchM, size = 0.25, side = 'right', world = true, fist = false, roll = 0, aspect = 1 }: SyntheticHandOptions): HandLandmarks {
+export function syntheticHand({
+  cursor, pinchM, size = 0.25, side = 'right', world = true, fist = false, roll = 0, aspect = 1, curledFingers = false, indexRatio,
+}: SyntheticHandOptions): HandLandmarks {
   const flip = side === 'left' ? -1 : 1;
-  const local = localLayout(pinchM, fist).map(([x, y]) => [x * flip, y] as Pair);
+  const local = localLayout(pinchM, fist, curledFingers, indexRatio).map(([x, y]) => [x * flip, y] as Pair);
   const palm = [0, 5, 9, 13, 17].map(index => local[index]!);
   const centre: Pair = [palm.reduce((sum, p) => sum + p[0], 0) / palm.length, palm.reduce((sum, p) => sum + p[1], 0) / palm.length];
   // The cursor is the pinch midpoint of an open hand and the palm centre of a fist.

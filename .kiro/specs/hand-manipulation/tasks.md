@@ -250,7 +250,8 @@ Run `npm run dev`, open the app with `?hands=debug` in the URL. Note the numbers
 21. **Release timing and thresholds** (Task 10). With `?hands=debug` the line shows the pinch engage and release thresholds (捏合門檻 40／55 mm) next to the measured pinch distance. Pinch, drag and release several times and note any overshoot on release: the part should stop where the fingers started to open, and the 復原 step should return it. Repeat the two-fist join (two objects, a fist on each, bring them together until 可以接合 shows, open one fist) and note whether it joins on release. Note any missed or false pinches with the new thresholds, and the distance in the debug line at each. Hold the fingers between 40 and 55 mm and note that the part freezes and does not release.
 22. **Two-pinch join** (Task 11). 載入示範模型 twice. Pinch a part of the first object with one hand, then pinch a part of the second object with the other: the first part goes back to where it was, both hands show a ring and 手勢：捏住 …, and both objects move with the hands. Bring them together until 可以接合 shows, then open one hand: the card opens and one 復原 separates them. Repeat without a ready snap (open far apart): both objects stay where they were put, with one 復原. Note whether closing the second hand into a fist over the other object starts a join by accident, and whether a second pinch on the same object still rotates by circling.
 23. **Fist knob** (Task 11). Pinch a part with one hand, make a fist with the other (anywhere) and twist the wrist like a knob: the part turns about the view axis the same way on screen (clockwise on screen for clockwise), the fist shows 手勢：雙手旋轉 …° and an arc. Note whether the knob turns the right way and whether small wrist movements turn it by accident (then raise `ROTATE_DEAD_ZONE_DEG` or filter the angle); open the fist and let go of the pinch: one 復原 restores the turn.
-24. **Report.** Which constants to change, and to what (pinch thresholds and times, `DRAG_GAIN`, `ORBIT_DEG_PER_PX`, cursor filter, `TRACKING_LOSS_MS` or `ON_TRACKING_LOSS`, `DUPLICATE_HAND_PX`, `HAND_MATCH_PX`, `ZOOM_DEAD_ZONE_PX`, the fist ratios and times, `EXPLODE_DEAD_ZONE_PX`, `EXPLODE_FULL_FRACTION`, `ROTATE_DEAD_ZONE_DEG`, or `TRACKED_HANDS = 1` if two hands are too slow).
+24. **Second-hand pinch must not turn into a fist** (Task 12). With `?hands=debug`, grab a part with one hand. With the other hand pinch tightly with the other fingers curled, first on another object and then on the same object, and hold the pinch still for two seconds: it must join (an assemble with 手勢：捏住 …) or rotate by circling (手勢：雙手旋轉 …°), never turn into the knob; the debug line must show 握拳 否／否. Read the second hand's 曲度 while it pinches and report it (the lowest value you see). Then make a fist directly with the second hand, without pinching first: it must knob-rotate. If the second hand's 曲度 is below 1.0 while the pinch is still closing, the gesture can still become the knob (the known limit of requirement 117); report the value so that `FIST_ENGAGE_RATIO` can be decided.
+25. **Report.** Which constants to change, and to what (pinch thresholds and times, `DRAG_GAIN`, `ORBIT_DEG_PER_PX`, cursor filter, `TRACKING_LOSS_MS` or `ON_TRACKING_LOSS`, `DUPLICATE_HAND_PX`, `HAND_MATCH_PX`, `ZOOM_DEAD_ZONE_PX`, the fist ratios and times, `EXPLODE_DEAD_ZONE_PX`, `EXPLODE_FULL_FRACTION`, `ROTATE_DEAD_ZONE_DEG`, or `TRACKED_HANDS = 1` if two hands are too slow).
 
 **Session facts:**
 - E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"` (software WebGL saturates this 2-core machine and starves the fake camera, so hand gestures time out). Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`).
@@ -536,6 +537,50 @@ Two more decisions of the first webcam test (VISION §4.9, "Updated 2026-11-22")
 
 ---
 
+## Task 12 — Second-hand pinch must not turn into a fist (after the webcam retest)
+
+`[x]`
+
+The user's webcam test after Task 11 (VISION §4.9, the notes of 2026-11-22 and 2026-11-23/25) found that, sometimes, while the first hand grabs a part and the second hand pinches, the gesture becomes the fist-knob rotate instead of the two-pinch join or the rotate by circling. Cause, found by reading the code and reproduced in a unit test: requirement 90 lets a fist replace a pinch that has not left its dead zone, so a second-hand pinch that stays still while its curl ratio is below `FIST_ENGAGE_RATIO` (1.0) for `FIST_ENGAGE_MS` (150 ms) turns into a fist, which makes the pinch leave and joins as the knob. This task keeps a pinch that takes part in a two-hand gesture a pinch, lets the knob start only from a fist made without an engaged pinch, and keeps the one-hand rule of requirement 90 for a single hand. Requirement 117 (design §18).
+
+**Read first:** `docs/VISION.md` §4.9 (the notes of 2026-11-22 and 2026-11-23/25); requirements 82, 89, 90, 96–98, 101, 104, 108–114, 117; design §5.5, §17 (especially §17.7 and §17.9) and §18; `src/hands/controller.ts` (`frame`, `onFistEngage`, `dropPinch`, `onEngage`, `startJoiner`, `leaveJoiner`, `endSession`), `fist.ts` (`curlRatio`, `fistStep`), `pinch.ts` (`pinchStep`), `join.ts`, `text.ts` (`debugLine`), `HandDebugPanel.tsx`; `tests/fixtures/synthetic-hand.ts`, `tests/e2e/fake-hands.ts`; `tests/unit/hand-controller.test.ts` (the Task 7 fist and pinch block, the Task 11 knob block), `hand-assemble.test.ts` (the two-pinch block); `tests/e2e/hand-control.spec.ts` (`T8 two-hand rotate`, `T11 fist knob`).
+
+**Step 1, reproduce (done before the fix).** The synthetic hand with a tight pinch (15 mm) and the other three fingers curled measures a curl ratio of 1.36, above `FIST_ENGAGE_RATIO`, so by itself it does not make a fist. With the index finger bent toward the thumb until the hand's curl ratio is 0.95 (a number chosen by the test, not a webcam measurement) the unit tests failed on the old code, 8 of them: the second hand's fist engaged (握拳 是) in every case, the rotate by circling became the knob, and (by reading the code) the two-pinch assemble was cancelled. The curl ratio of a real tight pinch is still to be read from the webcam (see the manual item).
+
+**Build:**
+- `src/hands/controller.ts` (design §18): `keepsPinch(slot)` and its two uses in `frame`: a hand that keeps its pinch is not `fistLike` (its real pinch distance reaches `pinchStep`, so a pinch with a curl ratio below 1 can be released), and its fist state machine is fed `curl: null` (no streak builds). Comments on `onFistEngage` updated. No other code changes; `joinGesture`, `fist.ts` and `pinch.ts` are untouched.
+- `src/hands/text.ts` and `HandDebugPanel.tsx` (R117 d): no change was needed. `debugLine` already prints 曲度 for both hands (`stats.hands` has one entry per slot, filled while the hand is present); an e2e case now checks the second hand's value in the line.
+- `tests/fixtures/synthetic-hand.ts` and `tests/e2e/fake-hands.ts`: `curledFingers` and `indexRatio` (design §18, Tests).
+- `README.md`: no change (no user-visible rule that README states changed).
+- `.kiro/specs/hand-manipulation/`: this task, requirement 117 and the note in requirement 90, design §18 and the note in §17.7, the manual-list item below, and the maps.
+
+**Tests (R117):**
+- `tests/unit/hand-controller.test.ts` (`HandController, a second-hand pinch with curled fingers (Task 12, the real joinGesture)`): the synthetic curl values (1.36 with the index extended, 0.95 with `indexRatio` 0.95); the reproduction on the same object (rotate by circling, the second hand stays a pinch, no fist, the grab not cancelled); circling still turns the part and releasing the pinch with a curl ratio below 1 still ends the join; the same for a two-hand zoom and an explode; the owner's pinch not replaced while the second hand takes part; an inert second pinch not replaced; a fist made directly still gives the knob; a single hand's unmoved pinch still closes into a fist (the Task 7 rule); the first hand can become a fist after the second hand has left.
+- `tests/unit/hand-assemble.test.ts` (`the second pinch on another object with curled fingers (Task 12)`): the reproduction on another object (the two-pinch assemble keeps running, no `beginHold` for the second object, the assemble not cancelled); the join still reaches a ready snap and the release of the pinch with a curl ratio below 1 commits it.
+- `tests/e2e/hand-control.spec.ts` (`T12 second-hand pinch with curled fingers`): the second hand pinches the same object with its other fingers curled and its index finger bent below the fist ratio: the join stays the rotate by circling (gesture `rotate`, second hand `join`, the debug line shows both curl ratios and 握拳 否／否), circling turns the part, the second hand opens and the first one's release commits one undo step. Checked against the old code with the fix switched off: it failed (握拳 是).
+- Existing tests that changed, and why: `hand-assemble.test.ts` "drops the assemble quietly when the joining hand closes into a fist (its pinch gives way), and the fist then holds what it is over" encoded the old rule (a joining pinch gives way to a fist and the assemble is dropped). It is now "does not turn the joining pinch into a fist when the hand closes": the assemble keeps running, and because the synthetic fist's thumb is far from its index finger, the pinch releases the normal way and the assemble commits. No other existing test changed.
+- E2E while developing: `hand-control.spec.ts`, `assembly-hands.spec.ts`. At the end: the full suite (91 tests, all passed in 24.8 minutes).
+
+**Dependencies:** Tasks 1–11.
+
+**Done when:** `npm run check` passes, the tests above are green, the full e2e suite passes, and the manual list has the new item.
+
+**Manual webcam check, new item (item 24 of Task 5's list):**
+- **Second-hand pinch must not turn into a fist** (Task 12). With `?hands=debug`, grab a part with one hand. With the other hand pinch tightly with the other fingers curled, first on another object and then on the same object, and hold the pinch still for two seconds: it must join (an assemble with 手勢：捏住 …) or rotate by circling (手勢：雙手旋轉 …°), never turn into the knob; the debug line must show 握拳 否／否. Read the second hand's 曲度 while it pinches and report it (the lowest value you see). Then make a fist directly with the second hand, without pinching first: it must knob-rotate. If the second hand's 曲度 is below 1.0 while the pinch is still closing, the gesture can still become the knob (the known limit of requirement 117); report the value so that `FIST_ENGAGE_RATIO` can be decided.
+
+**Session facts:**
+- E2E: in PowerShell, first set `$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe"` and `$env:PLAYWRIGHT_GPU = "1"`. Playwright's own Chromium revision is not installed; never download browsers (no `npx playwright install`). Never download MediaPipe models.
+- Open hand e2e pages with `handsUrl()`. Start each attempt with no hand in either slot; move a fake hand in steps of at most 60 px (a jump beyond `HAND_MATCH_PX` counts as a new hand).
+- The e2e suite starts its own server on ports 5197/8797. Never stop a process you did not start. No other Kiro session runs in this working tree; never run `git checkout`, `restore`, `stash`, `reset` or `clean`.
+- Run `hand-control.spec.ts` and `assembly-hands.spec.ts` while developing. The full suite (90 tests at the time of writing) takes about 25 minutes: run it once at the end, in the background, with its output in a file (`npx playwright test *> artifacts/local/e2e-hand-task12.log`), with a timeout of at least 35 minutes.
+- `npm run check` must pass before the task is marked `[x]`; report the real numbers. No real model calls; never run `verify:real` or `verify:edit`.
+- Write comments with plain backticks; no tab, form-feed or other control character may end up in a file.
+- If a test is flaky, or a failure cannot be fixed within two or three attempts, stop and report. Never drop or simplify a feature on your own; report instead.
+- Do not commit; the reviewer commits (suggested message: `fix(hands): keep a second-hand pinch from turning into a fist (spec hand-manipulation, task 12)`).
+- Files are LF. User-facing strings are Traditional Chinese; code, comments, documents and reports are English.
+
+---
+
 ## Cut order
 
 **Only the user decides whether anything is cut.** A Kiro session never drops or simplifies a feature on its own, also not to save time: it reports the problem, and the reviewer asks the user. The list below is only a reference for that decision.
@@ -566,5 +611,6 @@ The full map, with the parts of shared requirements, is design §12. In short:
 | 9 | 54, 99, 100, 70, 72 |
 | 10 | 20, 40, 45, 47, 74, 89 (changed numbers), 101–107 |
 | 11 | 82 (the grab rows), 108–116 |
+| 12 | 90 (changed rule), 112 (when the knob starts), 45 (curl ratio of both hands), 117 |
 
 Requirements 65 and 67–69 apply to every task; 71 is this file. Requirements 56–62 are removed.

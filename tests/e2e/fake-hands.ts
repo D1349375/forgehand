@@ -79,6 +79,10 @@ export interface FakeHand {
   fist?: boolean;
   /** Turns the hand in the image plane, in degrees, clockwise on screen (Task 11); a fist twisted like a knob. Default 0. */
   roll?: number;
+  /** A pinch with the other three fingers curled (Task 12): `at` is the pinch midpoint, and the curl ratio is about 1.36 unless `indexRatio` says otherwise. */
+  curledFingers?: boolean;
+  /** With `curledFingers`: the index finger bends toward the thumb until the hand's curl ratio is this value (below 1 is fist-like). */
+  indexRatio?: number;
 }
 
 /** Shows up to two synthetic hands, in slot order (the first is hand 0); an empty array hides all hands. */
@@ -96,7 +100,7 @@ export async function showHands(page: Page, hands: readonly FakeHand[]): Promise
   if (!geometry?.video.width || !geometry.video.height) throw new Error('showHands: the camera video has no frame yet');
   await postHands(page, hands.map((hand, index) => syntheticHand({
     cursor: clientToNormalized(hand.at, geometry.view, geometry.video), pinchM: hand.pinchM, side: index === 0 ? 'right' : 'left', fist: hand.fist,
-    roll: hand.roll, aspect: geometry.video.width / geometry.video.height,
+    roll: hand.roll, aspect: geometry.video.width / geometry.video.height, curledFingers: hand.curledFingers, indexRatio: hand.indexRatio,
   })));
 }
 

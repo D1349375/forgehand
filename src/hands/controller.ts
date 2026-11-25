@@ -351,9 +351,12 @@ export class HandController {
       track.pinchM = sample.pinchM;
       track.curl = sample.curl ?? null;
       if (!track.pinch.engaged) track.settle = settleStep(track.settle, this.port.pick(track.cursor), now);
+      // A pinch that is part of a two-hand gesture (or was made while another hand's gesture runs) keeps being a pinch: the curl ratio
+      // of its hand is ignored, so it neither turns into a fist nor loses its distance, and it ends by release, loss or gate (Task 12).
+      const keepsPinch = this.fistEnabled && this.keepsPinch(slot);
       // A fist-like frame never counts toward a pinch (requirement 90), and neither does a frame while a fist is engaged
       // (the fingers pass the engage ratio on the way open).
-      const fistLike = this.fistEnabled && track.curl !== null && (track.curl < FIST_ENGAGE_RATIO || track.fist.engaged);
+      const fistLike = this.fistEnabled && !keepsPinch && track.curl !== null && (track.curl < FIST_ENGAGE_RATIO || track.fist.engaged);
       // The pinch midpoint drifts while the fingers curl into a fist, so a fist-like frame leaves the dead zone of an engaged pinch
       // alone: the cursor stays where the pinch engaged, and a pinch that had not moved can still give way to the fist.
       // The same holds while the fingers open: the cursor drift of the opening hand must not turn a tap into a drag (requirement 101).
@@ -366,7 +369,8 @@ export class HandController {
       if (this.fistEnabled) {
         // An opening fist keeps its palm where the fist engaged, so a fist that never moved cannot start to move while the fingers open.
         const palm = this.isOpening(track, 'fist') && track.fist.engagePalm ? track.fist.engagePalm : track.palm;
-        fistEvents[slot] = this.stepFist(track, { kind: 'hand', palm, curl: track.curl, pinchMoved: track.pinch.engaged && track.pinch.moved }, now);
+        // A hand that keeps its pinch reports no curl ratio to the fist machine, so its streak never builds (the debug numbers still show it).
+        fistEvents[slot] = this.stepFist(track, { kind: 'hand', palm, curl: keepsPinch ? null : track.curl, pinchMoved: track.pinch.engaged && track.pinch.moved }, now);
       }
     }
     for (const slot of [0, 1] as const) {
@@ -402,6 +406,19 @@ export class HandController {
   private expired(track: Track, now: number): boolean {
     const seen = track.pinch.handSeenAt;
     return seen !== null && now - seen >= (this.lossMs ?? (track.pinch.engaged ? TRACKING_LOSS_MS : HAND_LOST_MS));
+  }
+
+  /**
+   * Task 12: whether this hand's engaged pinch must stay a pinch. It does while a two-hand gesture runs and the pinch is part of it
+   * (the owner's pinch once a joiner has come, or the joining pinch), and while another hand's gesture runs and this pinch was made
+   * after it (a joiner, or a pinch that nothing joins). A fist that starts without an engaged pinch is not affected, and neither is a
+   * single hand: its unmoved pinch can still close into a fist (requirement 90).
+   */
+  private keepsPinch(slot: HandSlot): boolean {
+    const session = this.session;
+    if (!session || !this.tracks[slot].pinch.engaged) return false;
+    if (session.owner === slot) return session.input === 'pinch' && session.joiner !== null;
+    return true;
   }
 
   private stepFist(track: Track, input: Parameters<typeof fistStep>[1], now: number): FistEvent[] {
@@ -621,7 +638,8 @@ export class HandController {
   private onFistEngage(slot: HandSlot): void {
     const track = this.tracks[slot];
     // Closing the hand passes through a short thumb-index distance: this hand's pinch, which has not left its dead zone (the fist
-    // never engages otherwise), gives way to the fist with nothing committed (requirement 90).
+    // never engages otherwise), gives way to the fist with nothing committed (requirement 90). A pinch that belongs to a two-hand
+    // gesture never gets here (`keepsPinch`, Task 12), so the fist that joins another hand's gesture is always one made without a pinch.
     if (track.pinch.engaged) this.dropPinch(slot);
     const target = this.port.pick(track.palm);
     const session = this.session;

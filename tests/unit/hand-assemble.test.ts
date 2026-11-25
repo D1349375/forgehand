@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { SNAP_SETTLE_MS } from '../../shared/joint-constants';
 import { addJoint, addObject, emptyWorkspace, type ObjectTransform, type Workspace } from '../../shared/workspace';
-import { DRAG_GAIN, FIST_ENGAGE_MS, FIST_RELEASE_MS, PINCH_ENGAGE_MS, PINCH_RELEASE_MS, TRACKING_LOSS_MS } from '../../src/hands/constants';
+import { DRAG_GAIN, FIST_ENGAGE_MS, FIST_ENGAGE_RATIO, FIST_RELEASE_MS, PINCH_ENGAGE_MS, PINCH_RELEASE_MS, TRACKING_LOSS_MS } from '../../src/hands/constants';
 import {
   HandController, type AssemblePreview, type AssembleSession, type GrabSession, type HandPort, type HoldSession, type OrbitSession,
 } from '../../src/hands/controller';
@@ -1037,14 +1037,74 @@ describe('HandController, two pinches (the real joinGesture)', () => {
     expect(rig.grabs).toHaveLength(0);
   });
 
-  it('drops the assemble quietly when the joining hand closes into a fist (its pinch gives way), and the fist then holds what it is over', () => {
+  // Changed in Task 12: this test used to say that a joining pinch which closes into a fist gives way to the fist and the assemble is
+  // dropped. A pinch that took part in a two-hand gesture now keeps being a pinch until it is released.
+  it('does not turn the joining pinch into a fist when the hand closes: the pinch ends the normal way (the fist\'s thumb is far from the index finger, so it opens)', () => {
     const rig = pinchJoining();
-    rig.run([pinchHand(first, 'closed'), fist(second)], FIST_ENGAGE_FRAMES + 2);
-    expect(rig.assembles[0]!.cancels).toBe(1);
-    expect(rig.assembles[0]!.commits).toEqual([]);
+    rig.run([pinchHand(first, 'closed'), fist(second)], 1);
+    // The fist is not looked at while the pinch is part of the gesture: the assemble still runs and no fist holds anything.
+    expect(rig.assembles[0]!.cancels).toBe(0);
+    expect(rig.last.gesture).toBe('assemble');
+    expect(rig.view(1)!.input).toBe('pinch');
+    rig.run([pinchHand(first, 'closed'), fist(second)], PINCH_RELEASE_FRAMES);
+    // The distance between thumb and index finger of that fist is long, so the pinch is released and the assemble ends with its commit.
+    expect(rig.assembles[0]!.commits).toEqual([true]);
+    expect(rig.assembles[0]!.cancels).toBe(0);
     expect(rig.cancelled).toEqual([]);
-    expect(rig.view(0)!.state).toBe('locked');
-    expect(rig.log.at(-1)).toBe('beginHold o2');
+    expect(rig.log.filter(line => line.startsWith('beginHold'))).toEqual(['beginHold o1']);
+  });
+});
+
+// ---- Task 12: a second-hand pinch with curled fingers on another object -------------------------------------------------------------
+
+/**
+ * A pinch with the other three fingers curled, placed by its pinch midpoint. Without `indexRatio` the index finger stays extended
+ * (curl ratio about 1.36); with it the index finger bends toward the thumb until that is the hand's curl ratio (chosen by the test, not measured).
+ */
+function curledPinch(at: readonly [number, number], indexRatio?: number): HandSample {
+  const cursor = clientToNormalized({ x: at[0], y: at[1] }, VIEW, VIDEO);
+  return handSample(syntheticHand({ cursor, pinchM: PINCH_CLOSED_M, curledFingers: true, indexRatio }), VIEW, VIDEO)!;
+}
+
+describe('HandController, the second pinch on another object with curled fingers (Task 12)', () => {
+  const LONG = FIST_ENGAGE_FRAMES + 4;
+
+  /** The first hand grabs the part of o1; the second hand pinches the part of o2 with its other fingers curled (curl ratio about 1.36): the two-pinch join. */
+  function joiningWithCurledFingers(): PinchRig {
+    const rig = makePinchRig();
+    rig.run([pinchHand(first, 'open'), pinchHand(second, 'open')], 6);
+    rig.run([pinchHand(first, 'closed'), pinchHand(second, 'open')], PINCH_ENGAGE_FRAMES);
+    rig.run([pinchHand(first, 'closed'), curledPinch(second)], PINCH_ENGAGE_FRAMES);
+    return rig;
+  }
+
+  it('keeps the two-pinch join when the index finger of the second hand bends and its curl ratio stays below FIST_ENGAGE_RATIO, unmoved, for longer than FIST_ENGAGE_MS', () => {
+    const rig = joiningWithCurledFingers();
+    expect(rig.last.gesture).toBe('assemble');
+    expect(rig.assembles).toHaveLength(1);
+    rig.run([pinchHand(first, 'closed'), curledPinch(second, 0.95)], LONG);
+    expect(rig.controller.stats.hands[1].curl!).toBeLessThan(FIST_ENGAGE_RATIO);
+    expect(rig.controller.stats.hands[1].fist).toBe(false);
+    // Neither the assemble nor the second pinch was given up, and no fist holds anything.
+    expect(rig.last.gesture).toBe('assemble');
+    expect(rig.view(1)!.input).toBe('pinch');
+    expect(rig.view(1)!.state).toBe('hold');
+    expect(rig.assembles[0]!.cancels).toBe(0);
+    expect(rig.holds).toHaveLength(1);
+    expect(rig.log.filter(line => line.startsWith('beginHold'))).toEqual(['beginHold o1']);
+  });
+
+  it('keeps the join while the bent index finger moves the pinch to a ready snap, and releasing the pinch (the real distance) ends the assemble the normal way', () => {
+    const rig = joiningWithCurledFingers();
+    rig.run([pinchHand(first, 'closed'), curledPinch(second, 0.95)], LONG);
+    rig.assembles[0]!.ready = true;
+    rig.run([pinchHand(first, 'closed'), curledPinch(second, 0.95)], 2);
+    expect(rig.view(1)!.badge).toBe('手勢：可以接合');
+    // The thumb opens while the index finger stays bent: the pinch releases, the assemble is committed with its joint.
+    const releasing = handSample(syntheticHand({ cursor: clientToNormalized({ x: second[0], y: second[1] }, VIEW, VIDEO), pinchM: PINCH_OPEN_M, curledFingers: true, indexRatio: 0.95 }), VIEW, VIDEO)!;
+    rig.run([pinchHand(first, 'closed'), releasing], PINCH_RELEASE_FRAMES + 2);
+    expect(rig.assembles[0]!.commits).toEqual([true]);
+    expect(rig.assembles[0]!.cancels).toBe(0);
   });
 });
 

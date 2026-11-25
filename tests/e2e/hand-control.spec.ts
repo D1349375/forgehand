@@ -1317,6 +1317,72 @@ async function startKnobOnce(page: Page, objectId: string, owner: Pt, second: Pt
   await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'join');
 }
 
+// ---- Task 12: a second-hand pinch with curled fingers is not a fist -------------------------------------------------------------
+
+/** A pinch with the other three fingers curled, placed by its pinch midpoint; `indexRatio` bends the index finger (a curl ratio below 1 is fist-like). */
+const curledPinchAt = (at: Pt, indexRatio?: number): FakeHand => ({ at, pinchM: PINCH, curledFingers: true, indexRatio });
+const BENT_INDEX = 0.95;
+/** As `startRotateOnce`, but the second hand pinches with its other fingers curled. */
+async function startCurledRotateOnce(page: Page, objectId: string, owner: Pt, second: Pt) {
+  await hideHand(page);
+  await expect(overlay(page)).toHaveAttribute('data-hand-state', 'none', { timeout: 45_000 });
+  await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'none', { timeout: 45_000 });
+  await showHands(page, [{ at: owner, pinchM: OPEN }]);
+  await expect(overlay(page)).toHaveAttribute('data-hand-target', `${objectId}:housing`, { timeout: 45_000 });
+  await showHands(page, pair(owner, OPEN, second, OPEN));
+  await expect(overlay(page)).toHaveAttribute('data-hand-count', '2', { timeout: 45_000 });
+  await showHands(page, pair(owner, PINCH, second, OPEN));
+  await expect(overlay(page)).toHaveAttribute('data-hand-state', 'grab', { timeout: 10_000 });
+  await showHands(page, [{ at: owner, pinchM: PINCH }, curledPinchAt(second)]);
+  await expect(overlay(page)).toHaveAttribute('data-gesture', 'rotate', { timeout: 10_000 });
+  await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'join');
+}
+
+test.describe('T12 second-hand pinch with curled fingers', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(handsUrl({ debug: true }));
+  });
+
+  test('a second-hand pinch on the same object whose index finger bends below the fist ratio stays the circle rotate, never the knob, and ?hands=debug shows both curl ratios', async ({ page }) => {
+    const calls = modelCalls(page);
+    await demoAndCamera(page);
+    const objectId = (await sceneCanvas(page).getAttribute('data-active-object-id'))!;
+    const before = await modelRows(page);
+    const { owner, sign, second } = await rotateRig(page);
+    const start = await childAngle(page);
+    await attempts(page, owner, [{ at: second(0), pinchM: OPEN }], () => startCurledRotateOnce(page, objectId, owner, second(0)));
+
+    // The index finger bends: the curl ratio of the second hand falls below 1 and stays there, unmoved, for much longer than 150 ms.
+    await showHands(page, [{ at: owner, pinchM: PINCH }, curledPinchAt(second(0), BENT_INDEX)]);
+    await someFrames(page, 25);
+    await expect(page.getByTestId('hand-debug')).toContainText(/曲度 \d\.\d\d／0\.9\d/);
+    await expect(page.getByTestId('hand-debug')).toContainText('握拳 否／否');
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'rotate');
+    await expect(overlay(page)).toHaveAttribute('data-hand2-state', 'join');
+
+    // Circling turns the part the way the hands turned, with the bent index finger.
+    for (const degrees of [10, 20, 30, 40]) {
+      await showHands(page, [{ at: owner, pinchM: PINCH }, curledPinchAt(second(degrees), BENT_INDEX)]);
+      await someFrames(page, 5);
+    }
+    await expect.poll(async () => sign * wrapDegrees((await childAngle(page)) - start), { timeout: 30_000 }).toBeGreaterThan(12);
+    await someFrames(page, 10);
+    expect(sign * wrapDegrees((await childAngle(page)) - start)).toBeLessThan(60);
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'rotate');
+    expect(await modelRows(page)).toEqual(before);
+
+    // The second hand opens fully: it leaves, the turn stays, and the first hand carries on; then its release commits once and undo puts it back.
+    await showHands(page, pair(owner, PINCH, second(40), OPEN));
+    await expect(overlay(page)).toHaveAttribute('data-gesture', 'grab', { timeout: 20_000 });
+    await showHands(page, pair(owner, OPEN, second(40), OPEN));
+    await expect.poll(async () => JSON.stringify(housingOf(await modelRows(page))[2]), { timeout: 45_000 }).not.toBe(JSON.stringify(housingOf(before)[2]));
+    expect(withoutHousing(await modelRows(page))).toEqual(withoutHousing(before));
+    await undoButton(page).click();
+    await expect.poll(() => modelRows(page), { timeout: 20_000 }).toEqual(before);
+    expect(calls).toEqual([]);
+  });
+});
+
 test.describe('T11 fist knob', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(handsUrl({ debug: true }));

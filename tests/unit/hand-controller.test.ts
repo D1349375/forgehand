@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  CANCEL_NOTICE_MS, DRAG_DEAD_ZONE_PX, EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, FIST_ENGAGE_MS, FIST_RELEASE_MS, HAND_LOST_MS, PINCH_ENGAGE_MS, PINCH_RELEASE_MS, ROTATE_DEAD_ZONE_DEG,
+  CANCEL_NOTICE_MS, DRAG_DEAD_ZONE_PX, EXPLODE_DEAD_ZONE_PX, EXPLODE_FULL_FRACTION, FIST_ENGAGE_MS, FIST_ENGAGE_RATIO, FIST_RELEASE_MS, HAND_LOST_MS, PINCH_ENGAGE_MS, PINCH_RELEASE_MS, ROTATE_DEAD_ZONE_DEG,
   TRACKING_LOSS_MS, TWO_HAND_MIN_SPAN_PX, ZOOM_DEAD_ZONE_PX,
 } from '../../src/hands/constants';
 import { HandController, type GrabSession, type HandPort, type HoldSession, type OrbitSession } from '../../src/hands/controller';
@@ -2396,6 +2396,178 @@ describe('HandController, fist knob (Task 11, the real joinGesture)', () => {
     expect(rig.log).toEqual(['beginOrbit']);
     expect(rig.controller.twoHand).toBeNull();
     expect(rig.view(1)!.state).not.toBe('join');
+  });
+});
+
+// ---- Task 12: a second-hand pinch with curled fingers must not turn into a fist -----------------------------------------------------
+
+/**
+ * A pinch with the other three fingers curled, placed by its pinch midpoint like `hand`. Without `indexRatio` the index finger stays
+ * extended (curl ratio about 1.36, above the engage ratio); with it the index finger bends toward the thumb until its own ratio, and so
+ * the hand's curl ratio, is that value (the number is chosen by the test, it is not a webcam measurement). `pinchM` defaults to a closed pinch.
+ */
+function curledPinch(x: number, y: number, indexRatio?: number, pinchM = CLOSED): HandSample {
+  return handSample(syntheticHand({ cursor: clientToNormalized({ x, y }, VIEW, VIDEO), pinchM, curledFingers: true, indexRatio }), VIEW, VIDEO)!;
+}
+
+describe('HandController, a second-hand pinch with curled fingers (Task 12, the real joinGesture)', () => {
+  const owner: [number, number] = [200, 300];
+  const second: [number, number] = [700, 300];
+  /** An index finger bent so far that the hand's curl ratio is below FIST_ENGAGE_RATIO although the thumb and index finger still touch. */
+  const BENT = 0.95;
+  /** Longer than FIST_ENGAGE_MS: the time a curled hand must stay unmoved to engage a fist. */
+  const LONG = FIST_ENGAGE_FRAMES + 4;
+  const PINCH_RELEASE_FRAMES = Math.ceil(PINCH_RELEASE_MS / FRAME_MS) + 1;
+  const onPart = () => part('o1', 'p1', 'Arm');
+  const ownerPinch = [owner[0], owner[1], true] as const;
+  const ownerOpen = [owner[0], owner[1], false] as const;
+  const secondOpen = [second[0], second[1], false] as const;
+  const last = <T>(values: T[]): T => values[values.length - 1]!;
+
+  /** The first hand pinches a part; then the second hand pinches with its other fingers curled (curl ratio about 1.36): they join as a rotate. */
+  function rotatingWithCurledFingers() {
+    const rig = makeRig({ pick: onPart });
+    rig.run([ownerOpen, secondOpen], 6);
+    rig.run([ownerPinch, secondOpen], PINCH_ENGAGE_FRAMES + 1);
+    rig.run([ownerPinch, curledPinch(...second)], PINCH_ENGAGE_FRAMES + 1);
+    return rig;
+  }
+
+  it('measures the synthetic pinch with curled fingers: about 1.36 with the index extended, below FIST_ENGAGE_RATIO only with a bent index', () => {
+    expect(rotatingWithCurledFingers().controller.stats.hands[1].curl).toBeCloseTo(1.36, 2);
+    const rig = rotatingWithCurledFingers();
+    rig.run([ownerPinch, curledPinch(...second, BENT)], 2);
+    expect(rig.controller.stats.hands[1].curl).toBeCloseTo(BENT, 2);
+    expect(rig.controller.stats.hands[1].curl!).toBeLessThan(FIST_ENGAGE_RATIO);
+  });
+
+  it('keeps the second hand a pinch in the circle rotate when its index bends and its curl ratio stays below the engage ratio, unmoved, for longer than FIST_ENGAGE_MS', () => {
+    const rig = rotatingWithCurledFingers();
+    // The overlay marks only the fist knob with `input: 'fist'`; a joining pinch has no `input`.
+    expect(rig.view(1)!.state).toBe('join');
+    expect(rig.view(1)!.input).toBeUndefined();
+    expect(rig.controller.twoHand).toMatchObject({ gesture: 'rotate' });
+    rig.run([ownerPinch, curledPinch(...second, BENT)], LONG);
+    expect(rig.controller.stats.hands[1].curl!).toBeLessThan(FIST_ENGAGE_RATIO);
+    // Still the pinch-and-circle rotate: not the fist knob, and nothing was let go.
+    expect(rig.controller.stats.hands[1].fist).toBe(false);
+    expect(rig.view(1)!.state).toBe('join');
+    expect(rig.view(1)!.input).toBeUndefined();
+    expect(rig.last.gesture).toBe('rotate');
+    expect(rig.controller.twoHand).toMatchObject({ gesture: 'rotate' });
+    expect(rig.grabs[0]!.cancels).toBe(0);
+    expect(rig.controller.stats.twoHand).toEqual({ rotate: 1 });
+  });
+
+  it('goes on turning the part by circling while the curl ratio is below the engage ratio, and the release of the pinch still ends the join', () => {
+    const rig = rotatingWithCurledFingers();
+    rig.run([ownerPinch, curledPinch(...second, BENT)], LONG);
+    const centre = rig.view(0)!.cursor;
+    const radius = Math.hypot(second[0] - centre.x, second[1] - centre.y);
+    const base = Math.atan2(second[1] - centre.y, second[0] - centre.x);
+    for (let degrees = 10; degrees <= 30; degrees += 10) {
+      const radians = base + (degrees * Math.PI) / 180;
+      rig.run([ownerPinch, curledPinch(centre.x + radius * Math.cos(radians), centre.y + radius * Math.sin(radians), BENT)], 6);
+    }
+    const end = base + (30 * Math.PI) / 180;
+    rig.run([ownerPinch, curledPinch(centre.x + radius * Math.cos(end), centre.y + radius * Math.sin(end), BENT)], 30);
+    expect(rig.view(1)!.state).toBe('join');
+    expect(rig.view(1)!.input).toBeUndefined();
+    expect(last(rig.grabs[0]!.rotates)).toBeCloseTo(25, 0);
+    // The thumb opens while the index finger stays bent: the pinch is released the normal way (the real distance counts, not a fist).
+    rig.run([ownerPinch, curledPinch(centre.x + radius * Math.cos(end), centre.y + radius * Math.sin(end), BENT, OPEN)], PINCH_RELEASE_FRAMES + 2);
+    expect(rig.controller.twoHand).toBeNull();
+    expect(rig.last.gesture).toBe('grab');
+    expect(rig.controller.stats.hands[1].fist).toBe(false);
+    expect(rig.grabs[0]!.commits).toBe(0);
+  });
+
+  it('keeps a pinch that joined a two-hand zoom, too', () => {
+    const rig = makeRig({ pick: () => EMPTY_TARGET });
+    rig.run([ownerOpen, secondOpen], 6);
+    rig.run([ownerPinch, secondOpen], PINCH_ENGAGE_FRAMES + 1);
+    rig.run([ownerPinch, curledPinch(...second)], PINCH_ENGAGE_FRAMES + 1);
+    expect(rig.last.gesture).toBe('zoom');
+    rig.run([ownerPinch, curledPinch(...second, BENT)], LONG);
+    expect(rig.controller.stats.hands[1].fist).toBe(false);
+    expect(rig.view(1)!.state).toBe('join');
+    expect(rig.view(1)!.input).toBeUndefined();
+    expect(rig.last.gesture).toBe('zoom');
+    expect(rig.orbits[0]!.ends).toBe(0);
+  });
+
+  it('keeps a pinch that joined an explode, too, while the other hand holds with a fist', () => {
+    const rig = makeRig({ pick: onPart });
+    rig.run([ownerOpen, secondOpen], 6);
+    rig.run([palmHand(owner[0], owner[1], 'fist'), secondOpen], FIST_ENGAGE_FRAMES + 1);
+    expect(rig.view(0)!.state).toBe('hold');
+    rig.run([palmHand(owner[0], owner[1], 'fist'), curledPinch(...second)], PINCH_ENGAGE_FRAMES + 1);
+    expect(rig.last.gesture).toBe('explode');
+    rig.run([palmHand(owner[0], owner[1], 'fist'), curledPinch(...second, BENT)], LONG);
+    expect(rig.controller.stats.hands[1].fist).toBe(false);
+    expect(rig.view(1)!.state).toBe('join');
+    expect(rig.view(1)!.input).toBeUndefined();
+    expect(rig.last.gesture).toBe('explode');
+    expect(rig.holds).toHaveLength(1);
+    expect(rig.holds[0]!.cancels).toBe(0);
+  });
+
+  it('keeps the first hand a pinch as well while the second hand takes part: its curl ratio below the engage ratio does not drop the grab', () => {
+    const rig = rotatingWithCurledFingers();
+    rig.run([curledPinch(...owner, BENT), curledPinch(...second)], LONG);
+    expect(rig.controller.stats.hands[0].curl!).toBeLessThan(FIST_ENGAGE_RATIO);
+    expect(rig.controller.stats.hands[0].fist).toBe(false);
+    expect(rig.view(0)!.state).toBe('grab');
+    expect(rig.holds).toHaveLength(0);
+    expect(rig.grabs[0]!.cancels).toBe(0);
+    expect(rig.controller.twoHand).toMatchObject({ gesture: 'rotate' });
+  });
+
+  it('keeps an inert second pinch a pinch: another hand runs a gesture that nothing joins, and the curl ratio below the engage ratio does not make it a fist', () => {
+    const rig = makeRig({ pick: onPart, join: () => null });
+    rig.run([ownerOpen, secondOpen], 6);
+    rig.run([ownerPinch, secondOpen], PINCH_ENGAGE_FRAMES + 1);
+    rig.run([ownerPinch, curledPinch(...second)], PINCH_ENGAGE_FRAMES + 1);
+    expect(rig.controller.stats.inert).toBe(1);
+    rig.run([ownerPinch, curledPinch(...second, BENT)], LONG);
+    expect(rig.controller.stats.hands[1].fist).toBe(false);
+    expect(rig.controller.stats.hands[1].pinching).toBe(true);
+    expect(rig.view(0)!.state).toBe('grab');
+  });
+
+  it('still starts the knob rotate for a fist made directly with the second hand: it never pinched', () => {
+    const rig = makeRig({ pick: onPart });
+    rig.run([ownerOpen, secondOpen], 6);
+    rig.run([ownerPinch, secondOpen], PINCH_ENGAGE_FRAMES + 1);
+    rig.run([ownerPinch, palmHand(second[0], second[1], 'fist')], FIST_ENGAGE_FRAMES + 1);
+    expect(rig.controller.stats.hands[0].pinching).toBe(true);
+    expect(rig.controller.stats.hands[1].pinching).toBe(false);
+    expect(rig.view(1)!.state).toBe('join');
+    expect(rig.view(1)!.input).toBe('fist');
+    expect(rig.last.gesture).toBe('rotate');
+    expect(rig.controller.stats.twoHand).toEqual({ rotate: 1 });
+  });
+
+  it('keeps the one-hand rule of requirement 90: a single pinch, unmoved, that closes further still becomes a fist hold', () => {
+    const rig = makeRig({ pick: onPart });
+    rig.run([ownerOpen], 6);
+    rig.run([curledPinch(...owner)], PINCH_ENGAGE_FRAMES + 1);
+    expect(rig.view(0)!.state).toBe('grab');
+    rig.run([curledPinch(...owner, BENT)], LONG);
+    expect(rig.controller.stats.hands[0].fist).toBe(true);
+    expect(rig.view(0)!.state).toBe('hold');
+    expect(rig.grabs[0]!.cancels).toBe(1);
+    expect(rig.holds).toHaveLength(1);
+  });
+
+  it('lets the first hand give way to a fist after the second hand has left: the gesture is no longer a two-hand one', () => {
+    const rig = rotatingWithCurledFingers();
+    // The second hand opens: it leaves the rotate, and the owner is a plain one-hand grab again.
+    rig.run([ownerPinch, hand(second[0], second[1], false)], PINCH_RELEASE_FRAMES + 2);
+    expect(rig.controller.twoHand).toBeNull();
+    rig.run([curledPinch(...owner, BENT), hand(second[0], second[1], false)], LONG);
+    expect(rig.controller.stats.hands[0].fist).toBe(true);
+    expect(rig.view(0)!.state).toBe('hold');
   });
 });
 
