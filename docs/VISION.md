@@ -251,6 +251,15 @@ Decided with the user on 2026-11-14, after an independent design review of the r
 > - **Rotate with a fist knob:** one hand pinches a part, the other makes a fist and twists the wrist like a knob; the part turns about the view axis. Order decides: pinch first then fist = rotate; fist first then pinch = explode. The existing pinch-and-circle rotate stays for a second pinch on the same object or empty space.
 > - **Later topics raised:** a full-screen workbench whose panels appear only when needed (the agent can put data on the video), which becomes its own spec; pulling one part out of an exploded object by hand (backlog); the second 載入示範模型 button is hard to find.
 
+> **Updated 2026-11-23/25 (retest of hand-manipulation Tasks 10–11, and grouping).** With Tasks 10 (wider pinch thresholds counted in time, freeze on opening, latched snap, 5 fps gate) and 11 (two-pinch join, fist-knob rotate) built, pinching is clearly better, though some hand angles still miss a pinch (likely the thumb and index hidden when the hand turns sideways); the user accepts this level for now. The two-pinch join works. The user found joining whole objects too coarse: a generated design (for example a watch) is one object, and its parts could only be joined when their faces already touch, with the mouse only. Decided with the user (option "both"):
+> - **An object is the group.** Every part belongs to exactly one object; a generated design starts as one object.
+> - **Pulling a part out makes a new object.** A part (with its child parts) can be taken out of its object and becomes an object of its own, placed next to the original; the original loses that part. One undo step.
+> - **A joint connects objects** (screws, magnets, pins, glue, as built in `assembly-joints`); joined objects move together. **Removing a joint separates them**; they never merge back into one object, because a joint means "printed apart, then fastened".
+> - Parts of one object that touch keep the export rule: fused into one print piece unless a joint separates them.
+> - **Parts tray:** a row at the bottom of the workbench lists the active object's parts as cards. Clicking or pinching a card selects that part for fine adjustment; dragging a card up into the scene (mouse or pinch) pulls the part out.
+> - **Gestures stay simple:** hands only pull parts out (from the tray) and join (two pinches or two fists). Removing a joint uses the joint card's button or the agent (later voice), with no gesture, to avoid accidental ungrouping.
+> - This becomes a new spec, closely tied to the full-screen workbench spec (the tray is part of that layout).
+
 **One gesture, explicit mode.** A laptop webcam gives about one reliable "button": the pinch. So the pinch is the only action gesture, and the mode decides what it does, as in Blender.
 - Pinch on a part: select it and move or rotate it in the current mode. Pinch on empty space: orbit the view (no data change, no undo step).
 - The mode is the existing `transformMode` (移動 / 旋轉), switched by the existing buttons, new G/R keys, and later the agent or voice.
