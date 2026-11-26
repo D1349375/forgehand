@@ -149,6 +149,7 @@ defineTool({
 - The tool list in the instructions is generated from the registry (name, one-line description, argument shape). Unimplemented tools are simply not registered, so the model never sees them.
 - `effects` drives policy: background jobs may only use `read-only` tools; `uses-camera` and `sends-image` tools always need the user's action in the browser.
 - When the catalogue grows past about 20 tools, add a `find_tools(query)` tool and send only the core tools plus what the model asked for.
+  - Decided 2026-11-26: not built yet. With 15 tools the generated tool list is 6,409 characters; the specs `workbench-ui`, `design-fidelity`, `body-fit` and `english-ui` bring about 21 tools (about 9,000 characters, estimated), while each `find_tools` lookup would cost one more CLI round of several seconds. Revisit when `agent-platform` adds its tools or agent runs get slower.
 
 ### 4.4 Client tools
 
