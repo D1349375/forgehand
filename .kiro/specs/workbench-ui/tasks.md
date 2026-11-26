@@ -26,7 +26,7 @@ Later specs plug into this spec's files: `design-fidelity` fills the `extras` sl
 
 ## Task 1 — Pull-out in `shared/`: the operation, the change and the export proof
 
-`[ ]`
+`[x]`
 
 Taking a part with its child parts out of an object into a new object: subtree, exact re-rooting in place, placement next to the original, joint re-pointing, selection, the `pull-out` object change, and the helper that separates two parts of one object before a join. Pure code; nothing changes on screen.
 

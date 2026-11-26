@@ -5,6 +5,7 @@ import { ObjectIdSchema } from './ids';
 import { JointSchema, MAX_JOINTS, faceAllows, faceShape, type Joint, type JointMethod, type JointNeeds } from './joint';
 import { MaterialIdSchema, type MaterialId } from './materials';
 import { ModelSpecSchema, PartIdSchema, validateModel, type ModelSpec } from './model';
+import { pullOutPart } from './pull-out';
 
 /**
  * Workspace: a plain, versioned JSON value holding several model objects, the
@@ -81,7 +82,7 @@ export const ZERO_TRANSFORM: ObjectTransform = freezeTransform({
 
 export type WorkspaceErrorCode =
   | 'INVALID_WORKSPACE' | 'OBJECT_LIMIT' | 'UNKNOWN_OBJECT' | 'DUPLICATE_OBJECT' | 'INVALID_SELECTION'
-  | 'JOINT_LIMIT' | 'UNKNOWN_JOINT' | 'INVALID_JOINT' | 'CANNOT_ALIGN' | 'LINKED';
+  | 'JOINT_LIMIT' | 'UNKNOWN_JOINT' | 'INVALID_JOINT' | 'CANNOT_ALIGN' | 'LINKED' | 'UNKNOWN_PART' | 'WHOLE_OBJECT';
 
 const MESSAGES: Record<WorkspaceErrorCode, string> = {
   INVALID_WORKSPACE: '工作區資料無效。',
@@ -94,6 +95,8 @@ const MESSAGES: Record<WorkspaceErrorCode, string> = {
   INVALID_JOINT: '接合資料無效。',
   CANNOT_ALIGN: '兩個面的方向差太多，請先旋轉物件。',
   LINKED: '這兩個物件還透過其他接合相連，無法單獨對齊。',
+  UNKNOWN_PART: '找不到指定的零件。',
+  WHOLE_OBJECT: '這個零件連同子零件就是整個物件，不需要拉出。',
 };
 
 /** Workspace failure. The message is fixed Traditional Chinese text without ids. */
@@ -561,6 +564,15 @@ export const ObjectChangeSchema = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('transform'), objectId: ObjectIdSchema, transform: ObjectTransformSchema }),
   z.strictObject({ op: z.literal('remove'), objectId: ObjectIdSchema }),
   z.strictObject({ op: z.literal('material'), objectId: ObjectIdSchema, material: MaterialIdSchema.nullable() }),
+  // Takes a part and its descendants out into a new object (workbench-ui design 3.5); applied by `pullOutPart`.
+  z.strictObject({
+    op: z.literal('pull-out'),
+    objectId: ObjectIdSchema,
+    partId: PartIdSchema,
+    newObjectId: ObjectIdSchema,
+    createdAt: SceneObjectSchema.shape.createdAt,
+    inPlace: z.literal(true).optional(),
+  }),
 ]);
 
 export const JointChangeSchema = z.discriminatedUnion('op', [
@@ -597,6 +609,7 @@ export function applyWorkspaceChange(ws: Workspace, change: WorkspaceChange): { 
     else if (op.op === 'model') after = replaceModel(after, op.objectId, op.model, { source: op.source, providerModel: op.providerModel });
     else if (op.op === 'transform') after = setTransform(after, op.objectId, op.transform);
     else if (op.op === 'material') after = setMaterial(after, op.objectId, op.material);
+    else if (op.op === 'pull-out') after = pullOutPart(after, op);
     else after = removeObject(after, op.objectId);
   }
   const jointOp = change.joint;

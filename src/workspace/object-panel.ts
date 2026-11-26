@@ -9,7 +9,7 @@ export const OBJECT_NAME_MAX = 500;
 
 export interface ObjectRow { id: string; name: string; partCount: number; active: boolean }
 
-/** One row per object, in creation order (the order of `workspace.objects`). */
+/** One row per object, in workspace order (the order of `workspace.objects`). */
 export function objectRows(workspace: Pick<Workspace, 'objects' | 'activeObjectId'>): ObjectRow[] {
   return workspace.objects.map(object => ({
     id: object.id,
