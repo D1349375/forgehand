@@ -52,3 +52,13 @@ No npm script and no dependencies. The script only reads git and writes `.kiro/l
 A row is a commit whose subject contains `(spec <name>, task <n>)`; `tasks 6 and 7a` and `task 5, in progress` are understood. The file also lists the `docs(spec)` and `docs(specs)` commits that add a spec, and totals per spec: task commits, distinct tasks committed, and the commit that added the spec. A task with a fix commit after its main commit counts as two task commits and one distinct task. Commits that name a spec but no task (for example `docs(kiro): plan the tool registry (spec agent-harness)`) are not rows.
 
 Run it after new commits and commit the result. The parsing is in `scripts/hooks/ledger.mjs`; tests are in `tests/unit/kiro-ledger.test.ts`.
+
+## What a probe showed (2026-11-27)
+
+A temporary probe (three command hooks that logged only payload key names and ids, and a one-task spec; removed afterwards) checked the hook events in the Kiro IDE:
+
+- **SessionStart** fires when a session starts, with `session_id`, `hook_event_name` and `cwd`. The text that `session-context` prints reaches the agent: a fresh session quoted its first lines and the open task counts.
+- A `tasks.md` written in Kiro's native checklist format (`- [ ] 1. Title` with indented detail lines) shows a **Start task** action above each task, a **Run all tasks** button and the Requirements / Design / Task list tabs. This repo's `## Task N` headings do not show them.
+- **Start task** reads the task (`task_get`), marks it in progress (`task_update`, `[-]`), runs it in a sub-agent and marks it `[x]`.
+- **PreTaskExec** fires before the task with `spec_name` (the absolute path of the `tasks.md`) and `task_name` (for example `1. Create the probe file`) besides the three common keys; **PostTaskExec** fires after it and adds `task_success`.
+- Kiro writes `tasks.meta.json` next to the `tasks.md`, with the execution history of each task (execution id, chat session id, time) and a `pbtResults` object.

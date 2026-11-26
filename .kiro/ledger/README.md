@@ -6,17 +6,17 @@ A task commit is a commit whose subject names a spec task as `(spec <name>, task
 
 ## Totals
 
-- Task commits: 49
-- Distinct spec tasks committed: 45
-- Specs with task commits: 7
+- Task commits: 51
+- Distinct spec tasks committed: 47
+- Specs with task commits: 9
 - Specs added by `docs(spec)` / `docs(specs)` commits: 8
 
 | Spec | Task commits | Distinct tasks | Tasks | Spec added |
 |---|---:|---:|---|---|
 | agent-harness | 11 | 10 | 1, 2, 3, 4, 4b, 5, 6, 7a, 7b, 8 | - |
 | assembly-joints | 6 | 6 | 1, 2, 3, 4, 5, 6 | 2026-11-20 `fb94c43` |
-| body-fit | 0 | 0 | - | 2026-11-26 `04425e8` |
-| design-fidelity | 0 | 0 | - | 2026-11-26 `05a80f0` |
+| body-fit | 1 | 1 | 1 | 2026-11-26 `04425e8` |
+| design-fidelity | 1 | 1 | 1 | 2026-11-26 `05a80f0` |
 | english-ui | 1 | 1 | 1 | 2026-11-26 `7e9d9fa` |
 | export | 6 | 5 | 1, 2, 3, 4, 5 | 2026-11-20 `3ff3335` |
 | hand-manipulation | 14 | 12 | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 | 2026-11-16 `07ce28b` |
@@ -91,3 +91,5 @@ A spec added in some other kind of commit (for example together with the steerin
 | 2026-11-26 | hand-manipulation | 12 | `a2524c3` | fix(hands): keep a second-hand pinch from turning into a fist (spec hand-manipulation, task 12) |
 | 2026-11-26 | english-ui | 1 | `ec00744` | feat(i18n): add language core, string tables and guards (spec english-ui, task 1) |
 | 2026-11-26 | workbench-ui | 1 | `8fe649c` | feat(workspace): pull a part out into its own object (spec workbench-ui, task 1) |
+| 2026-11-27 | design-fidelity | 1 | `7d1cbb4` | feat(model): add the hollow shell primitive (spec design-fidelity, task 1) |
+| 2026-11-27 | body-fit | 1 | `19662ea` | feat(fit): add fit maths, inner profiles and ring resize (spec body-fit, task 1) |
