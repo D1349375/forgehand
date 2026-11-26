@@ -10,6 +10,7 @@ This project is an entry for the Kiroween 2026 hackathon (Frankenstein category)
 - Never add `.kiro/` or any of its subfolders to `.gitignore`. The `.kiro/` directory (specs, hooks, steering) must be committed at the repo root; removing or ignoring it disqualifies the entry.
 - Keep the MIT `LICENSE` file at the repo root, unchanged.
 - The repo will be public on GitHub. Never commit secrets, `.env`, API keys, tokens, or personal data.
+- The `guard-rules` hook (`.kiro/hooks/guard-rules.json`) enforces rules 1-6 (see `.kiro/hooks/README.md`): it blocks `.kiro` in `.gitignore`, edits to `docs/PRIOR_WORK.md`, `.env` access, `verify:*` scripts, package/browser installs, and mutating git commands.
 
 ## Prior work vs. new work
 - `docs/PRIOR_WORK.md` describes the prototype built before Kiro (2026-11-10 to 2026-11-12). Do not rewrite it to claim that work was done with Kiro.

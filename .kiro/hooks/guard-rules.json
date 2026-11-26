@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "guard-rules",
+      "trigger": "PreToolUse",
+      "description": "Blocks tool calls that break Kiroween hackathon rules or spend model quota: .kiro in .gitignore, edits to docs/PRIOR_WORK.md, .env access, verify:real/verify:edit, package or browser installs, and git commit/push/reset/checkout/restore/stash/clean/rebase.",
+      "action": {
+        "type": "command",
+        "command": "node scripts/hooks/guard-rules.mjs"
+      },
+      "timeout": 10
+    }
+  ]
+}
