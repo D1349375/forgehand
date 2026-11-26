@@ -10,6 +10,7 @@ import {
   EXPORT_MESSAGES, EXPORT_SEVERITY, classFindings, exportMessage, featuresSkippedJoints, jointFindings, sortFindings,
   unconfirmedFindings, type ExportFinding, type ExportFindingCode,
 } from '../../src/export/findings';
+import { problemBanner } from '../../src/export/dialog-model';
 import { base64 } from '../../src/export/format';
 import { NO_STEPS_TEXT, STEP_PROBLEM_TEXT, TOLERANCE_NOTE, assemblySheetHtml } from '../../src/export/sheet';
 import {
@@ -45,6 +46,7 @@ describe('export findings', () => {
       JOINT_FUSED: ['warning', '接合「電池」↔「外殼」的兩個零件會連成同一個列印件，孔位沒有加工。'],
       JOINT_OVERLAP: ['warning', '接合「電池」↔「外殼」的兩個零件重疊 42 mm³，印出後無法組合。'],
       COMPONENT_BLOCKED: ['warning', '外購件「主板」和「P01 外殼」重疊，印出後放不進去。'],
+      COMPONENT_SEALED: ['warning', '外購件「主板」被封在「P01 外殼」裡面，需要在列印中途放入，或把外殼分成殼體和上蓋。'],
       LOOSE_PIECE: ['warning', '「P01 外殼」沒有和其他零件相連或接合，組裝時需要另外固定。'],
       TOO_LARGE: ['warning', '「P01 外殼」最長 42 mm，可能超過一般印表機的列印範圍。'],
       BOUGHT: ['info', '「主板」是外購件，不會產生列印檔。'],
@@ -126,6 +128,28 @@ describe('export findings', () => {
   });
 });
 
+describe('COMPONENT_SEALED (design-fidelity requirement 10)', () => {
+  const sealed = finding({
+    code: 'COMPONENT_SEALED', piece: 'P01', message: exportMessage('COMPONENT_SEALED', { part: '主板', piece: '外殼' }),
+  });
+  it('is a warning that sorts right after COMPONENT_BLOCKED', () => {
+    const list = [
+      finding({ code: 'LOOSE_PIECE', piece: 'P01' }), sealed, finding({ code: 'COMPONENT_BLOCKED', piece: 'P01' }),
+      finding({ code: 'FEATURES_SKIPPED' }),
+    ];
+    expect(sortFindings(list).map(item => item.code)).toEqual(['COMPONENT_BLOCKED', 'COMPONENT_SEALED', 'FEATURES_SKIPPED', 'LOOSE_PIECE']);
+    expect(EXPORT_SEVERITY.COMPONENT_SEALED).toBe('warning');
+  });
+  it('shows in bom.md and the assembly sheet like every finding', () => {
+    const { bom } = kit(demoPairWithScrew());
+    const message = '外購件「主板」被封在「外殼」裡面，需要在列印中途放入，或把外殼分成殼體和上蓋。';
+    expect(bomMarkdown(bom, [sealed], META)).toContain(`- ⚠ 警告：${message}`);
+    expect(assemblySheetHtml({ title: META.title, date: META.date, image: null, bom, steps: [], findings: [sealed] })).toContain(message);
+  });
+  it('never blocks: the dialog counts it as a problem and still lets the export go on', () => {
+    expect(problemBanner([sealed])).toBe('有 1 個問題，仍可繼續匯出。');
+  });
+});
 describe('buildBom', () => {
   it('reads the standard parts from jointBom with their steps, and totals the volume over copies', () => {
     const { bom } = kit(demoPairWithScrew());

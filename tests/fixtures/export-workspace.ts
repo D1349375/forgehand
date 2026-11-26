@@ -1,11 +1,10 @@
-import { demoModel } from '../../shared/demo';
 import type { JointMethod } from '../../shared/joint';
 import {
   addJoint, addObject, createObject, emptyWorkspace, setMaterial, type SceneObject, type Workspace,
 } from '../../shared/workspace';
 import type { PieceInfo } from '../../src/export/bom';
 import {
-  BOX, CREATED_AT, boxModel, fixtureJoint, fixtureModel, fixtureObject, fixturePart, side, twoBoxes,
+  BOX, CREATED_AT, boxModel, fixtureJoint, fixtureModel, fixtureObject, fixturePart, side, solidDemoModel, twoBoxes,
 } from './joint-workspace';
 
 /**
@@ -19,14 +18,14 @@ export const HOSTILE_NAME = `=cmd|' /C calc'!A0 <script>|`;
 export const SCREW_M3: JointMethod = { kind: 'screw-insert', size: 'M3', count: 1, insertSide: 'b' };
 
 /**
- * Two `demoModel` objects (`demo-a`, `demo-b`) and one screw joint `joint-1` between the two
+ * Two `solidDemoModel` objects (`demo-a`, `demo-b`) and one screw joint `joint-1` between the two
  * housings (a `+x`, b `-x`). By default the second object is moved so the housings touch;
  * `touching: false` keeps the gap of `placeBeside`, which gives an `APART` error.
  */
 export function demoPairWithScrew(options: { touching?: boolean; confirmed?: boolean; method?: JointMethod } = {}): Workspace {
-  const first = createObject(emptyWorkspace(), { id: 'demo-a', model: demoModel, source: 'demo', providerModel: 'demo', createdAt: CREATED_AT });
+  const first = createObject(emptyWorkspace(), { id: 'demo-a', model: solidDemoModel, source: 'demo', providerModel: 'demo', createdAt: CREATED_AT });
   const withFirst = addObject(emptyWorkspace(), first);
-  const made = createObject(withFirst, { id: 'demo-b', model: demoModel, source: 'demo', providerModel: 'demo', createdAt: CREATED_AT });
+  const made = createObject(withFirst, { id: 'demo-b', model: solidDemoModel, source: 'demo', providerModel: 'demo', createdAt: CREATED_AT });
   const second: SceneObject = options.touching === false
     ? made
     : { ...made, transform: { position: { x: 0.16, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } } };

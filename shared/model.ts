@@ -7,7 +7,7 @@ export const PartSchema = z.strictObject({
   id: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/),
   name: text,
   parentId: z.string().max(64).nullable(),
-  primitive: z.enum(['box', 'sphere', 'cylinder', 'cone', 'torus', 'tube']),
+  primitive: z.enum(['box', 'sphere', 'cylinder', 'cone', 'torus', 'tube', 'shell']),
   dimensions: vector(z.number().min(0.001).max(100)),
   position: vector(z.number().min(-100).max(100)),
   rotation: vector(z.number().min(-360).max(360)),

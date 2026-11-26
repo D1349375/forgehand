@@ -313,3 +313,11 @@ Reviewed with the user and Claude Code. The user accepted every recommendation u
 5. **Strings:** once `english-ui` Task 1 has landed and the steering is updated, new strings go into a bilingual table (`english-ui` R58) instead of plain zh-TW in `shared/fidelity-text.ts`.
 6. **Tool count:** `find_tools` is not built now (15 tools today, about 21 after the four specs); see VISION §4.3 note of 2026-11-26.
 7. **Schedule:** the user keeps the full plan; nothing is postponed.
+
+## Decisions from review of Task 1 (2026-11-27)
+
+Decided by the user after the Task 1 session's report; this section wins over the text above.
+
+8. **Battery stays at x = 0.099.** Moving it to 0.0975 broke `assembly-hands.spec.ts:296` twice (the snap never engaged), so the Task 1 session kept today's position, as `tasks.md` Task 1 allows. The demo therefore floats the battery 1.5 mm off the housing: Task 3 must expect one `FLOATING_PART` (1.5 mm, the battery) for the demo instead of none, and its size readout must be computed from `demoModel` in the test (the 195 × 129 × 177 mm in `design.md` §9 and the manual check assume 0.0975).
+9. **`joints.spec.ts` card test follows the hollow housing (option a).** A 2 mm wall cannot hold a magnet pocket (`TOO_THIN`; a magnet fits from a 3.5 mm wall), so light load with frequent disassembly now recommends the screw insert with a boss. The test expects that, then switches 拆裝 to 不拆 to show that the needs change the recommendation (glue), and the undo step returns to glue. Edited by the reviewer; the other options (a solid housing for that test, or a 3.5 mm demo wall) were rejected because they test a demo that no longer exists or change the demo for a test.
+10. **Torus display mesh tolerance 1.5 % (requirement 77 exception).** `createPartGeometry` builds the torus with 24 sides around the tube, which is 1.3 % under `partVolume`. The display mesh is only drawn, never used for volumes, the bill of materials or export, and the printable solid is within 0.1 %, so the display-mesh check for the torus allows 1.5 %; every other bound of requirement 77 stays.

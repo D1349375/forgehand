@@ -25,6 +25,7 @@ camera view ── 3D parts over the webcam image, following your hands or body
 ## What works now
 
 - **Text → 3D concept**: a description becomes a validated part model (boxes, cylinders, spheres, cones, tori, tubes) rendered as a translucent holographic object over the live webcam image.
+  A `shell` is a closed hollow box whose wall comes from `tubeRatio` (wall = (1 − `tubeRatio`) × the smallest dimension / 2); hollow housings export with an internal void, and a bought component sealed inside one is reported with a warning.
 - **Edit parts**: click to select, change size, position, rotation and colour, drag handles, undo/redo, or edit by text ("make the legs 50 cm and raise the top").
 - **Exploded view**: computed locally from the part hierarchy and bounding boxes; no model call, no change to the data.
 - **Arm tracking prototype**: MediaPipe hand and pose landmarks in a web worker (GPU with CPU fallback) drive a cuff on your forearm in the mirrored camera view, with smoothing, prediction and continuity rules measured on real recordings.

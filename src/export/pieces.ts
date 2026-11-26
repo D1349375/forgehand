@@ -4,6 +4,7 @@ import { partBoxes, worldMatrices } from '../../shared/bounds';
 import { touching, worldFace, type WorldFace } from '../../shared/contact';
 import { classifyPart, jointSideNames, stepNumbers } from '../../shared/export-plan';
 import type { FeatureSet, JointFeature } from '../../shared/features';
+import { containedInVoid } from '../../shared/hollow';
 import { CONTACT_FACES, type FaceId, type Joint } from '../../shared/joint';
 import { CONTACT_ANGLE_DEG } from '../../shared/joint-constants';
 import type { MaterialId } from '../../shared/materials';
@@ -288,16 +289,18 @@ export async function buildPieces(ws: Workspace, profile: PrinterProfile, input:
       }
       const skipJoint = (jointId: string) => input.skipped.has(jointId) || localSkip.has(jointId);
 
-      // 5. Bought components, placed like printed parts, for the `COMPONENT_BLOCKED` check.
+      // 5. Bought components, placed like printed parts, for the `COMPONENT_BLOCKED` and `COMPONENT_SEALED` checks.
       const qualify = ws.objects.length > 1;
-      const bought: Array<{ name: string; solid: Manifold; box: THREE.Box3 }> = [];
+      const bought: Array<{ id: string; name: string; solid: Manifold; box: THREE.Box3; sealedIn: string | null }> = [];
       for (const part of object.model.parts) {
         if (classifyPart(object, part) !== 'bought') continue;
         checkAbort();
         const base = own.keep(primitiveSolid(wasm, part));
         const solid = own.keep(base.transform(asMat4(millimetres(worlds.get(part.id)!))));
         own.free(base);
-        bought.push({ name: qualify ? `${object.model.name}・${part.name}` : part.name, solid, box: boxes.get(part.id)! });
+        // The first printed shell, in model order, whose void holds the whole component.
+        const sealedIn = placed.find(item => item.part.primitive === 'shell' && containedInVoid(object.model, part.id, item.part.id, undefined, worlds))?.part.id ?? null;
+        bought.push({ id: part.id, name: qualify ? `${object.model.name}・${part.name}` : part.name, solid, box: boxes.get(part.id)!, sealedIn });
       }
 
       for (const [at, piece] of pieces.entries()) {
@@ -373,6 +376,9 @@ export async function buildPieces(ws: Workspace, profile: PrinterProfile, input:
             const { mesh } = result;
             for (const joint of fusedJoints[at]!) drafts.push({ code: 'JOINT_FUSED', params: jointSideNames(ws, joint), jointId: joint.id });
             for (const component of bought) {
+              if (component.sealedIn !== null && members.some(item => item.part.id === component.sealedIn)) {
+                drafts.push({ code: 'COMPONENT_SEALED', params: { part: component.name }, jointId: null });
+              }
               if (!members.some(item => overlapsInVolume(item.box, component.box))) continue;
               const common = pieceOwn.keep(unionOfMembers().intersect(component.solid));
               const volume = common.volume();

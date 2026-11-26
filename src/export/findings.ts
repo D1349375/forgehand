@@ -10,7 +10,7 @@ import type { Workspace } from '../../shared/workspace';
 
 export type ExportFindingCode =
   | 'PIECE_FAILED' | 'FEATURES_SKIPPED' | 'JOINT_UNCONFIRMED' | 'JOINT_FUSED' | 'JOINT_OVERLAP'
-  | 'COMPONENT_BLOCKED' | 'LOOSE_PIECE' | 'TOO_LARGE' | 'BOUGHT' | 'MACHINED' | 'FUSED';
+  | 'COMPONENT_BLOCKED' | 'COMPONENT_SEALED' | 'LOOSE_PIECE' | 'TOO_LARGE' | 'BOUGHT' | 'MACHINED' | 'FUSED';
 
 export interface ExportFinding {
   severity: Severity;
@@ -34,6 +34,7 @@ export const EXPORT_SEVERITY: Record<ExportFindingCode, Severity> = {
   JOINT_FUSED: 'warning',
   JOINT_OVERLAP: 'warning',
   COMPONENT_BLOCKED: 'warning',
+  COMPONENT_SEALED: 'warning',
   LOOSE_PIECE: 'warning',
   TOO_LARGE: 'warning',
   BOUGHT: 'info',
@@ -52,6 +53,7 @@ export const EXPORT_MESSAGES: Record<ExportFindingCode, (p: Params) => string> =
   JOINT_FUSED: p => `接合「${p.a}」↔「${p.b}」的兩個零件會連成同一個列印件，孔位沒有加工。`,
   JOINT_OVERLAP: p => `接合「${p.a}」↔「${p.b}」的兩個零件重疊 ${p.n} mm³，印出後無法組合。`,
   COMPONENT_BLOCKED: p => `外購件「${p.part}」和「${p.piece}」重疊，印出後放不進去。`,
+  COMPONENT_SEALED: p => `外購件「${p.part}」被封在「${p.piece}」裡面，需要在列印中途放入，或把外殼分成殼體和上蓋。`,
   LOOSE_PIECE: p => `「${p.piece}」沒有和其他零件相連或接合，組裝時需要另外固定。`,
   TOO_LARGE: p => `「${p.piece}」最長 ${p.n} mm，可能超過一般印表機的列印範圍。`,
   BOUGHT: p => `「${p.part}」是外購件，不會產生列印檔。`,

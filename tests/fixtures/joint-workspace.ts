@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { demoModel } from '../../shared/demo';
 import type { Joint, JointSide } from '../../shared/joint';
 import { validateModel, type ModelSpec, type Part } from '../../shared/model';
 import {
@@ -20,6 +19,45 @@ export const CREATED_AT = '2026-11-20T08:00:00.000Z';
 export const BOX = { x: 0.04, y: 0.02, z: 0.03 } as const;
 
 const vec = (x: number, y: number, z: number) => ({ x, y, z });
+const solidPart = (values: Partial<Part> & Pick<Part, 'id' | 'name'>): Part => ({
+  parentId: null, primitive: 'box', dimensions: vec(0.1, 0.1, 0.1), position: vec(0, 0, 0), rotation: vec(0, 0, 0),
+  color: '#59d9e8', role: 'exterior', tubeRatio: 0.75, ...values,
+});
+/**
+ * A verbatim copy of the demo model as it was before `design-fidelity` (a solid box housing, the
+ * battery 1.5 mm off its right face). Tests whose numbers depend on a solid housing use it, so
+ * those numbers keep their meaning. Do not edit it: change `demoModel` instead.
+ */
+export const solidDemoModel: ModelSpec = validateModel({
+  schemaVersion: '1.0',
+  name: '雙鏡頭概念裝置',
+  summary: '本機示範資料：半透明外殼、兩個鏡筒、側邊電池與內部電路概念件。',
+  units: 'm',
+  assumptions: [
+    '這是預先建立的示範資料，並非 AI 生成。',
+    '外殼暫定寬 160、高 90、深 70 mm；未對應真實攝影機尺度。',
+    '內部電路位置為概念示意，未經工程驗證。',
+  ],
+  parts: [
+    solidPart({ id: 'housing', name: '外殼', dimensions: vec(0.16, 0.09, 0.07) }),
+    ...[-1, 1].flatMap((side, index) => [
+      solidPart({ id: `lens-${index + 1}`, name: `鏡筒 ${index + 1}`, parentId: 'housing', primitive: 'tube',
+        dimensions: vec(0.048, 0.05, 0.048), position: vec(side * 0.04, 0.003, 0.053),
+        rotation: vec(90, 0, 0), color: '#80b9d4' }),
+      solidPart({ id: `glass-${index + 1}`, name: `鏡片 ${index + 1}`, parentId: 'housing', primitive: 'cylinder',
+        dimensions: vec(0.034, 0.004, 0.034), position: vec(side * 0.04, 0.003, 0.077),
+        rotation: vec(90, 0, 0), color: '#6ad7f2' }),
+    ]),
+    solidPart({ id: 'battery', name: '側邊電池', parentId: 'housing', dimensions: vec(0.035, 0.068, 0.05),
+      position: vec(0.099, -0.005, 0), color: '#f27562' }),
+    solidPart({ id: 'board', name: '內部電路概念件', parentId: 'housing', dimensions: vec(0.12, 0.004, 0.045),
+      position: vec(0, -0.022, 0), role: 'interior', color: '#5fd5a1' }),
+    solidPart({ id: 'support', name: '展示支架', dimensions: vec(0.025, 0.075, 0.025),
+      position: vec(0, -0.0825, 0), color: '#a1c9d2' }),
+    solidPart({ id: 'base', name: '展示底座', primitive: 'cylinder', dimensions: vec(0.13, 0.012, 0.10),
+      position: vec(0, -0.126, 0), color: '#9fcedc' }),
+  ],
+});
 const round5 = (value: number) => Math.round(value * 1e5) / 1e5;
 
 export function fixturePart(
@@ -113,14 +151,14 @@ export function boxOnCylinder(options: FixtureOptions = {}): Workspace {
 }
 
 /**
- * Two `demoModel` objects (`demo-a`, `demo-b`), the second placed with
+ * Two `solidDemoModel` objects (`demo-a`, `demo-b`), the second placed with
  * `placeBeside`, so a gap separates them. Joint: demo-a housing `+x` to
  * demo-b housing `-x` (the joint exists although the faces do not touch).
  */
 export function demoPair(options: FixtureOptions = {}): Workspace {
-  const first = createObject(emptyWorkspace(), { id: 'demo-a', model: demoModel, source: 'demo', providerModel: 'demo', createdAt: CREATED_AT });
+  const first = createObject(emptyWorkspace(), { id: 'demo-a', model: solidDemoModel, source: 'demo', providerModel: 'demo', createdAt: CREATED_AT });
   const withFirst = addObject(emptyWorkspace(), first);
-  const second = createObject(withFirst, { id: 'demo-b', model: demoModel, source: 'demo', providerModel: 'demo', createdAt: CREATED_AT });
+  const second = createObject(withFirst, { id: 'demo-b', model: solidDemoModel, source: 'demo', providerModel: 'demo', createdAt: CREATED_AT });
   const ws = addObject(withFirst, second);
   return options.joint
     ? addJoint(ws, { ...fixtureJoint(side('demo-a', 'housing', '+x'), side('demo-b', 'housing', '-x')), ...options.jointOverrides })

@@ -125,7 +125,7 @@ test.describe('匯出套件', () => {
     expect(paths.every(path => /^[A-Za-z0-9._/-]+$/.test(path))).toBe(true);
     expect(files.every(file => file.bytes > 0)).toBe(true);
     await expect(dialog(page)).toHaveAttribute('data-export-image', 'ok');
-    // The agent's joint is not confirmed; the demo housing is a solid box around the board.
+    // The agent's joint is not confirmed; the demo housing is a hollow shell around the board, so nothing blocks it (it only seals it in).
     const findings = await findingsOf(page);
     expect(findings).toContain('JOINT_UNCONFIRMED');
     await expect(dialog(page)).toContainText(/有 \d+ 個問題，仍可繼續匯出。/);
@@ -208,9 +208,11 @@ test.describe('匯出套件', () => {
     expect(direction).not.toBeNull();
     expect(Math.hypot(direction!.x, direction!.y, direction!.z)).toBeCloseTo(1, 5);
     await openExport(page);
-    // A kit with one object has no scope choice; it has no joints, so no joint findings, and the housing blocks the board.
+    // A kit with one object has no scope choice; it has no joints, so no joint findings, and the hollow housing seals the board in without blocking it.
     await expect(page.getByLabel('匯出範圍', { exact: true })).toHaveCount(0);
-    expect(await findingsOf(page)).toContain('COMPONENT_BLOCKED');
+    const demoFindings = await findingsOf(page);
+    expect(demoFindings).toContain('COMPONENT_SEALED');
+    expect(demoFindings).not.toContain('COMPONENT_BLOCKED');
     await expect(dialog(page)).toHaveAttribute('data-export-image', 'ok');
     await page.keyboard.press('Escape');
     await expect(dialog(page)).toHaveCount(0);

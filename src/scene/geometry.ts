@@ -1,5 +1,43 @@
 import * as THREE from 'three';
+import { shellWall } from '../../shared/hollow';
 import type { ModelSpec, Part } from '../../shared/model';
+
+/** Reverses every triangle and negates the normals, so the faces look into the box instead of out of it. */
+function flipInward(geometry: THREE.BufferGeometry): void {
+  const index = geometry.getIndex()!;
+  for (let i = 0; i < index.count; i += 3) {
+    const second = index.getX(i + 1);
+    index.setX(i + 1, index.getX(i + 2));
+    index.setX(i + 2, second);
+  }
+  const normal = geometry.getAttribute('normal');
+  for (let i = 0; i < normal.count; i += 1) normal.setXYZ(i, -normal.getX(i), -normal.getY(i), -normal.getZ(i));
+}
+
+/** Joins indexed geometries that share the same attributes (position, normal, uv) into one; the inputs are not changed. */
+function concatIndexed(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const merged = new THREE.BufferGeometry();
+  for (const name of ['position', 'normal', 'uv']) {
+    const sources = parts.map(entry => entry.getAttribute(name));
+    const itemSize = sources[0]!.itemSize;
+    const array = new Float32Array(sources.reduce((sum, source) => sum + source.count, 0) * itemSize);
+    let at = 0;
+    for (const source of sources) {
+      array.set(source.array as ArrayLike<number>, at);
+      at += source.count * itemSize;
+    }
+    merged.setAttribute(name, new THREE.BufferAttribute(array, itemSize));
+  }
+  const indices: number[] = [];
+  let offset = 0;
+  for (const entry of parts) {
+    const index = entry.getIndex()!;
+    for (let i = 0; i < index.count; i += 1) indices.push(index.getX(i) + offset);
+    offset += entry.getAttribute('position').count;
+  }
+  merged.setIndex(indices);
+  return merged;
+}
 
 /** Coordinates and dimensions stay in metres; presentation never changes source data. */
 export function createPartGeometry(part: Part): THREE.BufferGeometry {
@@ -18,6 +56,18 @@ export function createPartGeometry(part: Part): THREE.BufferGeometry {
       shape.holes.push(hole);
       geometry = new THREE.ExtrudeGeometry(shape, { depth: 1, bevelEnabled: false, curveSegments: 32, steps: 1 });
       geometry.rotateX(Math.PI / 2);
+      break;
+    }
+    case 'shell': {
+      // Two boxes in one closed mesh: the outer box looks out, the void looks in (48 vertices, 24 triangles).
+      const { x, y, z } = part.dimensions;
+      const wall = shellWall(part);
+      const outer = new THREE.BoxGeometry(1, 1, 1);
+      const inner = new THREE.BoxGeometry((x - 2 * wall) / x, (y - 2 * wall) / y, (z - 2 * wall) / z);
+      flipInward(inner);
+      geometry = concatIndexed([outer, inner]);
+      outer.dispose();
+      inner.dispose();
       break;
     }
     default: throw new Error('不支援的幾何類型，上一個模型已保留。');

@@ -129,14 +129,23 @@ test('接合卡片：負重與拆裝改變建議，自選方式即確認，每�
   await joinDemos(page);
   const method = async () => (await jointList(page))[0]!;
 
+  // The demo housing is a hollow shell with a 2 mm wall (design-fidelity): a magnet pocket does not fit in it,
+  // so light load with frequent disassembly recommends the screw insert (which gets a boss) instead of a magnet.
   await field(page, '負重').selectOption({ label: '輕' });
   await field(page, '拆裝').selectOption({ label: '經常' });
-  await expect.poll(async () => (await method()).method.kind).toBe('magnet');
+  await expect.poll(async () => (await method()).needs).toEqual({ load: 'light', disassembly: 'often' });
+  expect((await method()).method.kind).toBe('screw-insert');
+  await expect(card(page).getByTestId('joint-recommendation')).toContainText('熱壓螺母');
+  await expect(card(page).getByTestId('joint-recommendation')).not.toContainText('磁鐵');
+
+  // A joint that is never taken apart is glued: the needs change the recommendation.
+  await field(page, '拆裝').selectOption({ label: '不拆' });
+  await expect.poll(async () => (await method()).method.kind).toBe('glue');
   expect((await method()).confirmed).toBe(false);
-  expect((await method()).needs).toEqual({ load: 'light', disassembly: 'often' });
-  await expect(field(page, '固定方式')).toHaveValue('magnet');
+  expect((await method()).needs).toEqual({ load: 'light', disassembly: 'never' });
+  await expect(field(page, '固定方式')).toHaveValue('glue');
   await expect(card(page)).toContainText('待確認');
-  await expect(card(page).getByTestId('joint-derived')).toContainText('磁鐵');
+  await expect(card(page).getByTestId('joint-derived')).toContainText('膠');
 
   // Choosing a method is a decision: the joint is confirmed and the method is kept.
   await field(page, '固定方式').selectOption({ label: '熱壓螺母＋螺絲' });
@@ -155,9 +164,9 @@ test('接合卡片：負重與拆裝改變建議，自選方式即確認，每�
   await undo(page).click();
   await expect.poll(async () => (await method()).method).toMatchObject({ kind: 'screw-insert', size: 'M3' });
   await undo(page).click();
-  await expect.poll(async () => (await method()).method.kind).toBe('magnet');
+  await expect.poll(async () => (await method()).method.kind).toBe('glue');
   expect((await method()).confirmed).toBe(false);
-  await expect(field(page, '固定方式')).toHaveValue('magnet');
+  await expect(field(page, '固定方式')).toHaveValue('glue');
   await redo(page).click();
   await expect.poll(async () => (await method()).method.kind).toBe('screw-insert');
   await expect(card(page)).toContainText('已確認');

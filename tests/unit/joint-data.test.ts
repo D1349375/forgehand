@@ -196,6 +196,7 @@ describe('contact faces', () => {
     cylinder: { '+y': 'disc', '-y': 'disc' },
     cone: { '-y': 'disc' },
     tube: { '+y': 'ring', '-y': 'ring' },
+    shell: { '+x': 'rect', '-x': 'rect', '+y': 'rect', '-y': 'rect', '+z': 'rect', '-z': 'rect' },
     sphere: {},
     torus: {},
   };

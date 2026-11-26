@@ -23,7 +23,7 @@ Other Kiro sessions work in this same working tree at the same time (on 2026-11-
 
 ## Task 1 — The `shell` primitive everywhere, and a hollow demo housing
 
-`[ ]` · P0 · Requirements 1–13, 70–72, 74, 76, 77, 80, 81
+`[x]` · P0 · Requirements 1–13, 70–72, 74, 76, 77, 80, 81
 
 A closed hollow box whose wall comes from `tubeRatio`: schema, shared helpers, display mesh, contact faces, thickness, printable solid, export, the rule line, and the demo housing.
 

@@ -20,11 +20,12 @@ export const demoModel: ModelSpec = validateModel({
   units: 'm',
   assumptions: [
     '這是預先建立的示範資料，並非 AI 生成。',
-    '外殼暫定寬 160、高 90、深 70 mm；未對應真實攝影機尺度。',
+    '外殼是壁厚 2 mm 的中空殼體；外形尺寸為示範用暫定值。',
     '內部電路位置為概念示意，未經工程驗證。',
   ],
   parts: [
-    part({ id: 'housing', name: '外殼', dimensions: { x: 0.16, y: 0.09, z: 0.07 } }),
+    // A 2.0 mm wall: wall = (1 - tubeRatio) * 0.07 / 2.
+    part({ id: 'housing', name: '外殼', primitive: 'shell', dimensions: { x: 0.16, y: 0.09, z: 0.07 }, tubeRatio: 1 - (2 * 0.002) / 0.07 }),
     ...[-1, 1].flatMap((side, index) => [
       part({ id: `lens-${index + 1}`, name: `鏡筒 ${index + 1}`, parentId: 'housing', primitive: 'tube',
         dimensions: { x: 0.048, y: 0.05, z: 0.048 }, position: { x: side * 0.04, y: 0.003, z: 0.053 },

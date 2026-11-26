@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { FaceIdSchema, JointMethodSchema, JointNeedsSchema, JointSchema, MAX_JOINTS } from './joint';
 import { ExportScopeSchema } from './export-plan';
 import { MaterialIdSchema } from './materials';
-import { PartIdSchema } from './model';
+import { PartIdSchema, PartSchema } from './model';
 import { DEFAULT_PRINTER_PROFILE, PrinterProfileSchema, type PrinterProfile } from './printer';
 import {
   ObjectIdSchema, ObjectTransformSchema, WorkspaceChangeSchema, WorkspaceError, validateWorkspace,
@@ -23,7 +23,7 @@ const text = z.string().trim().min(1).max(500);
 const partId = PartIdSchema;
 /** Part id format, shared with the tools that take part ids as arguments. */
 export { PartIdSchema };
-const primitive = z.enum(['box', 'sphere', 'cylinder', 'cone', 'torus', 'tube']);
+const primitive = PartSchema.shape.primitive;
 
 // ----- AgentStep (model-facing) -----
 

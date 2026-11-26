@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { contactRegion, regionCentroid, touching, worldFace, type P2, type Region, type WorldFace } from './contact';
+import { shellWall } from './hollow';
 import {
   BOSS_WALL_MM, CLAMP_FLOOR_MM, EDGE_MARGIN_MM, MIN_CONTACT_MM2, MIN_ENGAGEMENT_FACTOR, MIN_FLOOR_MM, SCREW_TAIL_MM,
 } from './joint-constants';
@@ -98,9 +99,10 @@ const EPS = 1e-9;
  * The part's dimension along the face axis, in metres. A cone's base is thinner away
  * from its axis: `h * (1 - rho)`, with `rho` the outer distance of a feature footprint
  * (diameter `at.footprint`, centre at `at.u`, `at.v` on the face) from the axis relative to
- * the base radius.
+ * the base radius. A shell is as thick as its wall on every face.
  */
 export function partThickness(part: Part, face: FaceId, at?: { u: number; v: number; footprint: number }): number {
+  if (part.primitive === 'shell') return shellWall(part);
   const axis = axisOf(face);
   const dims = [part.dimensions.x, part.dimensions.y, part.dimensions.z];
   const full = dims[axis]!;

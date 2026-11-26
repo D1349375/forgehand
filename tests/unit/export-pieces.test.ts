@@ -2,6 +2,7 @@ import { unzipSync } from 'fflate';
 import type { ManifoldToplevel } from 'manifold-3d';
 import * as THREE from 'three';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { demoModel } from '../../shared/demo';
 import { jointFeatures } from '../../shared/features';
 import { checkJoints } from '../../shared/joint-rules';
 import type { Joint } from '../../shared/joint';
@@ -12,6 +13,7 @@ import {
 } from '../../shared/workspace';
 import { FUSE_PARTS } from '../../src/export/constants';
 import { featuresSkippedJoints } from '../../src/export/findings';
+import { formatCm3 } from '../../src/export/format';
 import { meshBounds, meshProblems, meshVolume, type MeshData } from '../../src/export/mesh';
 import { buildPieces, type PiecesInput, type PiecesResult } from '../../src/export/pieces';
 import { kitZip, prepareKit, type KitInput } from '../../src/export/prepare';
@@ -196,6 +198,79 @@ describe('fusion', () => {
     expect(result.findings).toMatchObject([{ code: 'COMPONENT_BLOCKED', severity: 'warning', message: '外購件「電池」和「shell」重疊，印出後放不進去。' }]);
   });
 
+  describe('a hollow shell (design-fidelity requirements 9 and 10)', () => {
+    /** A 100 x 60 x 40 mm shell with a 2 mm wall (tubeRatio 0.9) and the 40 x 20 x 20 mm cell given by `at` and `ratio`. */
+    const casing = (cellAt: Triple = [0, 0, 0], extra: Partial<Part> = {}) => workspaceOf(objectOf('a', 'Casing', [
+      part('shell', 'shell', [100, 60, 40], [0, 0, 0], { tubeRatio: 0.9 }),
+      part('cell', 'box', [40, 20, 20], cellAt, { role: 'interior', name: '電池', ...extra }),
+    ]));
+    it('makes a closed piece with an inner surface and the volume of its walls, and warns that the part is sealed in', async () => {
+      const result = await build(casing());
+      expect(result.pieces).toHaveLength(1);
+      const [piece] = result.pieces;
+      expect(meshProblems(piece!.mesh)).toEqual([]);
+      expect(piece!.mesh.indices.length / 3).toBe(24); // the outer box and the void, 12 triangles each
+      expect(Math.abs(piece!.info.volumeMm3 - (100 * 60 * 40 - 96 * 56 * 36)) / piece!.info.volumeMm3).toBeLessThan(0.001);
+      expect(meshVolume(piece!.mesh)).toBeCloseTo(piece!.info.volumeMm3, 6);
+      expect(codes(result)).not.toContain('COMPONENT_BLOCKED');
+      expect(result.findings).toMatchObject([{
+        code: 'COMPONENT_SEALED', severity: 'warning', source: 'export', piece: 'P01', jointId: null,
+        message: '外購件「電池」被封在「shell」裡面，需要在列印中途放入，或把外殼分成殼體和上蓋。',
+      }]);
+    });
+    it('does not seal a part that sticks through the wall: that part is blocked', async () => {
+      const result = await build(casing([45, 0, 0]));
+      expect(codes(result)).toEqual(['COMPONENT_BLOCKED']);
+    });
+    it('does not seal a part that lies outside the shell', async () => {
+      expect(codes(await build(casing([0, 80, 0])))).toEqual([]);
+    });
+    it('does not seal a part in a shell of another object', async () => {
+      const ws = workspaceOf(
+        objectOf('a', 'Casing', [part('shell', 'shell', [100, 60, 40], [0, 0, 0], { tubeRatio: 0.9 })]),
+        objectOf('b', 'Cell', [part('cell', 'box', [40, 20, 20], [0, 0, 0], { role: 'interior' })], { position: vec(0, 0, 0), rotation: vec(0, 0, 0) }),
+      );
+      expect(codes(await build(ws))).not.toContain('COMPONENT_SEALED');
+    });
+    it('uses the pose of the shell: a rotated shell with its part inside it', async () => {
+      const turned = workspaceOf(objectOf('a', 'Casing', [
+        part('shell', 'shell', [100, 60, 40], [10, 20, 30], { tubeRatio: 0.9, rotation: vec(20, 40, 60) }),
+        part('cell', 'box', [40, 20, 20], [10, 20, 30], { role: 'interior', rotation: vec(20, 40, 60) }),
+      ]));
+      expect(codes(await build(turned))).toEqual(['COMPONENT_SEALED']);
+    });
+    it('reports one finding for a part, and none when the shell is not printed (bought)', async () => {
+      const result = await build(casing());
+      expect(result.findings.filter(finding => finding.code === 'COMPONENT_SEALED')).toHaveLength(1);
+      const bought = workspaceOf(objectOf('a', 'Casing', [
+        part('shell', 'shell', [100, 60, 40], [0, 0, 0], { tubeRatio: 0.9, role: 'interior' }),
+        part('cell', 'box', [40, 20, 20], [0, 0, 0], { role: 'interior' }),
+      ]));
+      expect(await build(bought)).toMatchObject({ pieces: [], findings: [] });
+    });
+    it('writes both surfaces to the STL and the 3MF, and the wall volume to the BOM', async () => {
+      const kit = await prepareKit({
+        workspace: casing(), scope: { scope: 'workspace', objectId: null }, profile: PROFILE, exportedAt: new Date(2026, 10, 21, 9, 5, 0),
+        loadManifold: () => loadManifold(),
+      });
+      const stl = kit.files.find(file => file.path.startsWith('stl/'))!;
+      expect(new DataView(stl.bytes.buffer, stl.bytes.byteOffset).getUint32(80, true)).toBe(24);
+      const model = new TextDecoder().decode(unzipSync(kit.files.find(file => file.path === 'kit.3mf')!.bytes)['3D/3dmodel.model']!);
+      expect(model.match(/<triangle /g)).toHaveLength(24);
+      const bom = new TextDecoder().decode(kit.files.find(file => file.path === 'bom.md')!.bytes);
+      expect(bom).toContain(`列印總體積：${formatCm3(100 * 60 * 40 - 96 * 56 * 36)} cm³`);
+      expect(kit.findings.map(finding => finding.code)).toContain('COMPONENT_SEALED');
+      expect(kit.findings.map(finding => finding.code)).not.toContain('COMPONENT_BLOCKED');
+    });
+    it('gives the demo no COMPONENT_BLOCKED and one COMPONENT_SEALED for its board, with valid pieces', async () => {
+      const result = await build(workspaceOf(fixtureObject('demo', demoModel, AT_ORIGIN)));
+      expect(codes(result)).not.toContain('COMPONENT_BLOCKED');
+      expect(result.findings.filter(finding => finding.code === 'COMPONENT_SEALED')).toMatchObject([
+        { severity: 'warning', message: expect.stringMatching(/^外購件「內部電路概念件」被封在「外殼.*」裡面/) },
+      ]);
+      for (const piece of result.pieces) expect(meshProblems(piece.mesh)).toEqual([]);
+    });
+  });
   it('does not report a bought part that sits clear of the solid', async () => {
     const ws = workspaceOf(objectOf('a', 'Casing', [
       part('shell', 'box', [100, 60, 40]), part('cell', 'box', [40, 20, 20], [0, 80, 0], { role: 'interior' }),
@@ -372,10 +447,10 @@ describe('geometry', () => {
   });
 
   it('writes valid, outward meshes for every primitive', async () => {
-    const parts = (['box', 'sphere', 'cylinder', 'cone', 'torus', 'tube'] as const).map((primitive, index) =>
+    const parts = (['box', 'sphere', 'cylinder', 'cone', 'torus', 'tube', 'shell'] as const).map((primitive, index) =>
       part(primitive, primitive, [30, 30, 30], [index * 100, 0, 0]));
     const result = await build(workspaceOf(objectOf('a', 'All', parts)));
-    expect(result.pieces).toHaveLength(6);
+    expect(result.pieces).toHaveLength(7);
     for (const piece of result.pieces) {
       expect(meshProblems(piece.mesh)).toEqual([]);
       expect(piece.info.volumeMm3).toBeGreaterThan(0);

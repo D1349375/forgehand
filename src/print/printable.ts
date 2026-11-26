@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Manifold, ManifoldToplevel, Mat4 } from 'manifold-3d';
 import type { JointFeature } from '../../shared/features';
+import { shellWall } from '../../shared/hollow';
 import type { Part } from '../../shared/model';
 import { loadManifold } from './manifold';
 
@@ -95,6 +96,15 @@ export function primitiveSolid(wasm: ManifoldToplevel, part: Part): Manifold {
         // Slightly longer than the outer cylinder, so the cut leaves no skin on the ends.
         const inner = own.keep(Manifold.cylinder(1.02, 0.5 * part.tubeRatio, 0.5 * part.tubeRatio, n, true));
         result = own.keep(own.keep(own.keep(outer.subtract(inner)).rotate([-90, 0, 0])).scale(size));
+        break;
+      }
+      case 'shell': {
+        // The outer box minus the void; the void never reaches the outer faces, so no faces are coplanar.
+        const wall = shellWall(part) * MM;
+        const outer = own.keep(own.keep(Manifold.cube([1, 1, 1], true)).scale(size));
+        const voidSize: [number, number, number] = [size[0] - 2 * wall, size[1] - 2 * wall, size[2] - 2 * wall];
+        const hollow = own.keep(own.keep(Manifold.cube([1, 1, 1], true)).scale(voidSize));
+        result = own.keep(outer.subtract(hollow));
         break;
       }
       case 'torus': {

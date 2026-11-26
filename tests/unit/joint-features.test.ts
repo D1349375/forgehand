@@ -148,6 +148,47 @@ describe('partThickness', () => {
   });
 });
 
+describe('a shell (design-fidelity requirement 7)', () => {
+  const wall = 0.002;
+  /** Shell `a` (40 x 20 x 30 mm, 2 mm wall) and box `b`, touching along x like `pair`. Joint `joint-1`: a `+x` to b `-x`. */
+  function shellPair(method: JointMethod): { ws: Workspace; joint: Joint } {
+    const housing: Part = { ...fixturePart('body', 'shell', vec(0.04, 0.02, 0.03)), tubeRatio: 1 - (2 * wall) / 0.02 };
+    const a = fixtureObject('a', fixtureModel('A', [housing]), { position: vec(0, 0, 0), rotation: vec(0, 0, 0) });
+    const b = fixtureObject('b', fixtureModel('B', [fixturePart('body', 'box', vec(0.04, 0.02, 0.03))]), { position: vec(0.04, 0, 0), rotation: vec(0, 0, 0) });
+    const joint = fixtureJoint(side('a', 'body', '+x'), side('b', 'body', '-x'), { method });
+    return { ws: addJoint(addObject(addObject(emptyWorkspace(), a), b), joint), joint };
+  }
+  it('is as thick as its wall on every face, with or without a position', () => {
+    const housing: Part = { ...fixturePart('h', 'shell', vec(0.16, 0.09, 0.07)), tubeRatio: 1 - (2 * 0.002) / 0.07 };
+    for (const face of ['+x', '-x', '+y', '-y', '+z', '-z'] as FaceId[]) {
+      expect(partThickness(housing, face), face).toBeCloseTo(0.002, 12);
+      expect(partThickness(housing, face, { u: 0.01, v: 0.01, footprint: 0.004 }), face).toBeCloseTo(0.002, 12);
+    }
+  });
+  it('gives an M3 insert on a 2 mm wall a boss that grows from the inner face into the void', () => {
+    const { ws, joint } = shellPair(screw('M3', 1, 'a'));
+    const set = featuresForJoint(ws, joint, profile);
+    expect(set.derived.thicknessMm.a).toBeCloseTo(2, 9);
+    const [boss] = featuresOf(set, 'a', 'boss');
+    expect(boss).toBeDefined();
+    expect(boss!.depth).toBeCloseTo(mm(5.9 + MIN_FLOOR_MM - 2), 9); // 4.9 mm
+    expect(boss!.diameter).toBeCloseTo(mm(INSERTS.M3.outerMm + 2 * BOSS_WALL_MM), 9);
+    expect(boss!.made).toBe('printed');
+    expect(boss!.centre.x).toBeCloseTo(0.02 - wall, 9); // on the inner face of the +x wall
+    expect(boss!.axis).toEqual({ x: -1, y: 0, z: 0 }); // into the void
+    // The insert hole starts on the outer face and the boss holds it: 5.9 mm in a 2 + 4.9 mm column.
+    const [hole] = featuresOf(set, 'a', 'insert-hole');
+    expect(hole!.centre.x).toBeCloseTo(0.02, 9);
+  });
+  it('limits a hole by the wall: a screw clearance hole through the shell is 2 mm deep, not 40 mm', () => {
+    const { ws, joint } = shellPair(screw('M3', 1, 'b'));
+    const set = featuresForJoint(ws, joint, profile);
+    expect(set.derived.thicknessMm.a).toBeCloseTo(2, 9);
+    const [clearance] = featuresOf(set, 'a', 'clearance-hole');
+    expect(clearance!.depth).toBeLessThanOrEqual(mm(2) + 1e-9);
+    expect(clearance!.through).toBe(true);
+  });
+});
 describe('screws with inserts', () => {
   it('derives the holes of an M3 joint from the standard parts and the profile', () => {
     const { ws, joint } = pair(screw('M3'));

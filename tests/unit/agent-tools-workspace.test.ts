@@ -139,6 +139,14 @@ describe('objectId on edit_design, select_parts, explode_view and get_project_st
       expect(result.stateChange).toBeNull();
     });
 
+    it('lists a shell part (the demo housing) and returns a valid result', async () => {
+      const state = withModel();
+      const result = await runTool(call('get_project_state'), state, idleProvider, signal);
+      expect(result.ok).toBe(true);
+      const detail = result.detail as { target: { parts: Array<{ id: string; primitive: string }> } };
+      expect(detail.target.parts.find(part => part.id === 'housing')).toMatchObject({ primitive: 'shell' });
+      expectConsistent(state, result);
+    });
     it('reads another object without activating it', async () => {
       const state = threeObjects({ selection: ['housing'], explode: 0.5 });
       const result = await runTool(call('get_project_state', { objectId: 'obj-2' }), state, idleProvider, signal);

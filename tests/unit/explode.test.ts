@@ -70,6 +70,20 @@ describe('exploded view', () => {
     console.info(`[explode] overlapping box pairs (collapsed→exploded): ${report.join(', ')}`);
   });
 
+  it('pushes the board out of a hollow housing: a shell is exploded like the box it was', () => {
+    const housing = demoModel.parts.find(part => part.id === 'housing')!;
+    expect(housing.primitive).toBe('shell');
+    const plan = computeExplosion(demoModel);
+    expect(plan.moves.get('board')!.offset.length()).toBeGreaterThan(0);
+    // Fully exploded, the board's box no longer lies inside the housing's box.
+    const boxes = partBoxes(demoModel, explodedOffsets(demoModel, plan, 1));
+    const overlap = boxes.get('board')!.clone().intersect(boxes.get('housing')!);
+    const size = overlap.isEmpty() ? new THREE.Vector3() : overlap.getSize(new THREE.Vector3());
+    expect(Math.min(size.x, size.y, size.z)).toBeLessThan(1e-4);
+    // And the same layout with a solid housing explodes the board the same way.
+    const solid = validateModel({ ...structuredClone(demoModel), parts: demoModel.parts.map(part => part.id === 'housing' ? { ...part, primitive: 'box' as const } : part) });
+    expect(computeExplosion(solid).moves.get('board')!.offset.toArray()).toEqual(plan.moves.get('board')!.offset.toArray());
+  });
   it('expands outer groups before inner ones and collapses in reverse', () => {
     expect(groupProgress(0.25, 0, 1)).toBeCloseTo(0.5);
     expect(groupProgress(0.25, 1, 1)).toBe(0);

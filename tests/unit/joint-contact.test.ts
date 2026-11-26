@@ -42,7 +42,7 @@ const withTransform = (ws: Workspace, id: string, transform: ObjectTransform): W
 
 describe('localFace', () => {
   const dims = { x: 0.04, y: 0.06, z: 0.02 };
-  const primitives: Part['primitive'][] = ['box', 'sphere', 'cylinder', 'cone', 'torus', 'tube'];
+  const primitives: Part['primitive'][] = ['box', 'sphere', 'cylinder', 'cone', 'torus', 'tube', 'shell'];
 
   for (const primitive of primitives) {
     it(`${primitive}: contact faces match the display geometry; other faces are not contact faces`, () => {
@@ -92,6 +92,19 @@ describe('localFace', () => {
     });
   }
 
+  it('gives a shell the same faces as a box of the same size, with no inner ring (requirement 6)', () => {
+    const box: Part = { ...fixturePart('p', 'box', dims), tubeRatio: 0.4 };
+    const shell: Part = { ...box, primitive: 'shell' };
+    for (const face of ['+x', '-x', '+y', '-y', '+z', '-z'] as FaceId[]) {
+      const expected = localFace(box, face)!;
+      const got = localFace(shell, face)!;
+      expect(got.shape, face).toBe('rect');
+      expect(got.inner, face).toBeNull();
+      expect(got.centre.toArray(), face).toEqual(expected.centre.toArray());
+      expect(got.half, face).toEqual(expected.half);
+      expect(got.normal.toArray(), face).toEqual(expected.normal.toArray());
+    }
+  });
   it('names the in-plane axes (axis + 1) and (axis + 2)', () => {
     const face = localFace(fixturePart('p', 'box', dims), '-y')!;
     expect(face.u.toArray()).toEqual([0, 0, 1]);

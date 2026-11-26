@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { featuresForJoint, type JointFeature } from '../../shared/features';
 import type { JointMethod } from '../../shared/joint';
+import { partVolume } from '../../shared/hollow';
 import type { Part } from '../../shared/model';
 import { DEFAULT_PRINTER_PROFILE } from '../../shared/printer';
 import { addJoint, addObject, emptyWorkspace } from '../../shared/workspace';
@@ -101,6 +102,8 @@ describe('printablePart without features', () => {
     { name: 'cone', part: part('cone', 20, 30, 20), volume: (Math.PI * 10 ** 2 * 30) / 3, tolerance: 0.01 },
     { name: 'tube', part: part('tube', 20, 30, 20, 0.6), volume: Math.PI * (10 ** 2 - 6 ** 2) * 30, tolerance: 0.01 },
     { name: 'sphere', part: part('sphere', 20, 20, 20), volume: (4 / 3) * Math.PI * 10 ** 3, tolerance: 0.02 },
+    // A 2 mm wall: (1 - 0.8) x 20 / 2. The void is 36 x 26 x 16 mm.
+    { name: 'shell', part: part('shell', 40, 30, 20, 0.8), volume: 40 * 30 * 20 - 36 * 26 * 16, tolerance: 0.001 },
     // R = 15 mm, r = 5 mm (the unit torus 0.375 / 0.125 scaled by 40).
     { name: 'torus', part: part('torus', 40, 40, 10), volume: 2 * Math.PI ** 2 * 15 * 5 ** 2, tolerance: 0.02 },
   ];
@@ -141,6 +144,71 @@ describe('printablePart without features', () => {
   });
 });
 
+describe('a shell (design-fidelity requirement 8)', () => {
+  const shellPart = part('shell', 40, 30, 20, 0.8);
+  it('is a valid, non-empty solid whose volume is the wall volume within 0.1 %', async () => {
+    const solid = primitiveSolid(wasm, shellPart);
+    expect(solid.status()).toBe('NoError');
+    expect(solid.isEmpty()).toBe(false);
+    expect(within(solid.volume(), partVolume(shellPart) * 1e9, 0.001)).toBe(true);
+    solid.delete();
+  });
+  it('has a void: a ray from the middle first meets the inner wall, and one from outside the outer wall', async () => {
+    const { mesh } = await printablePart(shellPart, []);
+    expect(isClosed(mesh)).toBe(true);
+    expect(boundsOf(mesh).getSize(new THREE.Vector3()).toArray().map(Math.round)).toEqual([40, 30, 20]);
+    expect(castRay(mesh, new THREE.Vector3(0, 0, 0), new THREE.Vector3(1, 0, 0))).toBeCloseTo(18, 3); // 20 - 2 mm wall
+    expect(castRay(mesh, new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1))).toBeCloseTo(8, 3); // 10 - 2
+    expect(castRay(mesh, new THREE.Vector3(60, 0, 0), new THREE.Vector3(-1, 0, 0))).toBeCloseTo(40, 3); // the outer face is at 20
+  });
+  it('frees every Manifold it creates', () => {
+    const before = heapBytes();
+    for (let i = 0; i < 20; i += 1) primitiveSolid(wasm, shellPart).delete();
+    expect(heapBytes()).toBe(before);
+  });
+  /** Shell `a` (30 x 20 x 10 mm, 2 mm wall) and box `b` (30 x 20 x 10 mm) touching along z. Joint `joint-1`: a `+z` to b `-z`. */
+  function shellZPair(method: JointMethod) {
+    const housing: Part = { ...fixturePart('body', 'shell', vec(0.03, 0.02, 0.01)), tubeRatio: 0.6 };
+    const a = fixtureObject('a', fixtureModel('A', [housing]), ZERO);
+    const b = fixtureObject('b', fixtureModel('B', [fixturePart('body', 'box', vec(0.03, 0.02, 0.01))]), { position: vec(0, 0, 0.01), rotation: vec(0, 0, 0) });
+    const joint = fixtureJoint(side('a', 'body', '+z'), side('b', 'body', '-z'), { method });
+    const ws = addJoint(addObject(addObject(emptyWorkspace(), a), b), joint);
+    const set = featuresForJoint(ws, joint, DEFAULT_PRINTER_PROFILE);
+    return { set, partA: housing, onA: set.features.filter(feature => feature.side === 'a') };
+  }
+  it('adds the insert boss inside the void and cuts the insert hole through the wall and the boss', async () => {
+    const { set, partA, onA } = shellZPair({ kind: 'screw-insert', size: 'M3', count: 1, insertSide: 'a' });
+    expect(set.problems).toEqual([]);
+    const boss = onA.find(feature => feature.kind === 'boss')!;
+    expect(boss).toBeDefined();
+    expect(boss.depth * 1000).toBeCloseTo(5.9 + 1 - 2, 6); // 4.9 mm
+    const result = await printablePart(partA, onA);
+    expect(result.skipped).toEqual([]);
+    expect(isClosed(result.mesh)).toBe(true);
+    const shellVolume = partVolume(partA) * 1e9;
+    const holes = onA.filter(feature => feature.kind !== 'boss');
+    expect(within(result.mesh.volumeMm3, shellVolume + cylinderVolume(boss) - holes.reduce((sum, feature) => sum + cylinderVolume(feature), 0), 0.01)).toBe(true);
+    expect(result.mesh.volumeMm3).toBeGreaterThan(shellVolume - holes.reduce((sum, feature) => sum + cylinderVolume(feature), 0));
+    // The boss grows into the void, so the outside of the part does not change.
+    expect(boundsOf(result.mesh).getSize(new THREE.Vector3()).toArray().map(value => Math.round(value * 1000) / 1000)).toEqual([30, 20, 10]);
+    // Below the boss (it ends 1.9 mm under the middle, the void reaches 3 mm) a ray along +x reaches the inner wall at 13 mm.
+    expect(castRay(result.mesh, new THREE.Vector3(0, 0, -2.5), new THREE.Vector3(1, 0, 0))).toBeCloseTo(13, 3);
+    // At the middle height the boss column (3.9 mm radius, a 2.1 mm hole) is in the way.
+    expect(castRay(result.mesh, new THREE.Vector3(0, 0, 0), new THREE.Vector3(1, 0, 0))).toBeCloseTo(2.1, 1);
+  });
+  it('cuts a through hole in the wall', async () => {
+    const { set, partA, onA } = shellZPair({ kind: 'screw-insert', size: 'M3', count: 1, insertSide: 'b' });
+    expect(set.problems).toEqual([]);
+    expect(onA.some(feature => feature.kind === 'boss')).toBe(false);
+    const result = await printablePart(partA, onA);
+    expect(result.applied).toEqual(onA.map(feature => feature.id));
+    expect(isClosed(result.mesh)).toBe(true);
+    const removed = onA.reduce((sum, feature) => sum + cylinderVolume(feature, Math.min(feature.depth * 1000, 2)), 0);
+    expect(within(result.mesh.volumeMm3, partVolume(partA) * 1e9 - removed, 0.01)).toBe(true);
+    // Straight down the hole from above the face: nothing in the way down to the void, then the inner wall of the bottom.
+    expect(castRay(result.mesh, new THREE.Vector3(0, 0, 8), new THREE.Vector3(0, 0, -1))).toBeCloseTo(8 - -3, 1);
+  });
+});
 /** Objects `a` and `b`, a box part each, touching along z. Joint `joint-1`: a `+z` to b `-z`. */
 function zPair(aThicknessMm: number, method: JointMethod) {
   const a = fixtureObject('a', fixtureModel('A', [fixturePart('body', 'box', vec(0.03, 0.02, mm(aThicknessMm)))]), ZERO);

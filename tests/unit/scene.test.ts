@@ -8,7 +8,7 @@ const part = (overrides: Partial<Part> = {}): Part => ({ id: 'body', name: '主�
 const spec = (parts: Part[]): ModelSpec => ({ schemaVersion: '1.0', name: '測試模型', summary: '測試', units: 'm', assumptions: ['概念尺寸'], parts });
 
 describe('scene geometry and presentation', () => {
-  it.each(['box', 'sphere', 'cylinder', 'cone', 'torus', 'tube'] as const)('%s has the exact requested bounds', (primitive) => {
+  it.each(['box', 'sphere', 'cylinder', 'cone', 'torus', 'tube', 'shell'] as const)('%s has the exact requested bounds', (primitive) => {
     const geometry = createPartGeometry(part({ primitive }));
     const size = geometry.boundingBox!.getSize(new THREE.Vector3());
     expect(size.x).toBeCloseTo(2, 5);
@@ -28,6 +28,42 @@ describe('scene geometry and presentation', () => {
     disposeObject(mesh);
   });
 
+  it('builds a shell as one closed mesh of two boxes whose void is hollow', () => {
+    const geometry = createPartGeometry(part({ primitive: 'shell', tubeRatio: 0.9 }));
+    expect(geometry.getAttribute('position').count).toBe(48);
+    expect(geometry.getIndex()!.count / 3).toBe(24);
+    // Closed: after welding vertices by position, every directed edge appears once and so does its reverse.
+    const position = geometry.getAttribute('position');
+    const index = geometry.getIndex()!;
+    const key = (i: number) => [position.getX(i), position.getY(i), position.getZ(i)].map(value => value.toFixed(5)).join(',');
+    const directed = new Map<string, number>();
+    for (let i = 0; i < index.count; i += 3) {
+      for (let k = 0; k < 3; k += 1) {
+        const edge = `${key(index.getX(i + k))}>${key(index.getX(i + ((k + 1) % 3)))}`;
+        directed.set(edge, (directed.get(edge) ?? 0) + 1);
+      }
+    }
+    for (const [edge, count] of directed) {
+      const [from, to] = edge.split('>');
+      expect(count, edge).toBe(1);
+      expect(directed.get(`${to}>${from}`), edge).toBe(1);
+    }
+    // Away from the face diagonals, a ray through the middle crosses the outer top, the void's top and bottom, and the outer bottom; through the wall only two faces.
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+    mesh.updateMatrixWorld();
+    expect(new THREE.Raycaster(new THREE.Vector3(0.3, 10, 0.2), new THREE.Vector3(0, -1, 0)).intersectObject(mesh)).toHaveLength(4);
+    expect(new THREE.Raycaster(new THREE.Vector3(0.95, 10, 0.2), new THREE.Vector3(0, -1, 0)).intersectObject(mesh)).toHaveLength(2);
+    disposeObject(mesh);
+  });
+  it('draws both boxes of a shell as crease edges, and disposes its geometry', () => {
+    const root = buildModel(spec([part({ primitive: 'shell', tubeRatio: 0.9 })]), hologramPart);
+    const edges = root.getObjectByName('body:edges') as THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+    expect(edges.geometry.getAttribute('position').count).toBe(2 * 24); // 12 edges per box, 2 vertices per edge
+    const surface = root.getObjectByName('body:surface') as THREE.Mesh;
+    const dispose = vi.spyOn(surface.geometry, 'dispose');
+    disposeObject(root);
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
   it('applies parent rotation in degrees without inheriting its mesh dimensions', () => {
     const root = buildModel(spec([
       part({ dimensions: { x: 20, y: 30, z: 40 }, rotation: { x: 0, y: 0, z: 90 } }),
