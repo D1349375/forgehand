@@ -25,7 +25,7 @@ Other Kiro sessions work in this same working tree at the same time. On 2026-11-
 
 ## Task 1 — Core: languages, tables, store, provider and guards
 
-`[ ]` · P0 · Requirements: R1, R18, R47, R48 (report mode), R53, R54, R56
+`[x]` · P0 · Requirements: R1, R18, R47, R48 (report mode), R53, R54, R56
 
 The building blocks every later task and every other spec uses: the `Lang` type and header parser, `defineText` and the format helpers, the content-language test, the browser language store, the React provider and the notice descriptors, and three guard tests. New files only; nothing changes on screen.
 
