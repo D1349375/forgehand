@@ -4,6 +4,28 @@ Implementation order is **T1 → T2 → (the other specs' tasks on the same file
 
 Status legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
+## Implementation Plan (Kiro task list)
+
+Kiro's native checklist, so the IDE shows **Start task** on each task. Each item points to its full section below: do everything that section says (Read first, Build, Tests, Done when, Session facts). Added on 2026-11-27 as a trial for Task 2; the reviewer keeps the status lines under the `## Task N` headings in step with this list.
+
+- [x] 1. Core: languages, tables, store, provider and guards
+  - Full instructions: the "Task 1" section below.
+  - _Requirements: R1, R18, R47, R48, R53, R54, R56_
+- [ ] 2. Language choice end to end, and the model's language
+  - Full instructions: the "Task 2" section below, including its "Extra (2026-11-27)" block.
+  - Do not commit. Mark this task done only when everything under "Done when" passes; otherwise leave it in progress and report what is missing.
+  - Write comments without backslash escapes such as `\t`, `\f` or `\b` (they turn into control characters).
+  - Write the final report in Traditional Chinese, in plain words.
+  - _Requirements: R2–R9, R19, R23, R25, R44, R48, R59_
+- [ ] 3. Shared and server strings
+  - Full instructions: the "Task 3" section below.
+- [ ] 4. Workbench strings and switch behaviour
+  - Full instructions: the "Task 4" section below.
+- [ ] 5. Hands, joints, printer settings and the export kit
+  - Full instructions: the "Task 5" section below.
+- [ ] 6. Turn English on: content language, English e2e and READMEs
+  - Full instructions: the "Task 6" section below.
+
 ## Parallel sessions and file ownership
 
 Other Kiro sessions work in this same working tree at the same time. On 2026-11-26 the specs `workbench-ui`, `design-fidelity` and `body-fit` were being written; their tasks will edit many of the files below. The full table is design §10. In short:
@@ -90,7 +112,15 @@ The language becomes real: the provider is mounted, the switch exists (hidden un
 - Existing unit tests stay unchanged; if one fails because a signature changed, add the missing `'zh-TW'` argument only, and list the file in the report.
 - E2E: run `tests/e2e/workbench.spec.ts` and `tests/e2e/agent-panel.spec.ts` (they route `/api/*`). Confirm the pinned locale once with `page.evaluate(() => navigator.language)` in a temporary local spec that you delete before the report, and report the value (expected `zh-TW`).
 
+**Extra (2026-11-27): the stray-string scan becomes strict for new text (decision 9 switched to (b)).** The steering now carries the table rule (`.kiro/steering/product.md`, `hackathon.md`), so new Chinese literals can fail the scan while the existing ones wait for Tasks 3–5:
+- New `tests/unit/i18n-scan-baseline.ts`: a frozen map `{ file: number }` with today's stray-line count per file, generated once from the scan and sorted by path, with a header comment saying how it was made and that Tasks 3–5 lower or remove entries as they move strings.
+- `tests/unit/i18n-scan.test.ts`: fail when a file's count is above its baseline, or when a file not in the baseline has any stray line; the message lists the file, the count and the baseline. A count below the baseline passes and prints a reminder to lower the entry. Keep `STRICT` (all zero) for Task 6 and keep the report output. Add a unit test of the comparison with small synthetic inputs.
+- Build the baseline from committed files only: if `git status --short src shared server index.html` shows files you did not edit, leave their uncommitted lines out and list those files in the report.
+- Report the baseline totals (lines and files).
+
 **Dependencies:** Task 1. The files `src/App.tsx`, `server/provider.ts`, `server/agent.ts`, `server/app.ts` must be clean in `git status`; if another session is editing them, stop and ask.
+
+**State on 2026-11-27:** english-ui T1, workbench-ui T1, design-fidelity T1 and body-fit T1 are committed. `workbench-ui`'s HUD has not landed, so `LanguageSwitch` goes into the existing top bar of `src/App.tsx`. At the same time a separate Kiro session runs `body-fit` Task 2 in this working tree; its files are `src/try-on/arm.worker.ts`, `src/try-on/arm-pose.ts`, `src/hands/useHandTracking.ts`, `src/fit/*`, `shared/fit-constants.ts`, `tests/fixtures/fit-mask.ts`, `tests/e2e/fake-body.ts` and `tests/unit/fit-measure.test.ts`, `fit-cadence.test.ts`, `fit-worker-protocol.test.ts`: never touch them.
 
 **Done when:** `npm run check` passes, the tests above are green, the two e2e specs pass, the report confirms that `MODEL_INSTRUCTIONS`, `EDIT_INSTRUCTIONS` and `AGENT_INSTRUCTIONS` are byte-identical to before (compare with `git diff`; only the language-line slot moved into a template), and `switchVisible('?lang=en', false)` is true while `switchVisible('', false)` is false (unit test).
 
