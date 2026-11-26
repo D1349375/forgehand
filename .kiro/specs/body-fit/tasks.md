@@ -26,7 +26,7 @@ Other Kiro sessions (`workbench-ui`, `design-fidelity`, `english-ui`) work in th
 
 ## Task 1 — Fit maths and property tests
 
-`[ ]` · P0 · R18, R26, R47–R52, R54 (texts), R55, R57 (pure part), R66–R67 (resize), R73 (spread maths), R83, R84, R113–R116
+`[x]` · P0 · R18, R26, R47–R52, R54 (texts), R55, R57 (pure part), R66–R67 (resize), R73 (spread maths), R83, R84, R113–R116
 
 The pure core in `shared/`: ellipse and perimeter, the clearance offset, the arm section with tilt and roll, exact inside tests for every primitive, the ring axis and face, the inner profile, gaps, classes, the fit summary, the tape combination and the local ring resize. Nothing changes on screen.
 
