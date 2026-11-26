@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "session-context",
+      "trigger": "SessionStart",
+      "description": "Prints a short context block when a session starts: the last 5 commits, the open tasks of every spec, and how many files are uncommitted. No file contents, file names or absolute paths.",
+      "action": {
+        "type": "command",
+        "command": "node scripts/hooks/session-context.mjs"
+      },
+      "timeout": 20
+    }
+  ]
+}
