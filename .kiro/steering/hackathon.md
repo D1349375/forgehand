@@ -24,4 +24,4 @@ This project is an entry for the Kiroween 2026 hackathon (Frankenstein category)
 
 ## Language
 - Specs, design docs, README, and commit messages are written in English, because judges read them.
-- The current UI is Traditional Chinese. An English UI is planned as its own spec; until then, keep existing UI strings in Traditional Chinese and do not mix languages within one screen.
+- The current UI is Traditional Chinese; the `english-ui` spec adds English and a language switch. New user-facing strings go into the area's string table with both zh-TW and English (plain English if unsure); existing strings stay until an english-ui task moves them. Never mix languages within one screen. A unit test (`tests/unit/i18n-scan.test.ts`) flags Chinese text outside the tables.
