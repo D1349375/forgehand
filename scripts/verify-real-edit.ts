@@ -115,7 +115,7 @@ try {
     const start = performance.now();
     const entry: Record<string, unknown> = { id: scenario.id, kind: scenario.kind, instruction: scenario.instruction, selected: scenario.selected };
     try {
-      const plan: EditPlan = await provider.run(editTask(base, scenario.instruction, scenario.selected), AbortSignal.timeout(timeoutMs));
+      const plan: EditPlan = await provider.run(editTask(base, scenario.instruction, scenario.selected, 'zh-TW'), AbortSignal.timeout(timeoutMs));
       entry.elapsedMs = Math.round(performance.now() - start);
       entry.plan = plan; entry.status = plan.status; entry.operationCount = plan.operations.length;
       if (plan.status === 'applied') {

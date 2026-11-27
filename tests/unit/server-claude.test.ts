@@ -100,6 +100,6 @@ describe('Claude Code CLI provider: edit task', () => {
       return success(plan);
     };
     const provider = await createClaudeCodeProvider({ executable: 'claude-test', runner });
-    expect(await provider.run!(editTask(demoModel, '在外殼挖一個孔', []), new AbortController().signal)).toEqual(plan);
+    expect(await provider.run!(editTask(demoModel, '在外殼挖一個孔', [], 'zh-TW'), new AbortController().signal)).toEqual(plan);
   });
 });

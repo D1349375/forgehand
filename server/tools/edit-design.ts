@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { EditDesignDetail, StateChange } from '../../shared/agent';
 import { applyEditPlan, describeChanges, EditError, validateEditPlan, type EditPlan } from '../../shared/edit';
 import { editTask } from '../provider';
-import { checkedChange, fail, isToolResult, ok, OptionalObjectIdSchema, requireRun, resolveTarget, switchTo } from './helpers';
+import { checkedChange, fail, isToolResult, langOf, ok, OptionalObjectIdSchema, requireRun, resolveTarget, switchTo } from './helpers';
 import { defineTool } from './registry';
 
 /**
@@ -27,7 +27,7 @@ export const editDesign = defineTool({
     const { selection } = state.workspace;
     // Only a selection inside the target object is meaningful to the edit.
     const selectedPartIds = selection.objectId === target.id ? selection.partIds : [];
-    const planRaw = await run(editTask(target.model, instruction, selectedPartIds), signal);
+    const planRaw = await run(editTask(target.model, instruction, selectedPartIds, langOf(state)), signal);
     let plan: EditPlan;
     try {
       plan = validateEditPlan(planRaw);

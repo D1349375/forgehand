@@ -1,4 +1,5 @@
 import type { ToolCall, ToolResult } from '../shared/agent';
+import type { Lang } from '../shared/i18n/lang';
 import type { PrinterProfile } from '../shared/printer';
 import type { Workspace } from '../shared/workspace';
 import type { ModelProvider } from './provider';
@@ -24,6 +25,8 @@ export interface AgentWorkingState {
   cameraOn: boolean;
   /** The user's printer tolerances for the joint checks; the default profile when absent. */
   printer?: PrinterProfile;
+  /** The language the request asked for; zh-TW when absent. Read it with `langOf(state)`. */
+  lang?: Lang;
 }
 
 /** Sources of ids and time for tools that create objects; tests inject fixed ones. */

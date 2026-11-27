@@ -1,10 +1,12 @@
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { contentLang, differsFromUi, type ContentText } from '../../shared/i18n/content';
 import { localized } from '../../shared/i18n/define';
 import { colon, hasCjk, joinList, paren, plural, quote, seconds } from '../../shared/i18n/format';
 import { HTML_LANG, LANGS, LangSchema, isLang, langFromHeader, langFromTag } from '../../shared/i18n/lang';
+import { apiHeaders } from '../../src/i18n/api';
+import { LanguageSwitch, SWITCH_TEXT } from '../../src/i18n/LanguageSwitch';
 import { DOCUMENT_TEXT, LanguageProvider, applyDocumentLang, useLang } from '../../src/i18n/LanguageProvider';
 import {
   ENGLISH_UI_READY, LANG_STORAGE_KEY, detectLang, initialLang, loadLang, saveLang, switchVisible,
@@ -268,5 +270,64 @@ describe('document language and the provider', () => {
   it('throws when useLang is used outside the provider', () => {
     const Show = () => createElement('span', null, useLang().lang);
     expect(() => renderToString(createElement(Show))).toThrow(/LanguageProvider/);
+  });
+});
+
+describe('apiHeaders (R19)', () => {
+  it('names the language in Accept-Language and nothing else', () => {
+    expect(apiHeaders('en')).toEqual({ 'Accept-Language': 'en' });
+    expect(apiHeaders('zh-TW')).toEqual({ 'Accept-Language': 'zh-TW' });
+  });
+  it('gives a value that the server parser reads back', () => {
+    for (const lang of LANGS) expect(langFromHeader(apiHeaders(lang)['Accept-Language'])).toBe(lang);
+  });
+});
+
+describe('language switch (R5, R9, N4)', () => {
+  /** Renders the switch with a stand-in for `window.location.search`; the stub is removed again before the test ends. */
+  const render = (search: string, initial: 'zh-TW' | 'en', props: { disabled: boolean; disabledReason: string } = { disabled: false, disabledReason: '' }) => {
+    vi.stubGlobal('window', { location: { search } });
+    try {
+      return renderToString(createElement(LanguageProvider, { initial, children: createElement(LanguageSwitch, props) }));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  };
+  it('shows two toggle buttons, each named in its own language, with a group name in the current language', () => {
+    const en = render('?lang=en', 'en');
+    expect(en).toContain('role="group"');
+    expect(en).toContain(`aria-label="${SWITCH_TEXT.en.group}"`);
+    expect(en).toContain('>繁體中文</button>');
+    expect(en).toContain('>English</button>');
+    expect(en).toContain('lang="zh-Hant-TW"');
+    expect(en).toContain('lang="en"');
+    expect(render('?lang=zh-TW', 'zh-TW')).toContain(`aria-label="${SWITCH_TEXT['zh-TW'].group}"`);
+    expect(SWITCH_TEXT['zh-TW'].group).toBe('介面語言');
+    expect(SWITCH_TEXT.en.group).toBe('Interface language');
+  });
+  it('marks only the current language as pressed', () => {
+    const buttons = (html: string) => [...html.matchAll(/<button[^>]*>[^<]*<\/button>/g)].map(match => match[0]);
+    for (const [initial, pressedLabel] of [['en', 'English'], ['zh-TW', '繁體中文']] as const) {
+      const list = buttons(render('?lang=en', initial));
+      expect(list).toHaveLength(2);
+      const pressed = list.filter(button => button.includes('aria-pressed="true"'));
+      expect(pressed).toHaveLength(1);
+      expect(pressed[0]).toContain(`>${pressedLabel}</button>`);
+      expect(list.filter(button => button.includes('aria-pressed="false"'))).toHaveLength(1);
+    }
+  });
+  it('is hidden without a ?lang= parameter until English is ready', () => {
+    const html = render('', 'zh-TW');
+    if (ENGLISH_UI_READY) expect(html).toContain('role="group"');
+    else expect(html).toBe('');
+    expect(render('?hands=debug', 'zh-TW') === '').toBe(!ENGLISH_UI_READY);
+  });
+  it('disables both buttons and gives the reason as their description', () => {
+    const html = render('?lang=en', 'en', { disabled: true, disabledReason: 'Switch later.' });
+    expect([...html.matchAll(/disabled=""/g)]).toHaveLength(2);
+    expect([...html.matchAll(/title="Switch later\."/g)]).toHaveLength(2);
+    const enabled = render('?lang=en', 'en');
+    expect(enabled).not.toContain('disabled');
+    expect(enabled).not.toContain('title=');
   });
 });

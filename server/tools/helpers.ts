@@ -1,4 +1,5 @@
 import type { StateChange, ToolErrorDetail, ToolResult } from '../../shared/agent';
+import type { Lang } from '../../shared/i18n/lang';
 import {
   activeObject, applyWorkspaceChange, findObject, ObjectIdSchema, WorkspaceError, type SceneObject,
 } from '../../shared/workspace';
@@ -27,6 +28,9 @@ export function fail(tool: string, code: string, message: string): ToolResult {
 export function noModel(tool: string): ToolResult {
   return fail(tool, 'NO_MODEL', NO_MODEL_MESSAGE);
 }
+
+/** The language of the request that started this run: zh-TW unless the route passed another (english-ui R54). */
+export const langOf = (state: AgentWorkingState): Lang => state.lang ?? 'zh-TW';
 
 export function isToolResult(value: SceneObject | ToolResult): value is ToolResult {
   return 'ok' in value;

@@ -11,7 +11,7 @@ Kiro's native checklist, so the IDE shows **Start task** on each task. Each item
 - [x] 1. Core: languages, tables, store, provider and guards
   - Full instructions: the "Task 1" section below.
   - _Requirements: R1, R18, R47, R48, R53, R54, R56_
-- [ ] 2. Language choice end to end, and the model's language
+- [x] 2. Language choice end to end, and the model's language
   - Full instructions: the "Task 2" section below, including its "Extra (2026-11-27)" block.
   - Do not commit. Mark this task done only when everything under "Done when" passes; otherwise leave it in progress and report what is missing.
   - Write comments without backslash escapes such as `\t`, `\f` or `\b` (they turn into control characters).
@@ -87,7 +87,7 @@ The building blocks every later task and every other spec uses: the `Lang` type 
 
 ## Task 2 — Language choice end to end, and the model's language
 
-`[ ]` · P0 · Requirements: R2–R9, R19, R23, R25, R44, R59
+`[x]` · P0 · Requirements: R2–R9, R19, R23, R25, R44, R59
 
 The language becomes real: the provider is mounted, the switch exists (hidden until T6 unless the URL has `?lang=`), `<html lang>` and the title follow it, every `/api/*` request carries `Accept-Language`, and the server builds the generation, edit and agent instructions with the matching language line. The visible UI strings stay Chinese until T3–T5, which is why the switch is gated (R9).
 

@@ -73,7 +73,7 @@ describe('POST /api/edit (provider test doubles)', () => {
       return new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(recolor) }] }] }), { status: 200 });
     }) as typeof fetch;
     const openai = createOpenAIProvider({ apiKey: 'test-key', fetcher });
-    expect(await openai.run!(editTask(demoModel, '改藍色', ['battery']), new AbortController().signal)).toEqual(recolor);
+    expect(await openai.run!(editTask(demoModel, '改藍色', ['battery'], 'zh-TW'), new AbortController().signal)).toEqual(recolor);
     expect(sent!.instructions).toBe(EDIT_INSTRUCTIONS);
     expect(sent!.text.format.name).toBe('concept_edit');
     expect(sent!.text.format.schema).toEqual(editJsonSchema());

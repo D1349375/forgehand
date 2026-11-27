@@ -127,6 +127,6 @@ describe('Codex CLI exec provider: edit task', () => {
       await writeFile(args[args.indexOf('--output-last-message') + 1]!, JSON.stringify(plan));
       return { code: 0, stdout: '', stderr: '' };
     } });
-    expect(await provider.run!(editTask(demoModel, '改一下', []), new AbortController().signal)).toEqual(plan);
+    expect(await provider.run!(editTask(demoModel, '改一下', [], 'zh-TW'), new AbortController().signal)).toEqual(plan);
   });
 });

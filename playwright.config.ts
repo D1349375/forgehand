@@ -17,6 +17,9 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     viewport: { width: 1440, height: 1000 },
+    // english-ui R44: the suite pins the browser language, so the default language is zh-TW on every machine.
+    // The English spec overrides it with test.use({ locale: 'en-US' }).
+    locale: 'zh-TW',
   },
   projects: [{
     name: 'chromium',

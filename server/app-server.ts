@@ -5,6 +5,7 @@ import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import type { EventEmitter } from 'node:events';
 import type { Readable, Writable } from 'node:stream';
+import type { Lang } from '../shared/i18n/lang';
 import type { GeneratedDesign } from '../shared/model';
 import { designTask, GenerationError, type ModelProvider, type ModelTask } from './provider';
 
@@ -456,7 +457,7 @@ async function createIsolatedProvider(options: CodexAppServerOptions, disabledMc
       get configured() { return connection.available && !disposed; },
       get model() { return model; },
       dispose, run,
-      generate: (prompt: string, signal: AbortSignal): Promise<GeneratedDesign> => run(designTask(prompt), signal),
+      generate: (prompt: string, signal: AbortSignal, lang?: Lang): Promise<GeneratedDesign> => run(designTask(prompt, lang ?? 'zh-TW'), signal),
     };
   } catch (error) {
     await dispose();

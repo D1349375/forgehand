@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { AgentTurn } from '../../shared/agent';
 import type { ExportScope } from '../../shared/export-plan';
+import type { Lang } from '../../shared/i18n/lang';
+import { apiHeaders } from '../i18n/api';
 import { applyStateEvent, type StateEffects } from './apply-state';
 import { parseAgentEvent } from './events';
 import { buildAgentRequest, errorMessageFromBody, type RunSnapshot } from './request';
@@ -10,6 +12,8 @@ import { readAgentStream } from './stream';
 
 /** How the hook reads from and writes to the workbench. Held in a ref, so these can change every render. */
 export interface AgentRunOptions {
+  /** The language of this run: sent as `Accept-Language` so the agent answers in it (english-ui R19). */
+  lang: Lang;
   /** Applies one state event's workspace change: an undo step when `recordUndo`, else a plain replace. */
   applyWorkspace(effects: StateEffects): void;
   setTryingOn(on: boolean): void;
@@ -78,7 +82,7 @@ export function useAgentRun(options: AgentRunOptions) {
     try {
       const response = await fetch('/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...apiHeaders(optionsRef.current.lang) },
         body: JSON.stringify(buildAgentRequest(text, snapshot, optionsRef.current.getTurns(), requestId)),
         signal,
       });

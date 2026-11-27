@@ -2,6 +2,7 @@ import express, { type ErrorRequestHandler, type Response } from 'express';
 import path from 'node:path';
 import { z } from 'zod';
 import { applyEditPlan, EditError, EditRequestSchema, validateEditPlan, type EditPlan, type EditResult } from '../shared/edit';
+import { langFromHeader, type Lang } from '../shared/i18n/lang';
 import { validateDesign, validateModel, type GenerationResult, type ModelSpec } from '../shared/model';
 import { AgentRequestError, validateAgentRequest, type AgentRequest } from '../shared/agent';
 import { createEmitter, setSseHeaders, type SseEmitter } from './agent-events';
@@ -25,6 +26,9 @@ export interface AppOptions {
   /** Time limit for a whole agent run in ms (default 600000). `timeoutMs` bounds one model call only. */
   agentTotalTimeoutMs?: number;
 }
+
+/** The language of this request, set by the middleware of `createApp` from `Accept-Language` (english-ui R19). */
+const requestLang = (res: Response): Lang => (res.locals.lang as Lang | undefined) ?? 'zh-TW';
 
 export function createApp(options: AppOptions = {}) {
   const provider = options.provider ?? createOpenAIProvider(options);
@@ -51,6 +55,11 @@ export function createApp(options: AppOptions = {}) {
         return;
       }
     }
+    next();
+  });
+  // The language of the request. Only the first tag of the header is read, and the value is never echoed.
+  app.use((req, res, next) => {
+    res.locals.lang = langFromHeader(req.get('accept-language'));
     next();
   });
   // Agent requests carry a whole workspace (up to 8 objects), so they get a larger limit.
@@ -118,8 +127,9 @@ export function createApp(options: AppOptions = {}) {
       return;
     }
     const { prompt, requestId } = parsed.data;
+    const lang = requestLang(res);
     await modelRoute(res, requestId, async (signal, start) => {
-      const raw = await provider.generate(prompt, signal);
+      const raw = await provider.generate(prompt, signal, lang);
       let design;
       try { design = validateDesign(raw); }
       catch { throw new GenerationError('INVALID_MODEL', '模型資料未通過驗證，上一個成功模型會保留。請修改描述後重試。'); }
@@ -136,6 +146,7 @@ export function createApp(options: AppOptions = {}) {
       return;
     }
     const { instruction, requestId, selectedPartIds } = parsed.data;
+    const lang = requestLang(res);
     let model: ModelSpec;
     try { model = validateModel(parsed.data.model); }
     catch {
@@ -152,7 +163,7 @@ export function createApp(options: AppOptions = {}) {
       return;
     }
     await modelRoute(res, requestId, async (signal, start) => {
-      const plan = await run(editTask(model, instruction, selectedPartIds), signal);
+      const plan = await run(editTask(model, instruction, selectedPartIds, lang), signal);
       let checked: EditPlan;
       try {
         checked = validateEditPlan(plan);
@@ -227,7 +238,7 @@ export function createApp(options: AppOptions = {}) {
       return;
     }
     await agentRoute(res, (signal, emit) =>
-      runAgent(provider, agentRequest, { maxRounds: agentMaxRounds, totalTimeoutMs: agentTotalTimeoutMs }, emit, signal));
+      runAgent(provider, agentRequest, { maxRounds: agentMaxRounds, totalTimeoutMs: agentTotalTimeoutMs, lang: requestLang(res) }, emit, signal));
   });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: '找不到此服務。' } }));

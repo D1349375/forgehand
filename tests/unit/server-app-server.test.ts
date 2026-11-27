@@ -366,7 +366,7 @@ describe('persistent Codex app-server provider: edit task', () => {
     const plan = { status: 'clarify', explanation: '請問要放大哪個零件？', operations: [], name: null, summary: null, assumptions: null };
     server.onTurn = frame => { server.startTurn(frame); server.finish(frame, plan); };
     try {
-      const result = await provider.run!(editTask(demoModel, '把它放大', []), new AbortController().signal);
+      const result = await provider.run!(editTask(demoModel, '把它放大', [], 'zh-TW'), new AbortController().signal);
       expect(result).toEqual(plan);
       const thread = server.frames.find(frame => frame.method === 'thread/start')!;
       expect(thread.params!.baseInstructions).toBe(EDIT_INSTRUCTIONS);

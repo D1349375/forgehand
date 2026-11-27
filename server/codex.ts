@@ -181,5 +181,5 @@ export async function createCodexProvider(options: CodexOptions = {}): Promise<M
       }
   };
   return { name: 'codex', configured: available.installed && available.loggedIn, get model() { return model; },
-    run, generate: (prompt, signal) => run(designTask(prompt), signal) };
+    run, generate: (prompt, signal, lang) => run(designTask(prompt, lang ?? 'zh-TW'), signal) };
 }

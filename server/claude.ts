@@ -113,6 +113,6 @@ export async function createClaudeCodeProvider(options: ClaudeOptions = {}): Pro
   return {
     name: 'claude', transport: 'print', configured: available.installed && available.loggedIn,
     cliVersion: available.version, get model() { return model; },
-    run, generate: (prompt, signal) => run(designTask(prompt), signal),
+    run, generate: (prompt, signal, lang) => run(designTask(prompt, lang ?? 'zh-TW'), signal),
   };
 }

@@ -33,6 +33,9 @@ import { HandDebugPanel, handDebugRequested } from './hands/HandDebugPanel';
 import { useHandControl } from './hands/useHandControl';
 import { useHandTracking } from './hands/useHandTracking';
 import type { AgentTurn } from '../shared/agent';
+import { apiHeaders } from './i18n/api';
+import { LanguageSwitch } from './i18n/LanguageSwitch';
+import { useLang } from './i18n/LanguageProvider';
 import { AgentPanel } from './agent/AgentPanel';
 import { HISTORY_TURN_LIMIT } from './agent/request';
 import type { StateEffects } from './agent/apply-state';
@@ -82,6 +85,7 @@ function cascadeNotice(before: Workspace, after: Workspace): string {
 }
 
 export default function App() {
+  const { lang } = useLang();
   const [prompt, setPrompt] = useState('一個紅色、有四條腿的小桌子');
   const [instruction, setInstruction] = useState('');
   const [mode, setMode] = useState<'edit' | 'create'>('create');
@@ -166,6 +170,7 @@ export default function App() {
   /** The latest completed agent turns, newest last, sent as history so follow-ups have context. */
   const agentTurns = useRef<AgentTurn[]>([]);
   const agent = useAgentRun({
+    lang,
     applyWorkspace: applyAgentWorkspace,
     setTryingOn,
     // The agent's switch only applies while the camera is on; with it off there is no image to hide.
@@ -208,15 +213,20 @@ export default function App() {
     () => printPreview?.status === 'ready' && printPreview.geometry ? { objectId: printPreview.objectId, partId: printPreview.partId, geometry: printPreview.geometry } : null,
     [printPreview]);
 
+  /** Each status request takes a number; an answer that arrives after a newer request was made (a language switch, a retry) is dropped. */
+  const statusRequest = useRef(0);
   async function refreshService() {
+    const id = ++statusRequest.current;
     try {
-      const response = await fetch('/api/status');
+      const response = await fetch('/api/status', { headers: apiHeaders(lang) });
       if (!response.ok) throw new Error();
-      setService(await response.json() as ServiceStatus);
-    } catch { setService(null); }
+      const status = await response.json() as ServiceStatus;
+      if (id === statusRequest.current) setService(status);
+    } catch { if (id === statusRequest.current) setService(null); }
   }
+  // The service status carries a reason line in the request language, so it is fetched again after a switch.
+  useEffect(() => { void refreshService(); }, [lang]);
   useEffect(() => {
-    void refreshService();
     return () => {
       latest.current++;
       controller.current?.abort();
@@ -367,7 +377,7 @@ export default function App() {
     // return a meaningful error before using this final network fallback.
     const timeout = window.setTimeout(() => abort.abort('timeout'), 340_000);
     try {
-      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload as object, requestId }), signal: abort.signal });
+      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...apiHeaders(lang) }, body: JSON.stringify({ ...payload as object, requestId }), signal: abort.signal });
       const body: unknown = await response.json();
       if (id !== latest.current) return;
       if (!response.ok) {
@@ -765,7 +775,7 @@ export default function App() {
   };
 
   return <div className="app-shell">
-    <header className="topbar"><a className="brand" href="/" aria-label="Forgehand 工作台首頁"><span className="brand-icon">F</span><span>FORGEHAND<small>VOICE &amp; HAND 3D WORKBENCH</small></span></a><div className="phase-label"><span className="status-dot" />第二階段<span className="phase-divider">/</span>選取 · 調整 · 文字修改</div></header>
+    <header className="topbar"><a className="brand" href="/" aria-label="Forgehand 工作台首頁"><span className="brand-icon">F</span><span>FORGEHAND<small>VOICE &amp; HAND 3D WORKBENCH</small></span></a><div className="phase-label"><span className="status-dot" />第二階段<span className="phase-divider">/</span>選取 · 調整 · 文字修改</div><LanguageSwitch disabled={false} disabledReason="" /></header>
     <main className="workspace">
       <section className="stage-column" aria-label="3D 與視訊展示">
         <div className="section-heading"><div><span className="eyebrow">LIVE WORKSPACE</span><h1>把想法，放進視野。</h1></div><span className={`camera-badge ${camera === 'on' ? 'active' : ''}`}><span className="status-dot" />{camera === 'on' ? '攝影機已開啟' : camera === 'starting' ? '連接攝影機中' : '攝影機未開啟'}</span></div>

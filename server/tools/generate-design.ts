@@ -3,7 +3,7 @@ import type { GenerateDesignDetail, StateChange } from '../../shared/agent';
 import { validateDesign } from '../../shared/model';
 import { createObject, MAX_OBJECTS, WorkspaceError } from '../../shared/workspace';
 import { designTask } from '../provider';
-import { checkedChange, fail, ok, requireRun } from './helpers';
+import { checkedChange, fail, langOf, ok, requireRun } from './helpers';
 import { defineTool } from './registry';
 
 /**
@@ -27,7 +27,7 @@ export const generateDesign = defineTool({
       return fail('generate_design', 'OBJECT_LIMIT', new WorkspaceError('OBJECT_LIMIT').message);
     }
     const run = requireRun(provider);
-    const raw = await run(designTask(prompt), signal);
+    const raw = await run(designTask(prompt, langOf(state)), signal);
     const design = validateDesign(raw);
     const detail: GenerateDesignDetail = { source: provider.name, providerModel: provider.model, status: design.status, objectId: null };
     if (design.status !== 'ready') {
