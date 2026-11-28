@@ -66,7 +66,7 @@ The pure core in `shared/`: ellipse and perimeter, the clearance offset, the arm
 
 ## Task 2 — Worker segmenter and measurement core
 
-`[ ]` · P0 · R5, R9, R19, R20, R22–R23 (pure), R59 (mask data), R61 (luma), R85, R108, R109, R110
+`[x]` · P0 · R5, R9, R19, R20, R22–R23 (pure), R59 (mask data), R61 (luma), R85, R108, R109, R110
 
 The tracking worker gains the multiclass selfie segmenter on a rotated wrist crop and a crop luma; the hook forwards them; pure modules measure the scale, the width across the forearm, the pose checks and the medians; a scripted fake worker serves e2e tests. Nothing visible changes yet.
 

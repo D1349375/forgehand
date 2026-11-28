@@ -23,6 +23,33 @@ export interface LandmarkFrame {
   body: readonly Landmark[];
 }
 
+/**
+ * A square crop of the frame for the wrist segmenter (body fit, design 4.1). `x`, `y` and `size` are in the
+ * pixels of the frame message (`ArmWorkerFrame.width` and `height`), already mirrored like the bitmap.
+ * `x`, `y` is the centre. The crop is turned by `angleDeg` (clockwise on screen, y down); see `src/fit/mask.ts`
+ * for the exact mapping between crop pixels and frame pixels.
+ */
+export interface SegmentCrop {
+  x: number;
+  y: number;
+  size: number;
+  angleDeg: number;
+}
+
+/** The segmenter's answer for one crop: `size` squared bytes per plane, confidence x 255, rows from the crop's top. */
+export interface SegmentMask {
+  size: number;
+  crop: SegmentCrop;
+  /** Body-skin confidence (class 2). */
+  skin: Uint8Array;
+  /** Clothes confidence (class 4). */
+  clothes: Uint8Array;
+  /** Time the segmenter and the read-back took, in milliseconds. */
+  ms: number;
+  /** The timestamp of the frame the mask belongs to. */
+  timestamp: number;
+}
+
 export interface ArmWorkerFrame {
   bitmap: ImageBitmap;
   width: number;
@@ -30,11 +57,21 @@ export interface ArmWorkerFrame {
   timestamp: number;
   /** Run the pose model for this frame. Absent or true: yes. False: hands only. */
   pose?: boolean;
+  /** Segment this crop of the frame and report the crop's luma. Absent or null: neither, and the frame behaves exactly as without body fit. */
+  segment?: SegmentCrop | null;
 }
 
 export type TrackingDelegate = 'GPU' | 'CPU';
+export type SegmenterState = 'loading' | 'ready' | 'error';
 export type ArmWorkerResult = { type: 'ready'; delegate: TrackingDelegate } | { type: 'error'; stage: 'load' | 'track' }
-  | ({ type: 'frame'; inferenceMs: number } & LandmarkFrame);
+  /** Posted by the worker when the segmenter changes state; a page that does not know the message ignores it. */
+  | { type: 'segmenter'; state: SegmenterState }
+  | ({ type: 'frame'; inferenceMs: number } & LandmarkFrame & {
+    /** Present only when `segment` was asked and the segmenter was ready. */
+    mask?: SegmentMask;
+    /** Mean luma (0..1) of the crop, present whenever `segment` was asked, even before the segmenter is ready. */
+    luma?: number;
+  });
 
 export interface ArmPose {
   side: ArmSide;
@@ -105,7 +142,7 @@ function worldVector(from: Landmark, to: Landmark): Vector3 {
 }
 
 /** Hand bones used to relate image size to metric size; all lie roughly in the palm. */
-const SCALE_BONES = [[0, 5], [0, 9], [0, 17], [5, 17], [5, 9], [9, 13], [13, 17]] as const;
+export const SCALE_BONES = [[0, 5], [0, 9], [0, 17], [5, 17], [5, 9], [9, 13], [13, 17]] as const;
 
 /**
  * Knuckle width on screen (frame-height units) from the metric landmarks:

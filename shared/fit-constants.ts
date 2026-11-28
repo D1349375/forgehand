@@ -79,3 +79,47 @@ export const CLASS_CHARS = { fits: 'g', presses: 'r', loose: 'a', open: '-' } as
 /** `tubeRatio` limits of `PartSchema` (shared/model.ts), repeated here for the resize range check. */
 export const TUBE_RATIO_MIN = 0.05;
 export const TUBE_RATIO_MAX = 0.95;
+// ---------------------------------------------------------------------------
+// Task 2: the wrist segmenter and the measurement core (design 4, 5)
+/** Side of the square crop the segmenter sees, in mask pixels (design 4.2): the multiclass selfie model takes 256 x 256. */
+export const SEGMENT_SIZE = 256;
+/** Side of the wrist crop in millimetres at the current scale: one mask pixel is then about 0.63 mm (design 4.2). */
+export const CROP_SIDE_MM = 160;
+/** Normal time between two segmenter runs while fitting: about 3 Hz (R109). */
+export const SEGMENT_INTERVAL_MS = 333;
+/** The interval never grows past this when the tracking rate is low (R109). */
+export const SEGMENT_MAX_INTERVAL_MS = 1000;
+/** On the CPU delegate the segmenter runs at most once a second (R109). */
+export const SEGMENT_CPU_INTERVAL_MS = 1000;
+/** A measure step asks for a mask on every frame for at most this long (R109). */
+export const MEASURE_BURST_MS = 3000;
+/** Below this tracking rate for SPEED_HOLD_MS (src/hands/constants.ts) the segmenter interval doubles (R109). */
+export const FIT_MIN_FPS = 6;
+/** Above this tracking rate for FIT_RECOVER_MS the interval halves again (design 4.3). */
+export const FIT_RECOVER_FPS = 7;
+export const FIT_RECOVER_MS = 5000;
+/** Accepted frames that complete a measure step (R23). */
+export const MEASURE_FRAMES = 7;
+/** A step needs at least this many frames left after the outlier filter (R23). */
+export const MEASURE_MIN_KEPT = 5;
+/** A step is unstable when the spread of the width at the band position is above this (R23). */
+export const MEASURE_SPREAD_MM = 3;
+/** The palm normal must be within this angle of the camera axis (steps 1 and 3), or of perpendicular to it (step 2) (R22). */
+export const PALM_FACING_DEG = 25;
+/** The forearm axis must be within this angle of the image plane (R22). */
+export const FOREARM_FLAT_DEG = 30;
+/** The wrist must move slower than this for a frame to count (R22). */
+export const STILL_MM_PER_S = 15;
+/** Window of the wrist speed (design 5.3). */
+export const STILL_WINDOW_MS = 300;
+/** How far from the forearm axis the width line may look for skin when the axis itself is off the skin (design 5.2). */
+export const AXIS_SEARCH_MM = 10;
+/** Class indices of the multiclass selfie segmenter: 0 background, 1 hair, 2 body-skin, 3 face-skin, 4 clothes, 5 others (requirements decision 2). */
+export const SKIN_CLASS = 2;
+export const CLOTHES_CLASS = 4;
+/** A mask pixel counts as skin at or above this confidence (design 5.2). */
+export const MASK_EDGE_LEVEL = 0.5;
+/** Side of the downscaled crop whose mean is the luma (design 4.2). */
+export const LUMA_SIZE = 16;
+/** Step of the width line across the mask, in mask pixels (design 5.2). */
+export const WIDTH_SAMPLE_STEP_PX = 0.25;

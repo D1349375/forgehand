@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import type { ArmWorkerFrame, ArmWorkerResult, LandmarkFrame, TrackingDelegate } from '../try-on/arm-pose';
+import type { ArmWorkerFrame, ArmWorkerResult, LandmarkFrame, SegmentCrop, SegmentMask, TrackingDelegate } from '../try-on/arm-pose';
 import { frameClockStep, RateWindow, trackingPlan, VIDEO_FRAME_STALL_MS, type FrameClock } from './tracking-plan';
 
 export type TrackerStatus = 'off' | 'loading' | 'ready' | 'load-error' | 'track-error';
@@ -13,6 +13,10 @@ export interface TrackedFrame extends LandmarkFrame {
   inferenceMs: number;
   /** Pose was requested for this frame. */
   pose: boolean;
+  /** Body fit: the wrist mask, present only when the frame asked for `segment` and the segmenter was ready. */
+  mask?: SegmentMask;
+  /** Body fit: mean luma (0..1) of the requested crop. */
+  luma?: number;
 }
 
 export interface HandSource {
@@ -72,6 +76,8 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
   wantPose: boolean;
   mirrored: boolean;
   onRate?: (fps: number, now: number) => void;
+  /** Body fit: a ref read on every captured frame. A crop in it asks the worker to segment that crop of the frame; null or absent asks for nothing. */
+  segment?: RefObject<SegmentCrop | null>;
 }): { source: HandSource; status: TrackerStatus } {
   const { running, needed, wantPose, mirrored } = options;
   const store = useMemo(createSourceStore, []);
@@ -85,10 +91,12 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
   const pose = useRef(wantPose);
   const mirror = useRef(mirrored);
   const onRate = useRef(options.onRate);
+  const segment = useRef(options.segment);
   sendFrames.current = plan.sendFrames;
   pose.current = wantPose;
   mirror.current = mirrored;
   onRate.current = options.onRate;
+  segment.current = options.segment;
 
   useEffect(() => {
     const video = videoRef.current;
@@ -192,7 +200,8 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
         drawing.setTransform(mirror.current ? -1 : 1, 0, 0, 1, mirror.current ? frameWidth : 0, 0);
         drawing.drawImage(video!, 0, 0, frameWidth, frameHeight);
         bitmap = frameBuffer.transferToImageBitmap();
-        const message: ArmWorkerFrame = { bitmap, width, height, timestamp: now, pose: lastPose };
+        const crop = segment.current?.current;
+        const message: ArmWorkerFrame = { bitmap, width, height, timestamp: now, pose: lastPose, ...(crop ? { segment: crop } : {}) };
         worker.postMessage(message, [bitmap]);
       } catch (error) {
         bitmap?.close();
@@ -205,6 +214,8 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
       if (stopped) return;
       const message = event.data;
       if (message.type === 'error') { fail(message.stage === 'load' ? 'load-error' : 'track-error'); return; }
+      // Not an answer to a frame: the pending frame stays pending.
+      if (message.type === 'segmenter') return;
       if (message.type === 'ready') {
         clearTimeout(loadTimeout);
         store.setDelegate(message.delegate);
@@ -221,6 +232,7 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
       store.publish({
         width: message.width, height: message.height, hands: message.hands, body: message.body,
         requestedAt: lastFrameAt, capturedAt: lastCaptureAt, receivedAt: now, inferenceMs: message.inferenceMs, pose: lastPose,
+        ...(message.mask ? { mask: message.mask } : {}), ...(message.luma === undefined ? {} : { luma: message.luma }),
       });
     };
     worker.onerror = event => {
