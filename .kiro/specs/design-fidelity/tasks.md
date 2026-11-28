@@ -8,6 +8,30 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 **Decisions.** The tasks assume the recommended option of each decision in `requirements.md` ("Decisions"). If the user chose differently, the reviewer updates this file before the task starts.
 
+## Implementation Plan (Kiro task list)
+
+Kiro's native checklist, so the IDE shows **Start task** on each task. Each item points to its full section below: do everything that section says (Read first, Build, Tests, Done when, Session facts). Added on 2026-11-28; most tasks are still run from a pasted prompt and a few through Start task, and the reviewer keeps the status lines under the `## Task N` headings in step with this list.
+
+Rules for every item, whichever way it is started:
+- Do not commit. Mark the item done only when everything under its "Done when" passes; otherwise leave it in progress and report what is missing.
+- New user-facing strings go into the `defineText` tables with both Traditional Chinese and English; the strict stray-string scan in `npm run check` fails on new literals elsewhere.
+- While working, run only the test files you touch (`npx vitest run <file>`). Run `npm run check` and the task's named e2e specs once the code is done, not after every edit; the reviewer reruns the full checks.
+- Write comments without backslash escapes such as `\t`, `\f` or `\b` (they turn into control characters).
+- Write the final report in Traditional Chinese, in plain words.
+
+- [x] 1. The `shell` primitive everywhere, and a hollow demo housing
+  - Full instructions: the "Task 1" section below.
+- [ ] 2. Rule blocks, honest internals, concept / detailed mode, reference table
+  - Full instructions: the "Task 2" section below.
+- [ ] 3. Fit checks, the size readout, the badge and the stale note
+  - Full instructions: the "Task 3" section below.
+- [ ] 4. Research sub-agent (spike first)
+  - Full instructions: the "Task 4" section below.
+- [ ] 5. Cutaway
+  - Full instructions: the "Task 5" section below.
+- [ ] 6. Evaluation: six products, before and after, both CLIs
+  - Full instructions: the "Task 6" section below.
+
 ## Parallel sessions and file ownership
 
 Other Kiro sessions work in this same working tree at the same time (on 2026-11-26: the specs `workbench-ui`, `body-fit` and `english-ui` were being written, and their implementation will follow). Their uncommitted changes are expected and are not yours. The full table of shared files is design §11.
