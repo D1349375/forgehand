@@ -6,22 +6,22 @@ A task commit is a commit whose subject names a spec task as `(spec <name>, task
 
 ## Totals
 
-- Task commits: 51
-- Distinct spec tasks committed: 47
+- Task commits: 53
+- Distinct spec tasks committed: 49
 - Specs with task commits: 9
 - Specs added by `docs(spec)` / `docs(specs)` commits: 8
 
 | Spec | Task commits | Distinct tasks | Tasks | Spec added |
 |---|---:|---:|---|---|
 | agent-harness | 11 | 10 | 1, 2, 3, 4, 4b, 5, 6, 7a, 7b, 8 | - |
-| assembly-joints | 6 | 6 | 1, 2, 3, 4, 5, 6 | 2026-11-20 `fb94c43` |
-| body-fit | 1 | 1 | 1 | 2026-11-26 `04425e8` |
-| design-fidelity | 1 | 1 | 1 | 2026-11-26 `05a80f0` |
-| english-ui | 1 | 1 | 1 | 2026-11-26 `7e9d9fa` |
-| export | 6 | 5 | 1, 2, 3, 4, 5 | 2026-11-20 `3ff3335` |
-| hand-manipulation | 14 | 12 | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 | 2026-11-16 `07ce28b` |
-| workbench-ui | 1 | 1 | 1 | 2026-11-26 `bcb4f21` |
-| workspace-v2 | 10 | 10 | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 | 2026-11-15 `9507120` |
+| assembly-joints | 6 | 6 | 1, 2, 3, 4, 5, 6 | 2026-11-20 `6dd0033` |
+| body-fit | 2 | 2 | 1, 2 | 2026-11-26 `f20d432` |
+| design-fidelity | 1 | 1 | 1 | 2026-11-26 `2347fcd` |
+| english-ui | 2 | 2 | 1, 2 | 2026-11-26 `0d8dc36` |
+| export | 6 | 5 | 1, 2, 3, 4, 5 | 2026-11-20 `a73493d` |
+| hand-manipulation | 14 | 12 | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 | 2026-11-16 `8d08d3c` |
+| workbench-ui | 1 | 1 | 1 | 2026-11-26 `9a92815` |
+| workspace-v2 | 10 | 10 | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 | 2026-11-15 `78f73af` |
 
 A spec added in some other kind of commit (for example together with the steering files) shows `-` under "Spec added".
 
@@ -29,67 +29,69 @@ A spec added in some other kind of commit (for example together with the steerin
 
 | Date | Spec | Commit | Subject |
 |---|---|---|---|
-| 2026-11-15 | workspace-v2 | `9507120` | docs(spec): add the workspace-v2 spec |
-| 2026-11-16 | hand-manipulation | `07ce28b` | docs(spec): add the hand-manipulation spec |
-| 2026-11-20 | assembly-joints | `fb94c43` | docs(spec): add the assembly-joints spec |
-| 2026-11-20 | export | `3ff3335` | docs(spec): add the export spec (printable kit) |
-| 2026-11-26 | workbench-ui | `bcb4f21` | docs(specs): add the workbench-ui spec (full-screen workbench, parts tray, objects as groups) |
-| 2026-11-26 | design-fidelity | `05a80f0` | docs(specs): add the design-fidelity spec (hollow shell, honest internals, reference table) |
-| 2026-11-26 | body-fit | `04425e8` | docs(specs): add the body-fit spec (millimetre wrist fit, fit map, fit_to_body) |
-| 2026-11-26 | english-ui | `7e9d9fa` | docs(specs): add the english-ui spec (English UI with a language switch) |
+| 2026-11-15 | workspace-v2 | `78f73af` | docs(spec): add the workspace-v2 spec |
+| 2026-11-16 | hand-manipulation | `8d08d3c` | docs(spec): add the hand-manipulation spec |
+| 2026-11-20 | assembly-joints | `6dd0033` | docs(spec): add the assembly-joints spec |
+| 2026-11-20 | export | `a73493d` | docs(spec): add the export spec (printable kit) |
+| 2026-11-26 | workbench-ui | `9a92815` | docs(specs): add the workbench-ui spec (full-screen workbench, parts tray, objects as groups) |
+| 2026-11-26 | design-fidelity | `2347fcd` | docs(specs): add the design-fidelity spec (hollow shell, honest internals, reference table) |
+| 2026-11-26 | body-fit | `f20d432` | docs(specs): add the body-fit spec (millimetre wrist fit, fit map, fit_to_body) |
+| 2026-11-26 | english-ui | `0d8dc36` | docs(specs): add the english-ui spec (English UI with a language switch) |
 
 ## Task commits
 
 | Date | Spec | Task | Commit | Subject |
 |---|---|---|---|---|
-| 2026-11-12 | agent-harness | 1 | `2ffe0e0` | feat(agent): add agent contract schemas (spec agent-harness, task 1) |
-| 2026-11-12 | agent-harness | 2 | `70f519c` | feat(agent): add local agent tools (spec agent-harness, task 2) |
-| 2026-11-12 | agent-harness | 3 | `9476b4d` | feat(agent): add model-calling agent tools (spec agent-harness, task 3) |
-| 2026-11-13 | agent-harness | 3 | `70d4d86` | fix(agent): select changed parts after edit_design (spec agent-harness, task 3) |
-| 2026-11-13 | agent-harness | 4 | `e95b9ba` | feat(agent): add the agent loop (spec agent-harness, task 4) |
-| 2026-11-13 | agent-harness | 4 | `664bf64` | fix(agent): retry invalid agent steps from real providers (spec agent-harness, task 4) |
-| 2026-11-13 | agent-harness | 4b | `bb9c1d6` | feat(agent): add the tool registry (spec agent-harness, task 4b) |
-| 2026-11-13 | agent-harness | 5 | `586de5b` | feat(agent): add the /api/agent streaming route (spec agent-harness, task 5) |
-| 2026-11-13 | agent-harness | 6, 7a | `af8b86b` | feat(agent): add frontend agent client and panel (spec agent-harness, tasks 6 and 7a) |
-| 2026-11-14 | agent-harness | 7b | `83aa6b9` | feat(agent): wire the agent panel into the app (spec agent-harness, task 7b) |
-| 2026-11-14 | agent-harness | 8 | `a0e7ffe` | test(agent): add the agent panel e2e (spec agent-harness, task 8) |
-| 2026-11-15 | workspace-v2 | 1 | `49568e6` | test(e2e): run on own ports (spec workspace-v2, task 1) |
-| 2026-11-15 | workspace-v2 | 2 | `fd99fad` | feat(workspace): add workspace schema and placement (spec workspace-v2, task 2) |
-| 2026-11-15 | workspace-v2 | 3 | `43b1035` | feat(workspace): add workspace operations and undo store (spec workspace-v2, task 3) |
-| 2026-11-15 | workspace-v2 | 4 | `cf0eda0` | feat(scene): render several objects (spec workspace-v2, task 4) |
-| 2026-11-15 | workspace-v2 | 5 | `00c0fb5` | feat(workspace): keep several objects in the workbench (spec workspace-v2, task 5) |
-| 2026-11-15 | workspace-v2 | 9 | `c47e1b7` | feat(workspace): add the objects panel (spec workspace-v2, task 9) |
-| 2026-11-15 | workspace-v2 | 6 | `002e098` | feat(agent): run the agent on the workspace (spec workspace-v2, task 6) |
-| 2026-11-15 | workspace-v2 | 7 | `2d12d8e` | feat(agent): add object tools (spec workspace-v2, task 7) |
-| 2026-11-15 | workspace-v2 | 8 | `4cf49b6` | feat(agent): apply workspace changes in the browser (spec workspace-v2, task 8) |
-| 2026-11-15 | workspace-v2 | 10 | `c5b7677` | test(e2e): cover the multi-object workspace (spec workspace-v2, task 10) |
-| 2026-11-16 | hand-manipulation | 1 | `d6c15ff` | feat(hands): share hand tracking while the camera is on (spec hand-manipulation, task 1) |
-| 2026-11-19 | hand-manipulation | 2 | `541b893` | feat(hands): add the input pipeline and skeleton overlay (spec hand-manipulation, task 2) |
-| 2026-11-20 | hand-manipulation | 3 | `5985948` | feat(hands): track both hands and hide the camera image (spec hand-manipulation, task 3) |
-| 2026-11-20 | assembly-joints | 1 | `184182d` | feat(joints): add joint data, workspace v2 and assemblies (spec assembly-joints, task 1) |
-| 2026-11-20 | hand-manipulation | 4 | `9ea5500` | feat(hands): add the two-hand gesture core (spec hand-manipulation, task 4) |
-| 2026-11-20 | assembly-joints | 2 | `817841e` | feat(joints): add contact, snapping and joint features (spec assembly-joints, task 2) |
-| 2026-11-20 | hand-manipulation | 5 (in progress) | `b438fd2` | feat(hands): wire pinch-move and orbit into the scene (spec hand-manipulation, task 5, in progress) |
-| 2026-11-21 | export | 1 | `33cb855` | feat(export): add STL, 3MF, zip and GLB writers (spec export, task 1) |
-| 2026-11-21 | assembly-joints | 3 | `f91cc11` | feat(joints): add checks, recommendations, the kit and printable parts (spec assembly-joints, task 3) |
-| 2026-11-21 | hand-manipulation | 5 | `5f3ec9b` | fix(hands): make the hand-loss window adjustable for e2e (spec hand-manipulation, task 5) |
-| 2026-11-21 | hand-manipulation | 5 | `0345bfe` | test(hands): finish the Task 5 e2e and run e2e with the GPU (spec hand-manipulation, task 5) |
-| 2026-11-21 | export | 1 | `518c10e` | chore(deps): list fflate 0.8.3 as a dependency (spec export, task 1) |
-| 2026-11-21 | hand-manipulation | 6 | `874d3c3` | feat(hands): zoom the view with both hands (spec hand-manipulation, task 6) |
-| 2026-11-21 | assembly-joints | 4 | `d556ade` | feat(joints): add the joint panel, mouse join and card (spec assembly-joints, task 4) |
-| 2026-11-21 | export | 2 | `c8a9fa2` | feat(export): add the kit plan, BOM and assembly sheet (spec export, task 2) |
-| 2026-11-21 | hand-manipulation | 7 | `388b1bb` | feat(hands): hold, move and explode an object with a fist (spec hand-manipulation, task 7) |
-| 2026-11-21 | assembly-joints | 5 | `d76c1ac` | feat(agent): add joint and material tools (spec assembly-joints, task 5) |
-| 2026-11-21 | export | 3 | `fa45d7f` | feat(export): build print pieces and the kit (spec export, task 3) |
-| 2026-11-21 | export | 4 | `e3a185b` | feat(export): add the export dialog, exploded image and downloads (spec export, task 4) |
-| 2026-11-21 | assembly-joints | 6 | `bdcaec0` | feat(joints): join two objects with two fists (spec assembly-joints, task 6) |
-| 2026-11-22 | hand-manipulation | 8 | `eacc080` | feat(hands): rotate a part with both hands (spec hand-manipulation, task 8) |
-| 2026-11-22 | export | 5 | `c00332d` | feat(agent): add prepare_export and document the kit (spec export, task 5) |
-| 2026-11-22 | hand-manipulation | 9 | `d204751` | feat(agent): let the agent hide or show the camera image (spec hand-manipulation, task 9) |
-| 2026-11-22 | hand-manipulation | 10 | `81d2ab9` | fix(hands): faster release, freeze on opening and wider pinch thresholds (spec hand-manipulation, task 10) |
-| 2026-11-23 | hand-manipulation | 11 | `dcc5952` | feat(hands): join with two pinches and rotate with a fist knob (spec hand-manipulation, task 11) |
-| 2026-11-26 | hand-manipulation | 12 | `a2524c3` | fix(hands): keep a second-hand pinch from turning into a fist (spec hand-manipulation, task 12) |
-| 2026-11-26 | english-ui | 1 | `ec00744` | feat(i18n): add language core, string tables and guards (spec english-ui, task 1) |
-| 2026-11-26 | workbench-ui | 1 | `8fe649c` | feat(workspace): pull a part out into its own object (spec workbench-ui, task 1) |
-| 2026-11-27 | design-fidelity | 1 | `7d1cbb4` | feat(model): add the hollow shell primitive (spec design-fidelity, task 1) |
-| 2026-11-27 | body-fit | 1 | `19662ea` | feat(fit): add fit maths, inner profiles and ring resize (spec body-fit, task 1) |
+| 2026-11-12 | agent-harness | 1 | `92814e0` | feat(agent): add agent contract schemas (spec agent-harness, task 1) |
+| 2026-11-12 | agent-harness | 2 | `780e9dc` | feat(agent): add local agent tools (spec agent-harness, task 2) |
+| 2026-11-12 | agent-harness | 3 | `8c1c54a` | feat(agent): add model-calling agent tools (spec agent-harness, task 3) |
+| 2026-11-13 | agent-harness | 3 | `2cb5843` | fix(agent): select changed parts after edit_design (spec agent-harness, task 3) |
+| 2026-11-13 | agent-harness | 4 | `3b55262` | feat(agent): add the agent loop (spec agent-harness, task 4) |
+| 2026-11-13 | agent-harness | 4 | `65bbfb2` | fix(agent): retry invalid agent steps from real providers (spec agent-harness, task 4) |
+| 2026-11-13 | agent-harness | 4b | `5c6a2c3` | feat(agent): add the tool registry (spec agent-harness, task 4b) |
+| 2026-11-13 | agent-harness | 5 | `f99672a` | feat(agent): add the /api/agent streaming route (spec agent-harness, task 5) |
+| 2026-11-13 | agent-harness | 6, 7a | `4b98723` | feat(agent): add frontend agent client and panel (spec agent-harness, tasks 6 and 7a) |
+| 2026-11-14 | agent-harness | 7b | `2a6df4d` | feat(agent): wire the agent panel into the app (spec agent-harness, task 7b) |
+| 2026-11-14 | agent-harness | 8 | `8df5b7c` | test(agent): add the agent panel e2e (spec agent-harness, task 8) |
+| 2026-11-15 | workspace-v2 | 1 | `4044373` | test(e2e): run on own ports (spec workspace-v2, task 1) |
+| 2026-11-15 | workspace-v2 | 2 | `acc7e7a` | feat(workspace): add workspace schema and placement (spec workspace-v2, task 2) |
+| 2026-11-15 | workspace-v2 | 3 | `8566e14` | feat(workspace): add workspace operations and undo store (spec workspace-v2, task 3) |
+| 2026-11-15 | workspace-v2 | 4 | `3230923` | feat(scene): render several objects (spec workspace-v2, task 4) |
+| 2026-11-15 | workspace-v2 | 5 | `a9115b9` | feat(workspace): keep several objects in the workbench (spec workspace-v2, task 5) |
+| 2026-11-15 | workspace-v2 | 9 | `39d76a3` | feat(workspace): add the objects panel (spec workspace-v2, task 9) |
+| 2026-11-15 | workspace-v2 | 6 | `48ad506` | feat(agent): run the agent on the workspace (spec workspace-v2, task 6) |
+| 2026-11-15 | workspace-v2 | 7 | `51de22e` | feat(agent): add object tools (spec workspace-v2, task 7) |
+| 2026-11-15 | workspace-v2 | 8 | `5dd20de` | feat(agent): apply workspace changes in the browser (spec workspace-v2, task 8) |
+| 2026-11-15 | workspace-v2 | 10 | `f0babd0` | test(e2e): cover the multi-object workspace (spec workspace-v2, task 10) |
+| 2026-11-16 | hand-manipulation | 1 | `e4eabd6` | feat(hands): share hand tracking while the camera is on (spec hand-manipulation, task 1) |
+| 2026-11-19 | hand-manipulation | 2 | `41f7386` | feat(hands): add the input pipeline and skeleton overlay (spec hand-manipulation, task 2) |
+| 2026-11-20 | hand-manipulation | 3 | `e2e1e25` | feat(hands): track both hands and hide the camera image (spec hand-manipulation, task 3) |
+| 2026-11-20 | assembly-joints | 1 | `49edb80` | feat(joints): add joint data, workspace v2 and assemblies (spec assembly-joints, task 1) |
+| 2026-11-20 | hand-manipulation | 4 | `afcf92a` | feat(hands): add the two-hand gesture core (spec hand-manipulation, task 4) |
+| 2026-11-20 | assembly-joints | 2 | `f68ee8a` | feat(joints): add contact, snapping and joint features (spec assembly-joints, task 2) |
+| 2026-11-20 | hand-manipulation | 5 (in progress) | `ec4c2ff` | feat(hands): wire pinch-move and orbit into the scene (spec hand-manipulation, task 5, in progress) |
+| 2026-11-21 | export | 1 | `54fcf4e` | feat(export): add STL, 3MF, zip and GLB writers (spec export, task 1) |
+| 2026-11-21 | assembly-joints | 3 | `5f18dd2` | feat(joints): add checks, recommendations, the kit and printable parts (spec assembly-joints, task 3) |
+| 2026-11-21 | hand-manipulation | 5 | `828bc4a` | fix(hands): make the hand-loss window adjustable for e2e (spec hand-manipulation, task 5) |
+| 2026-11-21 | hand-manipulation | 5 | `75a75db` | test(hands): finish the Task 5 e2e and run e2e with the GPU (spec hand-manipulation, task 5) |
+| 2026-11-21 | export | 1 | `b891a47` | chore(deps): list fflate 0.8.3 as a dependency (spec export, task 1) |
+| 2026-11-21 | hand-manipulation | 6 | `331ed05` | feat(hands): zoom the view with both hands (spec hand-manipulation, task 6) |
+| 2026-11-21 | assembly-joints | 4 | `b9b3148` | feat(joints): add the joint panel, mouse join and card (spec assembly-joints, task 4) |
+| 2026-11-21 | export | 2 | `4859fc7` | feat(export): add the kit plan, BOM and assembly sheet (spec export, task 2) |
+| 2026-11-21 | hand-manipulation | 7 | `16794c9` | feat(hands): hold, move and explode an object with a fist (spec hand-manipulation, task 7) |
+| 2026-11-21 | assembly-joints | 5 | `e1dffd5` | feat(agent): add joint and material tools (spec assembly-joints, task 5) |
+| 2026-11-21 | export | 3 | `15dfef6` | feat(export): build print pieces and the kit (spec export, task 3) |
+| 2026-11-21 | export | 4 | `5c73ca8` | feat(export): add the export dialog, exploded image and downloads (spec export, task 4) |
+| 2026-11-21 | assembly-joints | 6 | `7d0eeea` | feat(joints): join two objects with two fists (spec assembly-joints, task 6) |
+| 2026-11-22 | hand-manipulation | 8 | `b895eb9` | feat(hands): rotate a part with both hands (spec hand-manipulation, task 8) |
+| 2026-11-22 | export | 5 | `4213b2e` | feat(agent): add prepare_export and document the kit (spec export, task 5) |
+| 2026-11-22 | hand-manipulation | 9 | `013d430` | feat(agent): let the agent hide or show the camera image (spec hand-manipulation, task 9) |
+| 2026-11-22 | hand-manipulation | 10 | `82857e4` | fix(hands): faster release, freeze on opening and wider pinch thresholds (spec hand-manipulation, task 10) |
+| 2026-11-23 | hand-manipulation | 11 | `b5c85ab` | feat(hands): join with two pinches and rotate with a fist knob (spec hand-manipulation, task 11) |
+| 2026-11-26 | hand-manipulation | 12 | `fd614ad` | fix(hands): keep a second-hand pinch from turning into a fist (spec hand-manipulation, task 12) |
+| 2026-11-26 | english-ui | 1 | `7591d7b` | feat(i18n): add language core, string tables and guards (spec english-ui, task 1) |
+| 2026-11-26 | workbench-ui | 1 | `f7e6942` | feat(workspace): pull a part out into its own object (spec workbench-ui, task 1) |
+| 2026-11-27 | design-fidelity | 1 | `9d59525` | feat(model): add the hollow shell primitive (spec design-fidelity, task 1) |
+| 2026-11-27 | body-fit | 1 | `ad2cef1` | feat(fit): add fit maths, inner profiles and ring resize (spec body-fit, task 1) |
+| 2026-11-27 | english-ui | 2 | `2018d2e` | feat(i18n): add the language switch and the model's answer language (spec english-ui, task 2) |
+| 2026-11-28 | body-fit | 2 | `fa194cf` | feat(fit): segment the wrist in the tracking worker (spec body-fit, task 2) |
