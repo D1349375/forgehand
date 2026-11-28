@@ -9,6 +9,7 @@ import type { Joint } from '../shared/joint';
 import type { MaterialId } from '../shared/materials';
 import { validateGenerationResult, validateModel, type GenerationResult, type ModelSpec, type Part } from '../shared/model';
 import type { ExportScope } from '../shared/export-plan';
+import type { DetailMode } from '../shared/edit';
 import type { PrinterProfile } from '../shared/printer';
 import {
   MAX_OBJECTS, WorkspaceError, activeObject, addObject, createObject, emptyWorkspace, findObject, joinObjects, jointsRemovedBy, removeJoint, removeObject, replaceModel,
@@ -38,6 +39,8 @@ import { LanguageSwitch } from './i18n/LanguageSwitch';
 import { useLang } from './i18n/LanguageProvider';
 import { PULL_OUT_MESSAGE } from './i18n/pull-out-text';
 import { AgentPanel } from './agent/AgentPanel';
+import { DetailModeSwitch } from './fidelity/DetailModeSwitch';
+import { loadDetailMode, saveDetailMode } from './fidelity/settings';
 import { HISTORY_TURN_LIMIT } from './agent/request';
 import type { StateEffects } from './agent/apply-state';
 import { useAgentRun } from './agent/useAgentRun';
@@ -101,6 +104,8 @@ export default function App() {
   const [transformMode, setTransformMode] = useState<TransformMode>(null);
   /** The printer's tolerances: a browser setting, not part of the workspace and never an undo step. */
   const [printer, setPrinter] = useState(() => loadPrinterProfile(browserStorage()));
+  /** The detail level of generated and edited models: a browser setting, never part of the workspace and never an undo step. */
+  const [detailMode, setDetailMode] = useState(() => loadDetailMode(browserStorage()));
   /** 匯出套件: the open export dialog and its scope. Session state, never part of the workspace and never an undo step. */
   const [exportRequest, setExportRequest] = useState<ExportScope | null>(null);
   /** 顯示接合: session state. */
@@ -177,7 +182,7 @@ export default function App() {
     // The agent's switch only applies while the camera is on; with it off there is no image to hide.
     setCameraHidden: hidden => { if (camera === 'on') setCameraHidden(hidden); },
     openExport: scope => setExportRequest(scope),
-    getSnapshot: () => ({ workspace: store.current(), tryOn: tryingOn, cameraOn: camera === 'on', printer }),
+    getSnapshot: () => ({ workspace: store.current(), tryOn: tryingOn, cameraOn: camera === 'on', printer, detail: detailMode }),
     getTurns: () => agentTurns.current,
     pushTurn: turn => { agentTurns.current = [...agentTurns.current, turn].slice(-HISTORY_TURN_LIMIT); },
   });
@@ -401,7 +406,7 @@ export default function App() {
   async function generate() {
     if (agentActive) return;
     if (!prompt.trim()) { setError('請先描述想建立的物件。'); return; }
-    await callModel('generate', '/api/generate', { prompt: prompt.trim() }, (body, requestId, startedAt) => {
+    await callModel('generate', '/api/generate', { prompt: prompt.trim(), detail: detailMode }, (body, requestId, startedAt) => {
       let result: GenerationResult;
       try { result = validateGenerationResult(body); }
       catch { throw new Error('模型服務返回無效資料，已保留上一個成功模型。請重試或調整描述。'); }
@@ -445,7 +450,7 @@ export default function App() {
     if (!base) { setError('請先生成或載入一個模型。'); return; }
     if (!instruction.trim()) { setError('請輸入想怎麼修改目前模型。'); return; }
     const selection = store.current().selection.partIds.filter(id => base.model.parts.some(part => part.id === id));
-    await callModel('edit', '/api/edit', { instruction: instruction.trim(), model: base.model, selectedPartIds: selection }, (body, requestId, startedAt) => {
+    await callModel('edit', '/api/edit', { instruction: instruction.trim(), model: base.model, selectedPartIds: selection, detail: detailMode }, (body, requestId, startedAt) => {
       let result: EditResult;
       try { result = EditResultSchema.parse(body) as EditResult; result.plan = validateEditPlan(result.plan); }
       catch { throw new Error('模型服務返回無效的修改資料，目前模型未變更。請重試或換個說法。'); }
@@ -722,6 +727,11 @@ export default function App() {
     if (commitJointChange(ws => removeJoint(ws, id), JOINT_NOTICES.removed, setCardError)) setOpenJointId(null);
   }
   const setObjectMaterial = (id: string, material: MaterialId | null) => commitObjectChange(ws => setMaterial(ws, id, material), JOINT_NOTICES.material);
+  function changeDetailMode(next: DetailMode) {
+    setDetailMode(next);
+    saveDetailMode(browserStorage(), next);
+  }
+
   function changePrinter(next: PrinterProfile) {
     setPrinter(next);
     savePrinterProfile(browserStorage(), next);
@@ -853,6 +863,7 @@ export default function App() {
         </Suspense>}
         <AgentPanel agent={agent} disabled={Boolean(busy)} />
         <section className="panel prompt-panel">
+          <DetailModeSwitch value={detailMode} onChange={changeDetailMode} disabled={agentActive} />
           {active && <div className="mode-switch" role="tablist" aria-label="文字用途"><button role="tab" aria-selected={editing} className={editing ? 'active' : ''} onClick={() => setMode('edit')}>修改目前模型</button><button role="tab" aria-selected={!editing} className={!editing ? 'active' : ''} onClick={() => setMode('create')}>生成新物件</button></div>}
           {editing ? <>
             <span className="eyebrow">EDIT THIS CONCEPT</span><h2>想怎麼修改？</h2><p className="muted">只會變更需要改的零件；說「這個」代表已選取的零件。</p>

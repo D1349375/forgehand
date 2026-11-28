@@ -239,7 +239,7 @@ describe('agent contract', () => {
       const base = { instruction: 'x', requestId: 'r', tryOn: false, cameraOn: false, history: [] };
       expect(() => AgentRequestSchema.parse({ ...base, workspace: emptyWorkspace() })).not.toThrow();
       expect(() => AgentRequestSchema.parse(base)).toThrow();
-      expect(Object.keys(AgentRequestSchema.shape)).toEqual(['instruction', 'requestId', 'workspace', 'tryOn', 'cameraOn', 'history', 'printer']);
+      expect(Object.keys(AgentRequestSchema.shape)).toEqual(['instruction', 'requestId', 'workspace', 'tryOn', 'cameraOn', 'history', 'printer', 'detail']);
     });
   });
 

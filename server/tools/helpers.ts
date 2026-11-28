@@ -1,4 +1,4 @@
-import type { StateChange, ToolErrorDetail, ToolResult } from '../../shared/agent';
+import type { DetailMode, StateChange, ToolErrorDetail, ToolResult } from '../../shared/agent';
 import type { Lang } from '../../shared/i18n/lang';
 import {
   activeObject, applyWorkspaceChange, findObject, ObjectIdSchema, WorkspaceError, type SceneObject,
@@ -31,6 +31,9 @@ export function noModel(tool: string): ToolResult {
 
 /** The language of the request that started this run: zh-TW unless the route passed another (english-ui R54). */
 export const langOf = (state: AgentWorkingState): Lang => state.lang ?? 'zh-TW';
+
+/** The detail mode of the request that started this run: concept unless the route passed another (design-fidelity R20). */
+export const detailOf = (state: AgentWorkingState): DetailMode => state.detail ?? 'concept';
 
 export function isToolResult(value: SceneObject | ToolResult): value is ToolResult {
   return 'ok' in value;

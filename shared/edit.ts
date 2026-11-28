@@ -30,11 +30,20 @@ export type EditPlan = z.infer<typeof EditPlanSchema>;
 export interface EditChanges { added: string[]; updated: string[]; removed: string[]; modelFields: boolean }
 export interface AppliedEdit { model: ModelSpec; changes: EditChanges }
 
+/**
+ * How much the model should invent (design-fidelity R18 to R20): concept is the default and today's behaviour,
+ * detailed adds the typical internals of the product category. Shared by generation, edits and the agent.
+ */
+export const DetailModeSchema = z.enum(['concept', 'detailed']);
+export type DetailMode = z.infer<typeof DetailModeSchema>;
+
 export const EditRequestSchema = z.strictObject({
   instruction: z.string().trim().min(1).max(4000),
   requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
   model: z.unknown(),
   selectedPartIds: z.array(partId).max(64),
+  /** Absent means concept mode (design-fidelity R20). */
+  detail: DetailModeSchema.optional(),
 });
 
 export interface EditResult { plan: EditPlan; source: 'codex' | 'claude' | 'openai'; model: string; elapsedMs: number; requestId: string }

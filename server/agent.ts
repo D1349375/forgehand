@@ -8,11 +8,11 @@ import { MATERIALS } from '../shared/materials';
 import { DEFAULT_PRINTER_PROFILE } from '../shared/printer';
 import { activeObject, applyWorkspaceChange, MAX_OBJECTS } from '../shared/workspace';
 import { GenerationError, type ModelProvider, type ModelTask } from './provider';
-import { MODEL_INSTRUCTIONS } from './provider';
+import { GEOMETRY_RULES } from './provider';
 import { LANGUAGE_LINE, UI_NAMES } from './i18n/instructions';
 import { runTool, type AgentWorkingState } from './agent-tools';
 import { argsShapeText, getTool, listTools } from './tools';
-import { langOf } from './tools/helpers';
+import { detailOf, langOf } from './tools/helpers';
 import { DISASSEMBLY_TEXT, LOAD_TEXT, methodText, printerOf, sideText, UNKNOWN_NEED_TEXT } from './tools/joint-helpers';
 
 /** Sanitized message for a run that hit its total time limit (also used by the route's final bound). */
@@ -50,6 +50,7 @@ export async function runAgent(
     cameraOn: req.cameraOn,
     printer: req.printer ?? DEFAULT_PRINTER_PROFILE,
     lang: options.lang,
+    detail: req.detail ?? 'concept',
   };
 
   // Compact round history (no full ModelSpec, no stateChange) sent to the model.
@@ -191,7 +192,9 @@ const vectorText = ({ x, y, z }: { x: number; y: number; z: number }) => `(${num
  */
 export function workspaceSnapshot(state: AgentWorkingState): string {
   const { workspace } = state;
-  if (workspace.objects.length === 0) return '工作區沒有物件。';
+  // The setting of the detail switch, so the agent knows it before it asks about internals (design-fidelity R22).
+  const detailLine = `Detail mode setting: ${detailOf(state)}.`;
+  if (workspace.objects.length === 0) return `工作區沒有物件。\n${detailLine}`;
   const lines = workspace.objects.map(object =>
     `- ${object.id}「${object.model.name}」${object.model.parts.length} 個零件，位置 ${vectorText(object.transform.position)} m，角度 ${vectorText(object.transform.rotation)}°，材料 ${object.material ? MATERIALS[object.material].label : UNKNOWN_NEED_TEXT}${object.id === workspace.activeObjectId ? '【目前物件】' : ''}`);
   const active = activeObject(workspace);
@@ -202,6 +205,7 @@ export function workspaceSnapshot(state: AgentWorkingState): string {
     ...lines,
     ...jointSnapshotLines(state),
     `${activeText}試戴：${state.tryOn ? '已開啟' : '關閉'}。`,
+    detailLine,
   ].join('\n');
 }
 
@@ -240,11 +244,6 @@ const TOOL_LIST = listTools({ scope: 'project', side: 'server' })
   .map(tool => `- ${tool.name}(${argsShapeText(tool.args)}): ${tool.description}`)
   .join('\n');
 
-// Reused geometry/units lines from MODEL_INSTRUCTIONS (same as EDIT_INSTRUCTIONS).
-const GEOMETRY_RULES = MODEL_INSTRUCTIONS.split('\n')
-  .filter(line => /^(Only the following controlled solid primitives|Model schema version is|Each part has a stable|Use realistic scale)/.test(line))
-  .join('\n');
-
 /** The agent instructions; the language rule and the quoted control names depend on `lang` (english-ui R23). */
 export const agentInstructions = (lang: Lang): string => `You are an agent that helps users create and modify 3D concept models.
 You can call tools to accomplish the task. Each round you return one AgentStep: either a set of tool calls to execute this round, or a final reply to the user.
@@ -276,6 +275,8 @@ ${LANGUAGE_LINE.agent[lang]}
 - set_transform on a jointed object moves its whole assembly. An object leaves its assembly only when its joint is removed (remove_joint, only when the user asks).
 - set_camera_image only shows or hides the camera image; it changes no object. Use it when the user asks to hide or show the camera image (${UI_NAMES.cameraImage[lang]}).
 - You cannot save or download files. To export, call prepare_export, then tell the user to press ${UI_NAMES.downloadKit[lang]} in the export dialog. Before they download, mention the problems prepare_export returns and offer to fix them. The kit contains STL files per print piece, a 3MF for slicers, a BOM (CSV and Markdown), an assembly sheet and a GLB. STEP files, drawings, print-service orders and slicing are not supported.
+- generate_design and edit_design know typical published sizes of common components (cells, boards, motors, switches, enclosure walls). Do not make up sizes for them; to get typical internals, call those tools in detailed mode.
+- The state shows "Detail mode setting": concept or detailed. In concept mode, when the product usually has electronics or mechanisms and the user did not say whether to include them, you may ask once in your final reply whether to add typical internals before you generate. When the user asks for internals, call generate_design with detail "detailed", or edit_design with an instruction to add the typical internals to an existing object. Never ask again after the user has answered.
 
 ${GEOMETRY_RULES}
 

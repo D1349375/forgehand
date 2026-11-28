@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { FaceIdSchema, JointMethodSchema, JointNeedsSchema, JointSchema, MAX_JOINTS } from './joint';
 import { ExportScopeSchema } from './export-plan';
 import { MaterialIdSchema } from './materials';
+import { DetailModeSchema, type DetailMode } from './edit';
 import { PartIdSchema, PartSchema } from './model';
 import { DEFAULT_PRINTER_PROFILE, PrinterProfileSchema, type PrinterProfile } from './printer';
 import {
@@ -249,7 +250,11 @@ export const AgentRequestSchema = z.strictObject({
   history: z.array(AgentTurnSchema).max(10),
   // The user's printer tolerances, so the server's joint checks match the browser's. Optional: the default profile applies.
   printer: PrinterProfileSchema.optional(),
+  // How detailed the models of this request are (design-fidelity R20). A missing value means concept mode.
+  detail: DetailModeSchema.optional(),
 });
+
+export { DetailModeSchema, type DetailMode };
 
 /** Distinguishes request-validation failures so the route can map them to HTTP codes. */
 export class AgentRequestError extends Error {
@@ -268,6 +273,8 @@ export interface AgentRequest {
   history: AgentTurn[];
   /** Always set by `validateAgentRequest`; a request built by hand may leave it out (the default profile applies). */
   printer?: PrinterProfile;
+  /** Always set by validateAgentRequest (concept when the request leaves it out); a request built by hand may omit it. */
+  detail?: DetailMode;
 }
 
 /**
@@ -284,7 +291,7 @@ export function validateAgentRequest(input: unknown): AgentRequest {
     if (error instanceof WorkspaceError) throw new AgentRequestError('INVALID_WORKSPACE', '目前工作區資料無效，無法處理這次請求。');
     throw error;
   }
-  return { ...raw, workspace, printer: raw.printer ?? { ...DEFAULT_PRINTER_PROFILE } };
+  return { ...raw, workspace, printer: raw.printer ?? { ...DEFAULT_PRINTER_PROFILE }, detail: raw.detail ?? 'concept' };
 }
 
 // ----- AgentStep validation -----

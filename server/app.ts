@@ -1,17 +1,19 @@
 import express, { type ErrorRequestHandler, type Response } from 'express';
 import path from 'node:path';
 import { z } from 'zod';
-import { applyEditPlan, EditError, EditRequestSchema, validateEditPlan, type EditPlan, type EditResult } from '../shared/edit';
+import { applyEditPlan, DetailModeSchema, EditError, EditRequestSchema, validateEditPlan, type EditPlan, type EditResult } from '../shared/edit';
 import { langFromHeader, type Lang } from '../shared/i18n/lang';
 import { validateDesign, validateModel, type GenerationResult, type ModelSpec } from '../shared/model';
 import { AgentRequestError, validateAgentRequest, type AgentRequest } from '../shared/agent';
 import { createEmitter, setSseHeaders, type SseEmitter } from './agent-events';
 import { AGENT_TIMEOUT_MESSAGE, runAgent } from './agent';
-import { createOpenAIProvider, editTask, GenerationError, type ModelProvider } from './provider';
+import { createOpenAIProvider, designTask, editTask, GenerationError, type ModelProvider } from './provider';
 
 const RequestSchema = z.strictObject({
   prompt: z.string().trim().min(1).max(4000),
   requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
+  /** Absent means concept mode and the plain provider.generate path (design-fidelity R20). */
+  detail: DetailModeSchema.optional(),
 });
 
 export interface AppOptions {
@@ -126,10 +128,13 @@ export function createApp(options: AppOptions = {}) {
       res.status(400).json({ error: { code: 'INVALID_REQUEST', message: '請輸入 1–4000 字的物件描述，並使用有效的請求識別碼。' } });
       return;
     }
-    const { prompt, requestId } = parsed.data;
+    const { prompt, requestId, detail } = parsed.data;
     const lang = requestLang(res);
     await modelRoute(res, requestId, async (signal, start) => {
-      const raw = await provider.generate(prompt, signal, lang);
+      // With a detail mode the design task carries it; a provider that only implements generate keeps that path.
+      const raw = detail !== undefined && provider.run
+        ? await provider.run(designTask(prompt, lang, { detail }), signal)
+        : await provider.generate(prompt, signal, lang);
       let design;
       try { design = validateDesign(raw); }
       catch { throw new GenerationError('INVALID_MODEL', '模型資料未通過驗證，上一個成功模型會保留。請修改描述後重試。'); }
@@ -145,7 +150,7 @@ export function createApp(options: AppOptions = {}) {
       res.status(400).json({ error: { code: 'INVALID_REQUEST', message: '請輸入 1–4000 字的修改指示，並附上目前模型。' } });
       return;
     }
-    const { instruction, requestId, selectedPartIds } = parsed.data;
+    const { instruction, requestId, selectedPartIds, detail } = parsed.data;
     const lang = requestLang(res);
     let model: ModelSpec;
     try { model = validateModel(parsed.data.model); }
@@ -163,7 +168,7 @@ export function createApp(options: AppOptions = {}) {
       return;
     }
     await modelRoute(res, requestId, async (signal, start) => {
-      const plan = await run(editTask(model, instruction, selectedPartIds, lang), signal);
+      const plan = await run(editTask(model, instruction, selectedPartIds, lang, { detail }), signal);
       let checked: EditPlan;
       try {
         checked = validateEditPlan(plan);

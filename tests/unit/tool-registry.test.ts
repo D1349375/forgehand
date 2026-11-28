@@ -133,7 +133,7 @@ describe('default registry', () => {
 describe('argsShapeText', () => {
   it('renders each tool argument with its type', () => {
     const shape = (name: string) => argsShapeText(getTool(name)!.args);
-    expect(shape('generate_design')).toBe('prompt: string');
+    expect(shape('generate_design')).toBe('prompt: string, detail?: string | null');
     expect(shape('edit_design')).toBe('instruction: string, objectId?: string | null');
     expect(shape('select_parts')).toBe('partIds: string[], objectId?: string | null');
     expect(shape('get_project_state')).toBe('objectId?: string | null');

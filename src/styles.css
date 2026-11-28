@@ -1432,3 +1432,39 @@ summary {
 .export-close {
   align-self:flex-start
 }
+
+/* Design fidelity: the detail-mode control above the prompt forms */
+.fidelity-mode {
+  display:grid;
+  gap:6px;
+  margin-bottom:16px
+}
+.fidelity-mode-label {
+  color:var(--muted);
+  font-size:12px
+}
+.fidelity-mode-options {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  border:1px solid #2b4652
+}
+.fidelity-mode-options button {
+  border:0;
+  background:transparent;
+  color:#8fb3c0;
+  padding:9px 8px;
+  font-size:12px;
+  cursor:pointer
+}
+.fidelity-mode-options button.active {
+  background:#1b3d4a;
+  color:#e0fbff;
+  box-shadow:inset 0 -2px 0 var(--cyan)
+}
+.fidelity-mode-options button:disabled {
+  cursor:not-allowed;
+  opacity:.6
+}
+.fidelity-mode .small-muted {
+  margin:0
+}

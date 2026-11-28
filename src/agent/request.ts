@@ -1,4 +1,4 @@
-import type { AgentTurn } from '../../shared/agent';
+import type { AgentTurn, DetailMode } from '../../shared/agent';
 import type { PrinterProfile } from '../../shared/printer';
 import type { Workspace } from '../../shared/workspace';
 
@@ -9,6 +9,8 @@ export interface RunSnapshot {
   cameraOn: boolean;
   /** The user's printer tolerances, so the server's joint checks match the browser's. */
   printer?: PrinterProfile;
+  /** The detail switch (design-fidelity R23); left out of the request when absent, which the server reads as concept. */
+  detail?: DetailMode;
 }
 
 /** Most previous turns sent for context (matches the server's `history` limit). */
@@ -16,7 +18,7 @@ export const HISTORY_TURN_LIMIT = 10;
 
 /**
  * The `/api/agent` request body: the whole workspace (objects, active object,
- * selection, explode) plus the try-on flags, the printer profile when given and only the latest turns.
+ * selection, explode) plus the try-on flags, the printer profile and the detail mode when given and only the latest turns.
  */
 export function buildAgentRequest(instruction: string, snapshot: RunSnapshot, turns: AgentTurn[], requestId: string) {
   return {
@@ -27,6 +29,7 @@ export function buildAgentRequest(instruction: string, snapshot: RunSnapshot, tu
     cameraOn: snapshot.cameraOn,
     history: turns.slice(-HISTORY_TURN_LIMIT),
     ...(snapshot.printer ? { printer: snapshot.printer } : {}),
+    ...(snapshot.detail ? { detail: snapshot.detail } : {}),
   };
 }
 

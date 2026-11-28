@@ -1,4 +1,4 @@
-import type { ToolCall, ToolResult } from '../shared/agent';
+import type { DetailMode, ToolCall, ToolResult } from '../shared/agent';
 import type { Lang } from '../shared/i18n/lang';
 import type { PrinterProfile } from '../shared/printer';
 import type { Workspace } from '../shared/workspace';
@@ -27,6 +27,8 @@ export interface AgentWorkingState {
   printer?: PrinterProfile;
   /** The language the request asked for; zh-TW when absent. Read it with `langOf(state)`. */
   lang?: Lang;
+  /** How detailed the models of this run are (design-fidelity R20); concept when absent. Read it with `detailOf(state)`. */
+  detail?: DetailMode;
 }
 
 /** Sources of ids and time for tools that create objects; tests inject fixed ones. */

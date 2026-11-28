@@ -21,7 +21,7 @@ Rules for every item, whichever way it is started:
 
 - [x] 1. The `shell` primitive everywhere, and a hollow demo housing
   - Full instructions: the "Task 1" section below.
-- [ ] 2. Rule blocks, honest internals, concept / detailed mode, reference table
+- [x] 2. Rule blocks, honest internals, concept / detailed mode, reference table
   - Full instructions: the "Task 2" section below.
 - [ ] 3. Fit checks, the size readout, the badge and the stale note
   - Full instructions: the "Task 3" section below.
@@ -95,7 +95,7 @@ A closed hollow box whose wall comes from `tubeRatio`: schema, shared helpers, d
 
 ## Task 2 — Rule blocks, honest internals, concept / detailed mode, reference table
 
-`[ ]` · P0 · Requirements 14–29, 70, 71, 74, 75, 77, 80, 81
+`[x]` · P0 · Requirements 14–29, 70, 71, 74, 75, 77, 80, 81
 
 The instructions become named blocks that reach generation, edits and the agent; the internals rules, the two modes end to end, and the standard-parts reference table with a verified source for every entry.
 
