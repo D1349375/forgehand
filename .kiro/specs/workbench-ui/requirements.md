@@ -325,3 +325,11 @@ Reviewed with the user and Claude Code. The user accepted every recommendation u
 5. **Try-on button:** `body-fit` renames 護臂試戴 to 試戴 and replaces the try-on status texts; whichever spec lands second updates the HUD names (R4) and its tests.
 6. **Schedule (decision 16):** the user keeps the full plan; nothing is postponed. Tasks follow the cross-spec order kept by the reviewer.
 7. **`agent-platform`** (being written): its save and open controls and its notice for changes made by an external agent need a place in the HUD or a panel; give them a slot when that spec lands.
+
+## Decisions from review of Task 2 (2026-11-28)
+
+Recorded by the reviewer; this section wins over the text above and over `design.md`.
+
+8. **An agent join inside one object opens the joint card.** Design §4.4 gave every `pull-out` change the plain pull-out message, which missed R50's case: `create_joint` on two parts of one object sends a pull-out and a new joint in one state event. The browser now opens the new joint's card and says 代理已把「{part}」拉出成新物件，並接合「{a}」與「{b}」，請確認固定方式。 (R50's sentence with the 代理 prefix every agent message has). Fixed by the reviewer in `src/App.tsx` and `src/i18n/pull-out-text.ts`, with an e2e case in `tests/e2e/pull-out.spec.ts`. The mouse join of R50 is still to be built by its task.
+9. **The instruction line says "undo", not 「復原」.** The new line would have been a Chinese line in `server/agent.ts` above its stray-string baseline; the English instructions name the action instead.
+10. **`create_joint`'s summary mixes languages in English** until english-ui moves that tool's strings: only the new pull-out sentence follows `langOf(state)`.

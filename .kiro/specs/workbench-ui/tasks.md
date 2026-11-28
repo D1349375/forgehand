@@ -19,7 +19,7 @@ Rules for every item, whichever way it is started:
 
 - [x] 1. Pull-out in `shared/`: the operation, the change and the export proof
   - Full instructions: the "Task 1" section below.
-- [ ] 2. Agent: `pull_out_part`, joins inside one object, instructions
+- [x] 2. Agent: `pull_out_part`, joins inside one object, instructions
   - Full instructions: the "Task 2" section below.
 - [ ] 3. The full-screen workbench: HUD, docks, status bar and panel model
   - Full instructions: the "Task 3" section below.
@@ -90,7 +90,7 @@ Taking a part with its child parts out of an object into a new object: subtree, 
 
 ## Task 2 — Agent: `pull_out_part`, joins inside one object, instructions
 
-`[ ]`
+`[x]`
 
 The agent can pull a part out, and `create_joint` on two parts of one object first separates them. The browser names an agent pull-out in its message.
 

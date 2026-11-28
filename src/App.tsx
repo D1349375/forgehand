@@ -36,6 +36,7 @@ import type { AgentTurn } from '../shared/agent';
 import { apiHeaders } from './i18n/api';
 import { LanguageSwitch } from './i18n/LanguageSwitch';
 import { useLang } from './i18n/LanguageProvider';
+import { PULL_OUT_MESSAGE } from './i18n/pull-out-text';
 import { AgentPanel } from './agent/AgentPanel';
 import { HISTORY_TURN_LIMIT } from './agent/request';
 import type { StateEffects } from './agent/apply-state';
@@ -477,7 +478,7 @@ export default function App() {
    * and drops dialogs and notices that belonged to the old model, like applyResult/applyEdit; selection, explode and
    * activation alone are not undo steps. The server built the whole change: nothing is created here.
    */
-  function applyAgentWorkspace({ before, after, recordUndo }: StateEffects) {
+  function applyAgentWorkspace({ before, after, recordUndo, objectOp }: StateEffects) {
     if (!recordUndo) {
       store.dispatch({ type: 'replace', next: after });
       if (after.display.explode > 0) setTransformMode(null);
@@ -491,6 +492,21 @@ export default function App() {
     const built = after.objects.find(object => previous.get(object.id) !== object.model);
     timingRef.current = built ? { objectId: built.id, startedAt: performance.now() } : null;
     if (after.display.explode > 0) setTransformMode(null);
+    if (objectOp === 'pull-out') {
+      // The new object is the one in `after` that was not in `before`. Traditional Chinese until the language switch reaches this message.
+      const pulled = after.objects.find(object => !before.objects.some(old => old.id === object.id));
+      const name = pulled?.model.name ?? '';
+      const joined = after.joints.find(joint => !before.joints.some(old => old.id === joint.id));
+      if (joined) {
+        // create_joint on two parts of one object (requirement 50): open the new joint's card, as a mouse join does.
+        const objectName = (id: string) => after.objects.find(object => object.id === id)?.model.name ?? '';
+        setOpenJointId(joined.id); setCardError('');
+        setMessage(PULL_OUT_MESSAGE['zh-TW'].agentPulledAndJoined({ name, a: objectName(joined.a.objectId), b: objectName(joined.b.objectId) }));
+        return;
+      }
+      setMessage(PULL_OUT_MESSAGE['zh-TW'].agentPulledOut({ name }) + cascadeNotice(before, after));
+      return;
+    }
     if (after.objects.length > before.objects.length) { setMode('edit'); setMessage('代理已建立新物件，可按「復原」回到上一步。'); }
     else if (after.objects.length < before.objects.length) setMessage('代理已刪除物件，可按「復原」回到上一步。' + cascadeNotice(before, after));
     else if (built) setMessage('代理已修改物件，可按「復原」回到上一步。' + cascadeNotice(before, after));

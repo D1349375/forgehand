@@ -61,6 +61,19 @@ describe('applyStateEvent', () => {
     }
   });
 
+  it('objectOp names the object change, and pull-out is one undo step; no object change leaves it out', () => {
+    const ws = twoObjects();
+    const pulled = applyStateEvent(change({ object: { op: 'pull-out', objectId: 'a', partId: 'battery', newObjectId: 'p1', createdAt: '2026-11-28T10:00:00.000Z' } }), ws)!;
+    expect(pulled.objectOp).toBe('pull-out');
+    expect(pulled.recordUndo).toBe(true);
+    expect(pulled.after.objects.map(object => object.id)).toEqual(['a', 'p1', 'b']);
+    expect(pulled.before.objects).toHaveLength(2);
+    expect(applyStateEvent(change({ object: { op: 'remove', objectId: 'b' } }), ws)!.objectOp).toBe('remove');
+    expect(applyStateEvent(change({ object: { op: 'transform', objectId: 'a', transform: moved } }), ws)!.objectOp).toBe('transform');
+    expect(applyStateEvent(change({ selection: { objectId: 'a', partIds: ['housing'] } }), ws)).not.toHaveProperty('objectOp');
+    expect(applyStateEvent(change(), ws)).not.toHaveProperty('objectOp');
+  });
+
   it('a joint change records an undo step with and without an object change, a material change is one too', () => {
     const joined = twoBoxes({ joint: true });
     const unjoined = twoBoxes();

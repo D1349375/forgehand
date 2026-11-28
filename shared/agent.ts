@@ -164,6 +164,17 @@ export const ObjectToolDetailSchema = z.strictObject({
 });
 export type ObjectToolDetail = z.infer<typeof ObjectToolDetailSchema>;
 
+/** For `pull_out_part`: what was pulled out of which object, and whether it stayed in place because a joint holds it. */
+export const PullOutDetailSchema = z.strictObject({
+  objectId: ObjectIdSchema,
+  partId,
+  newObjectId: ObjectIdSchema,
+  partIds: z.array(partId).max(64),
+  inPlace: z.boolean(),
+  jointsMoved: z.number().int().nonnegative(),
+});
+export type PullOutDetail = z.infer<typeof PullOutDetailSchema>;
+
 /** For `create_joint` and `update_joint`: the joint, what the rules recommend for it and what the checks found. */
 export const JointToolDetailSchema = z.strictObject({
   jointId: ObjectIdSchema,

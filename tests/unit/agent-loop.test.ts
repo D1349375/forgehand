@@ -553,9 +553,11 @@ describe('server/agent.ts runAgent loop', () => {
       '- set_transform moves or rotates a whole object (position in metres, rotation in degrees). It never changes size; change sizes with edit_design.',
     ]) expect(AGENT_INSTRUCTIONS).toContain(line);
     // Assembly-joints rules (design 9), each line in full, and the four tools by name.
-    for (const name of ['create_joint', 'update_joint', 'remove_joint', 'set_material']) expect(AGENT_INSTRUCTIONS).toContain('- ' + name + '(');
+    for (const name of ['create_joint', 'update_joint', 'remove_joint', 'pull_out_part', 'set_material']) expect(AGENT_INSTRUCTIONS).toContain('- ' + name + '(');
     for (const line of [
-      '- Joints connect two objects (or two parts of one object) on flat faces. The only fixing methods are screw-insert (heat-set inserts with M2 or M3 screws), magnet, pin and glue. Snap-fits and moving joints (hinges, sliders) are not supported yet; PLA is too brittle for snap-fits. Never suggest welding for printed parts.',
+      '- Joints connect two objects on flat faces. create_joint on two parts of one object first takes one of them out into its own object, in place, and then joins them. The only fixing methods are screw-insert (heat-set inserts with M2 or M3 screws), magnet, pin and glue. Snap-fits and moving joints (hinges, sliders) are not supported yet; PLA is too brittle for snap-fits. Never suggest welding for printed parts.',
+      '- An object is one printed group: parts of one object that touch are printed as one piece. pull_out_part takes a part with its child parts out into a new object of its own. Use it when the user wants to separate a part, print it separately, give it another material, or join it to the rest. A part joined to anything stays in place; otherwise it goes next to the original. The original stays active.',
+      "- remove_joint separates two objects; they stay separate objects. Nothing merges objects; only the user's undo reverses a pull-out.",
       '- Before recommending a method, ask the user about the load (light, medium, heavy) and how often the parts are taken apart (never, sometimes, often) unless they are known; then call update_joint with load and disassembly and explain the recommendation using the reasons the tool returns. Do not invent dimensions or strengths.',
       '- Pass confirmed: true only when the user chose or accepted the method in this conversation.',
       "- Metal and plastic parts are fastened mechanically (screws or pins), not glued alone. Hole sizes come from the user's printer profile, which you cannot change.",

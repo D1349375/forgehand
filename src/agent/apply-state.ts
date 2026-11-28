@@ -1,6 +1,6 @@
 import { StateChangeSchema } from '../../shared/agent';
 import type { ExportScope } from '../../shared/export-plan';
-import { WorkspaceError, applyWorkspaceChange, type Workspace } from '../../shared/workspace';
+import { WorkspaceError, applyWorkspaceChange, type ObjectChange, type Workspace } from '../../shared/workspace';
 
 /** What the caller should apply for one `state` event. */
 export interface StateEffects {
@@ -10,6 +10,8 @@ export interface StateEffects {
   after: Workspace;
   /** True only when the event changed an object (add, model, transform, material or remove) or a joint (add, update or remove); selection, explode and activation are not undo steps. */
   recordUndo: boolean;
+  /** The `op` of the event's object change, so the caller can word its message (a pull-out is not a new generated object). Absent without an object change. */
+  objectOp?: ObjectChange['op'];
   /** Present only when the event sets the try-on flag. */
   tryOn?: boolean;
   /** Present only when the event asks to open the export dialog. Session state like `tryOn`: never an undo step. */
@@ -31,6 +33,7 @@ export function applyStateEvent(payload: unknown, workspace: Workspace): StateEf
   try {
     const { before, after } = applyWorkspaceChange(workspace, change);
     const effects: StateEffects = { before, after, recordUndo: change.object !== null || (change.joint ?? null) !== null };
+    if (change.object) effects.objectOp = change.object.op;
     if (tryOn !== null) effects.tryOn = tryOn;
     if (exportDialog) effects.exportDialog = exportDialog;
     if (typeof cameraHidden === 'boolean') effects.cameraHidden = cameraHidden;

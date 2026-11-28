@@ -139,6 +139,7 @@ describe('create_joint', () => {
   });
 
   it('joins two parts of one object that already touch', async () => {
+    // Workbench-ui decision 5: side b is pulled out in place first, so the joint connects two objects.
     const model = fixtureModel('Two parts', [
       fixturePart('left', 'box', BOX, vec(-BOX.x / 2, 0, 0)),
       fixturePart('right', 'box', BOX, vec(BOX.x / 2, 0, 0)),
@@ -146,8 +147,12 @@ describe('create_joint', () => {
     const state = stateOver(addObject(emptyWorkspace(), fixtureObject('one', model, flat)));
     const result = await run(state, 'create_joint', { a: { objectId: 'one', partId: 'left' }, b: { objectId: 'one', partId: 'right' } });
     expect(result.ok).toBe(true);
-    expect(result.stateChange!.object).toBeNull();
-    expect(jointOf(apply(state, result.stateChange))).toMatchObject({ a: side('one', 'left', '+x'), b: side('one', 'right', '-x') });
+    expect(result.stateChange!.object).toEqual({
+      op: 'pull-out', objectId: 'one', partId: 'right', newObjectId: 'joint-1', createdAt: NOW, inPlace: true,
+    });
+    const joint = jointOf(apply(state, result.stateChange), 'joint-2');
+    expect(joint).toMatchObject({ a: side('one', 'left', '+x'), b: side('joint-1', 'right', '-x') });
+    expect(joint.a.objectId).not.toBe(joint.b.objectId);
   });
 
   it('returns NOT_TOUCHING inside one assembly when the faces are apart', async () => {

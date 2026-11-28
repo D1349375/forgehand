@@ -4,8 +4,10 @@ import { planJoin } from '../../shared/contact';
 import { FaceIdSchema } from '../../shared/joint';
 import { newJoint } from '../../shared/joint-rules';
 import { PartIdSchema } from '../../shared/model';
-import { addJoint, ObjectIdSchema, setTransform, WorkspaceError } from '../../shared/workspace';
-import { checkedChange, fail, isToolResult, ok, resolveTarget } from './helpers';
+import { splitForJoin } from '../../shared/pull-out';
+import { addJoint, findObject, ObjectIdSchema, setTransform, WorkspaceError } from '../../shared/workspace';
+import { PULL_OUT_TEXT } from '../i18n/pull-out';
+import { checkedChange, fail, isToolResult, langOf, ok, resolveTarget } from './helpers';
 import { jointDetail, methodText, printerOf, sideText } from './joint-helpers';
 import { defineTool } from './registry';
 
@@ -23,7 +25,7 @@ export const createJoint = defineTool({
   name: 'create_joint',
   label: '建立接合',
   category: 'assembly',
-  description: 'joins two objects (or two parts of one object) on flat faces. Each side is { objectId, partId?, face? } with face one of +x, -x, +y, -y, +z, -z (part-local axes); leave partId and face out (or null) to let the tool pick the best facing pair of faces between the two sides. When the faces do not touch yet, the object of side b is moved with its assembly onto side a (faces whose normals differ by more than 15 degrees cannot be aligned: rotate an object first). Parts that are already in one assembly must already touch. The new joint gets the top recommended fixing method, is not confirmed, and its load and disassembly needs are unknown. Returns the joint id, the recommendation with reasons and the findings. Does not change the active object. Errors: UNKNOWN_OBJECT, UNKNOWN_PART, NO_CONTACT_FACE, CANNOT_ALIGN, NOT_TOUCHING, JOINT_LIMIT.',
+  description: 'joins two objects on flat faces. Two parts of one object are first separated: one of them becomes its own object, in place, and the two objects are then joined (the user can undo it as one step). Each side is { objectId, partId?, face? } with face one of +x, -x, +y, -y, +z, -z (part-local axes); leave partId and face out (or null) to let the tool pick the best facing pair of faces between the two sides. When the faces do not touch yet, the object of side b is moved with its assembly onto side a (faces whose normals differ by more than 15 degrees cannot be aligned: rotate an object first). Parts that are already in one assembly must already touch. The new joint gets the top recommended fixing method, is not confirmed, and its load and disassembly needs are unknown. Returns the joint id, the recommendation with reasons and the findings. Does not change the active object. Errors: UNKNOWN_OBJECT, UNKNOWN_PART, NO_CONTACT_FACE, CANNOT_ALIGN, NOT_TOUCHING, JOINT_LIMIT, OBJECT_LIMIT.',
   args: z.strictObject({ a: SideArgSchema, b: SideArgSchema }),
   side: 'server',
   scope: 'project',
@@ -41,12 +43,19 @@ export const createJoint = defineTool({
     try {
       const plan = planJoin(ws, given(a), given(b));
       if (!plan.ok) return fail('create_joint', plan.code, plan.message);
+      // Two parts of one object: one of them is pulled out in place first, so the joint connects two objects.
+      const split = plan.a.objectId === plan.b.objectId
+        ? splitForJoin(ws, plan.a, plan.b, { newObjectId: newObjectId(), createdAt: now() })
+        : null;
       // The joint is planned on the workspace after the move, as the mouse join does.
-      const moved = plan.move ? setTransform(ws, plan.move.objectId, plan.move.transform) : ws;
-      const joint = newJoint(moved, { id: newObjectId(), createdAt: now(), a: plan.a, b: plan.b }, printerOf(state));
+      const base = split ? split.ws : ws;
+      const moved = plan.move ? setTransform(base, plan.move.objectId, plan.move.transform) : base;
+      const joint = newJoint(moved, { id: newObjectId(), createdAt: now(), a: split ? split.a : plan.a, b: split ? split.b : plan.b }, printerOf(state));
+      const objectChange = split ? split.change
+        : plan.move ? { op: 'transform' as const, objectId: plan.move.objectId, transform: plan.move.transform } : null;
       const change: StateChange = {
         activeObjectId: null,
-        object: plan.move ? { op: 'transform', objectId: plan.move.objectId, transform: plan.move.transform } : null,
+        object: objectChange,
         joint: { op: 'add', joint },
         selection: null, explode: null, tryOn: null,
       };
@@ -54,7 +63,9 @@ export const createJoint = defineTool({
       if (rejected) return rejected;
       const after = addJoint(moved, joint);
       const movedText = plan.move ? `，已將「${ws.objects.find(object => object.id === plan.move!.objectId)?.model.name}」連同接合的物件移到貼合位置` : '';
-      return ok('create_joint', `已建立接合：${sideText(after, joint.a)} ↔ ${sideText(after, joint.b)}，建議方式：${methodText(joint.method)}${movedText}。尚未確認，請詢問使用者負重與拆裝需求。`,
+      const pulledName = split ? findObject(split.ws, split.change.newObjectId)?.model.name : undefined;
+      const pulledText = pulledName === undefined ? '' : PULL_OUT_TEXT[langOf(state)].joinPulled({ part: pulledName });
+      return ok('create_joint', `已建立接合：${sideText(after, joint.a)} ↔ ${sideText(after, joint.b)}，建議方式：${methodText(joint.method)}${movedText}。${pulledText}尚未確認，請詢問使用者負重與拆裝需求。`,
         jointDetail(after, joint, printerOf(state)), change);
     } catch (error) {
       if (error instanceof WorkspaceError) return fail('create_joint', error.code, error.message);

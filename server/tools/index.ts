@@ -13,6 +13,7 @@ export { removeObject } from './remove-object';
 export { createJoint } from './create-joint';
 export { updateJointTool } from './update-joint';
 export { removeJoint } from './remove-joint';
+export { pullOutPartTool } from './pull-out-part';
 export { setMaterial } from './set-material';
 export { wearOnArm } from './wear-on-arm';
 export { setCameraImage } from './set-camera-image';
