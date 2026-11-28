@@ -1,0 +1,44 @@
+# Reference table: verified values and sources (design-fidelity Task 2, step 7)
+
+Researched by the reviewer (Claude Code) on 2026-11-28 instead of the Task 2 session, to save Kiro credits (user decision, 2026-11-28). Every value below was read from the source named next to it on 2026-11-28 (so `checked: '2026-11-28'` for every entry). Values marked "spot-checked" were also re-read by the reviewer from the PDF text. Where a value differs from the candidate in requirements R26, the source wins; the differences are listed at the end.
+
+Rules for Task 2:
+- Use exactly these values, URLs and "what was read" notes. Do not fetch any page and do not add values from memory.
+- Sizes are outer envelopes in millimetres. Map them to `sizeMm` with the part conventions of `src/scene/geometry.ts` (a cylinder is round in x and z and long in y, so a Ø d × h cylinder is `{ x: d, y: h, z: d }`; a box is width x, height y, depth z). Choose the primitive per entry; report the mapping.
+- `wallMm` fields that a source does not state are `null` (requirements.md decision 11). The test "min ≤ typical ≤ max" compares only the stated values.
+
+| id | Values (mm) | sourceUrl | What was read |
+|---|---|---|---|
+| `cell-18650` | Ø 18.5 × 65.3 (maximum, bare cell) | https://www.batteryspace.com/prod-specs/NCR18650B.pdf | Panasonic NCR18650B datasheet (distributor-hosted copy), page 1, "Dimensions" drawing: "Max. 18.5 mm", "Max. 65.3 mm"; version 13.11 R1 |
+| `cell-aa` | Ø 14.5 × 50.5 (maximum) | https://www.farnell.com/datasheets/1960166.pdf | Energizer Industrial LR6 (AA) datasheet (distributor-hosted copy), page 1, "Industry Standard Dimensions": 14.50 and 50.50 (spot-checked). Energizer's own URL from R26 returns 404 |
+| `cell-cr2032` | Ø 20.0 × 3.2 (maximum) | https://energy.panasonic.com/dam/master/pdf/en/datasheet/lithium/CR2032_Datasheet_EN.pdf | Panasonic CR2032 datasheet, page 1, "Dimensions": "Diameter(Max.) 20.0mm", "Height(Max.) 3.2mm" (spot-checked); as of February 2026 |
+| `cell-lipo-402030` | 4.3 × 20.5 × 32.0 (thickness × width × length) | https://www.eemb.com/product-247 | EEMB 402030 product page, "Size: 20.5mm X 32.00mm X 4.30mm (WxLxH)"; solder tabs; whether the length includes the protection board is not stated. The type code (4.0 × 20 × 30) is nominal; vendors differ |
+| `pcb-1-6` | thickness typical 1.6; standard 0.4, 0.6, 0.8, 1.0, 1.2, 1.6, 2.0 | https://jlcpcb.com/capabilities/pcb-capabilities | JLCPCB PCB capabilities, "PCB Specifications", Thickness row: "Thickness for FR4 are: 0.4/0.6/0.8/1.0/1.2/1.6/2.0 mm". A board's width and depth depend on the design: use `wallMm` { min 0.4, typical 1.6, max 2.0 } for the thickness and `sizeMm: null` |
+| `screw-m2` | from `SCREWS.M2` | (the source already in `shared/standard-parts.ts`) | R29: built from `SCREWS`, not copied |
+| `screw-m3` | from `SCREWS.M3` | (same) | (same) |
+| `standoff-m2` | hex 4.0 across flats × length 10 (series lengths 5, 6, 8, 10, 12, 15) | https://www.we-online.com/components/products/datasheet/970100244.pdf | Würth Elektronik WA-SBRII brass spacer 970100244, page 1/3, "Article Properties": "Length L 10 mm; Inner Thread M2; Wrench SW 4"; revision 001.003. Lengths from the family page https://we-online.com/catalog/en/SBRII_BRASS_SPACER_STUD_METRIC_INTERNAL_INTERNAL ("M2, SW 4, 5 to 15 mm") |
+| `standoff-m3` | hex 5.5 across flats × length 8 | https://www.we-online.com/components/products/datasheet/970080321.pdf | Würth Elektronik WA-SSTII steel spacer 970080321, page 1/3, "Article Properties": "Length L 8 mm; Inner Thread M3; Wrench SW 5.5"; revision 001.003 (2022-06-01). The brass WA-SBRII M3 SW 5.5 line runs 5 to 45 mm |
+| `usb-c-receptacle` | body 8.94 × 7.35 × 3.31 (width × depth × height); shell opening 8.34 × 2.56 | https://gct.co/files/drawings/usb4105.pdf | GCT USB4105 drawing, sheet 1/2, revision B4: 8.94, 7.35, 3.31 (tolerance ±0.15). Opening from the USB Type-C Cable and Connector Specification Release 1.2 (third-party copy https://mikrocontroller.net/attachment/322860/USB_Type-C_Specification_Release_1.2.pdf), Figure 3-1: "8.34 (SHELL OPENING)", "2.56 (SHELL)"; name it in the source note |
+| `motor-coin-10` | Ø 10 × 2.7 | https://precisionmicrodrives.com/cdn/catalog_product/89437681-576e-46e1-97cf-5ae185adeb1c/310-103-datasheet.pdf | Precision Microdrives 310-103 datasheet, page 3, "Physical specification": "Body Diameter 10 mm [+/- 0.1]", "Body Length ... 2.7 mm [+/- 0.1]" (spot-checked); R002-V011 |
+| `switch-tact-6` | 6.0 × 6.0 × 4.3 (height includes the plunger) | https://omronfs.omron.com/en_US/ecb/products/pdf/en-b3f.pdf | Omron B3F datasheet, "Dimensions", 6 × 6 mm models, standard flat plunger (B3F-1000): 6 ±0.2, 6 ±0.2, 4.3 ±0.2; Cat. No. A070-E1-08 |
+| `led-5` | Ø 5.0 body, Ø 5.9 flange, 8.6 high (above the leads) | https://www.komponenten.es.aau.dk/fileadmin/komponenten/Data_Sheet/LCD/5mmLOWLED.pdf | Kingbright L-53L "T-1 3/4 (5mm) Low Current LED Lamps" datasheet (university-hosted copy), page 1, "Package Dimensions" drawing: ø5, ø5.9, 8.6 (read from the drawing image) |
+| `speaker-40` | Ø 40 × 9.3 | https://www.sameskydevices.com/product/resource/gf0401m.pdf | Same Sky (formerly CUI Devices) GF0401M datasheet, page 1, Specifications: "dimensions Ø40 x 9.3 mm" (spot-checked); rev 1.05, 2024-09-11 |
+| `module-wireless` | 18.0 × 25.5 × 3.1 | https://documentation.espressif.com/esp32-wroom-32e_esp32-wroom-32ue_datasheet_en.pdf | Espressif ESP32-WROOM-32E datasheet v2.1, ordering table (page 3), ESP32-WROOM-32E-N8 "18.0 x 25.5 x 3.1", and Figure 10.1 "Module Dimensions" (page 40). The R26 URL redirects here |
+| `module-camera` | 25 × 24 × 11.5 | https://pip-assets.raspberrypi.com/categories/786-raspberry-pi-camera-module-3/documents/RP-008151-DS-1-camera-module-3-product-brief.pdf | Raspberry Pi Camera Module 3 product brief RP-008151-DS-1, specification list: "Dimensions: 25 × 24 × 11.5mm (12.4mm height for Wide variants)" (spot-checked). The R26 URL redirects here |
+| `thumbstick` | 17.8 × 21.3 × 11.2 (width × depth × body height to the top frame; the lever above it is not included) | https://www.alpsalpine.com/cms.media/product_catalog_mu_01_rkjxv_en_05974b8a16.pdf | ALPS ALPINE RKJXV catalogue (update 2510), Product List, RKJXV1220001: "17.8×21.3×11.2"; banner "body height of 11.2mm" (spot-checked). Lever height not verified |
+| `bearing-608` | Ø 22 outer × Ø 8 bore × 7 wide | https://www.nbcbearings.com/ball-bearings/deep-groove-ball-bearings/id-608/ | NBC Bearings 608 product page, "Technical Specification": "d 8 mm", "D 22 mm", "B 7 mm". SKF's pages render only with JavaScript and were not read |
+| `motor-bldc-22` | Ø 28.6 × 32.8 overall; mounting pattern 19 × 19 | https://www.readymaderc.com/products/details/87015-emax-e3-series-2207-brushless-motor-1900kv | EMAX E3 2207 1900KV specifications on a retailer page: "Overall Motor Dimensions: Φ28.6 mm x 32.8 mm", "Mounting Bolt Pattern: 19 mm x 19 mm". The 16 × 16 pattern and the M3 hole size are not verified: do not state them |
+| `wall-moulded-plastic` | ABS recommended 1.143 to 3.556 (min 1.143, max 3.556, typical not stated) | https://www.protolabs.com/services/injection-molding/plastic-injection-molding/design-guidelines/ | Protolabs injection-moulding design guidelines, "Recommended wall thickness" table, ABS row: "1.143mm - 3.556mm" |
+| `wall-fdm` | recommended 1.2 to 1.5 for supporting walls (min 1.2, max 1.5, typical not stated) | https://www.xometry.com/resources/3d-printing/mini-guide-fdm-3d-printing/ | Xometry "FDM Mini-Guide" (updated 2025-09-04), "Design Tip 1: Wall Thickness": "at least 0.047" – 0.06" (1.2 – 1.5 mm) thick". The candidate "typical 2.0 mm, 3 perimeters" is not verified |
+| `wall-aluminium` | minimum 1.5 (typical and max not stated) | https://static.rapidonline.com/pdf/31-1879t_v1.pdf | Hammond 1455F series datasheet (distributor-hosted copy), page 1: "extruded aluminum with a minimum thickness of 0.06"" (1.5 mm). hammfg.com returned 403 |
+
+## Differences from the R26 candidates
+- `motor-coin-10`: height 2.7, not 3.4.
+- `led-5`: flange Ø 5.9, not 5.8.
+- `speaker-40`: height 9.3, not 5–6 (this 40 mm driver is deeper).
+- `usb-c-receptacle`: body height 3.31, not 3.2.
+- `cell-lipo-402030`: 4.3 × 20.5 × 32.0 from EEMB, not the nominal 4.0 × 20 × 30.
+- `standoff-m2`: lengths 5–15 in the Würth series, not 5–20; `standoff-m3`: the 5.5 mm hex line runs to 45 mm.
+- `motor-bldc-22`: Ø 28.6 × 32.8 overall from one 2207 motor; the bell diameter and the 16 × 16 pattern are not verified.
+- `wall-fdm`: 1.2–1.5 recommended, not 2.0; `wall-aluminium`: only the 1.5 minimum is verified; `wall-moulded-plastic`: no typical value is stated.
+- Source hosts: `cell-aa`, `cell-18650`, `led-5`, `wall-aluminium` and the USB-C opening come from copies of the manufacturer's document hosted by a distributor, university or forum; `motor-bldc-22` comes from a retailer page. The manufacturer's own URL was dead, blocked or not found for these.
