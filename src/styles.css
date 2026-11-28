@@ -1468,3 +1468,196 @@ summary {
 .fidelity-mode .small-muted {
   margin:0
 }
+/* Body fit (spec body-fit, Task 3): the fit panel, the card guide layer and the draggable edge handles. */
+.fit-panel h2 {
+  font-size:19px;
+  margin:4px 0 12px
+}
+.fit-panel h3 {
+  font-size:13px;
+  letter-spacing:.5px;
+  color:#a0c5d3;
+  margin:0 0 8px
+}
+.fit-facts {
+  display:grid;
+  gap:4px;
+  margin:0 0 12px;
+  font-size:12px
+}
+.fit-facts div {
+  display:flex;
+  gap:10px
+}
+.fit-facts dt {
+  color:var(--muted);
+  min-width:48px
+}
+.fit-facts dd {
+  margin:0
+}
+.fit-section {
+  border-top:1px solid var(--border);
+  padding:12px 0;
+  font-size:12px;
+  line-height:1.7
+}
+.fit-section p {
+  margin:0 0 6px
+}
+.fit-steps {
+  list-style:none;
+  margin:0;
+  padding:0;
+  display:grid;
+  gap:8px
+}
+.fit-steps li {
+  border:1px solid var(--border);
+  padding:8px 10px
+}
+.fit-steps li.running {
+  border-color:var(--cyan)
+}
+.fit-steps li[data-done="true"] .fit-step-head strong:after {
+  content:' \2713';
+  color:#009e73
+}
+.fit-step-head {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px
+}
+.fit-step-body progress {
+  width:100%;
+  height:6px
+}
+.fit-reason {
+  color:#ffe2a0
+}
+.fit-note {
+  font-size:12px;
+  color:#8fb3c0
+}
+.fit-note.warning {
+  color:#ebc8a3
+}
+.fit-result {
+  margin-top:8px;
+  padding:8px 10px;
+  background:#102632;
+  border:1px solid #2b4652
+}
+.fit-field {
+  display:grid;
+  gap:4px;
+  margin:6px 0
+}
+.fit-field label,
+label.fit-field {
+  display:grid;
+  gap:4px
+}
+.fit-field input {
+  background:#08161f;
+  border:1px solid #2b4652;
+  color:#deebf1;
+  padding:7px 8px;
+  font-size:13px
+}
+.fit-field.invalid input {
+  border-color:#ebc8a3
+}
+.fit-unit {
+  display:flex;
+  gap:8px;
+  align-items:center;
+  margin-bottom:6px
+}
+.fit-unit select {
+  background:#08161f;
+  border:1px solid #2b4652;
+  color:#deebf1;
+  padding:4px 6px
+}
+.fit-choices {
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-bottom:6px
+}
+.fit-choices small {
+  color:#8fb3c0
+}
+.fit-layer {
+  position:absolute;
+  inset:0;
+  z-index:2;
+  pointer-events:none
+}
+.fit-layer button,
+.fit-layer .fit-handle {
+  pointer-events:auto
+}
+.fit-guide-svg {
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%
+}
+.fit-guide-card {
+  fill:#71dce81a;
+  stroke:#71dce8;
+  stroke-width:2;
+  stroke-dasharray:8 5
+}
+.fit-guide-card[data-inside="true"] {
+  stroke:#ffc53d
+}
+.fit-guide-card[data-still="1.00"] {
+  stroke:#009e73;
+  stroke-dasharray:none
+}
+.fit-banner {
+  position:absolute;
+  left:12px;
+  right:12px;
+  bottom:12px;
+  padding:10px 12px;
+  background:#071118e6;
+  border:1px solid #2d4a58;
+  font-size:12px;
+  line-height:1.7;
+  pointer-events:auto
+}
+.fit-banner p {
+  margin:0 0 6px
+}
+.fit-frozen {
+  position:absolute;
+  inset:0;
+  pointer-events:auto;
+  background:#000
+}
+.fit-frozen-canvas {
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%
+}
+.fit-handle {
+  position:absolute;
+  width:22px;
+  height:22px;
+  margin:-11px 0 0 -11px;
+  border:2px solid #ffc53d;
+  background:#071118cc;
+  border-radius:50%;
+  cursor:grab;
+  touch-action:none
+}
+.fit-handle:focus-visible {
+  outline:2px solid #fff;
+  outline-offset:2px
+}

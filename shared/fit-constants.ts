@@ -70,6 +70,8 @@ export const TAPE_SIZE_MIN_MM = 30;
 export const TAPE_SIZE_MAX_MM = 120;
 /** The robust median drops values further than this many median absolute deviations from the median (R23). */
 export const OUTLIER_MADS = 3;
+/** With a median absolute deviation of 0 the robust median keeps values this close to the median (same unit as the values; millimetres for widths, about one mask pixel). */
+export const MAD_ZERO_TOLERANCE = 0.5;
 /** Turns a median absolute deviation into a standard-deviation estimate for normal data (R73). */
 export const MAD_TO_SIGMA = 1.4826;
 /** Class colours, the Okabe-Ito palette (R51). */
@@ -123,3 +125,23 @@ export const MASK_EDGE_LEVEL = 0.5;
 export const LUMA_SIZE = 16;
 /** Step of the width line across the mask, in mask pixels (design 5.2). */
 export const WIDTH_SAMPLE_STEP_PX = 0.25;
+// ---------------------------------------------------------------------------
+// Task 3: card calibration (design 6.3)
+/** An ID-1 card (ISO/IEC 7810): 85.60 x 53.98 mm (R7). */
+export const CARD_LONG_MM = 85.6;
+export const CARD_SHORT_MM = 53.98;
+/** The hand must be still this long, with the card inside the guide, before the frame freezes (R12). */
+export const CARD_STILL_MS = 1000;
+/** A correction factor outside this range is rejected (R16). */
+export const CARD_K_MIN = 0.75;
+export const CARD_K_MAX = 1.33;
+/** The measured aspect ratio may differ from the card's by this fraction (R16). */
+export const CARD_ASPECT_TOLERANCE = 0.06;
+/** An edge whose gradient peak is below this many times the median gradient falls back to the guide line (design 6.3). */
+export const CARD_EDGE_CONFIDENCE = 2.5;
+/** Each edge is searched within this fraction of the card's side around the guide line (design 6.3). */
+export const CARD_SEARCH_FRACTION = 0.25;
+/** Horizontal field of view assumed for a laptop webcam, for the depth correction (design 6.3). Assumption. */
+export const ASSUMED_HFOV_DEG = 65;
+/** Wrist thickness assumed by the depth correction before a thickness measurement (design 6.3). Assumption. */
+export const CARD_DEFAULT_THICKNESS_MM = 40;

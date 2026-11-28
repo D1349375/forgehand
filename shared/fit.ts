@@ -6,7 +6,7 @@ import {
 } from './ellipse';
 import {
   CLASS_CHARS, DEFAULT_TAPER, DEFAULT_THICKNESS_RATIO, DEFAULT_WRIST_THICKNESS_MM, DEFAULT_WRIST_WIDTH_MM, FIT_ANGLES,
-  LOOSE_MARGIN_MM, MAD_TO_SIGMA, OPEN_GAP_DEG, OUTLIER_MADS, PASSAGE_SHAPE,
+  LOOSE_MARGIN_MM, MAD_TO_SIGMA, MAD_ZERO_TOLERANCE, OPEN_GAP_DEG, OUTLIER_MADS, PASSAGE_SHAPE,
 } from './fit-constants';
 import {
   axisBlocked, innerProfile, profilePartsOf, ringFrame, type InnerProfile, type PartsInput, type RingSetup,
@@ -44,13 +44,17 @@ export interface RobustMedian { value: number; spread: number; kept: number; dro
 /**
  * The median of the values after dropping those further than `OUTLIER_MADS` median
  * absolute deviations from the median (R23), with the spread of the values that stay.
+ * When the deviation is 0 (more than half of the values are equal) the limit would be 0 and
+ * only the equal values would stay, so values within `MAD_ZERO_TOLERANCE` of the median
+ * stay instead (requirements, review of Task 2, item 15c).
  * `null` for an empty list.
  */
 export function robustMedian(values: readonly number[]): RobustMedian | null {
   if (!values.length) return null;
   const centre = median(values);
   const mad = median(values.map(value => Math.abs(value - centre)));
-  const kept = values.filter(value => Math.abs(value - centre) <= OUTLIER_MADS * mad);
+  const limit = mad === 0 ? MAD_ZERO_TOLERANCE : OUTLIER_MADS * mad;
+  const kept = values.filter(value => Math.abs(value - centre) <= limit);
   return { value: median(kept), spread: spread(kept), kept: kept.length, dropped: values.length - kept.length };
 }
 

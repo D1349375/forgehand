@@ -19,7 +19,7 @@ Rules for every item, whichever way it is started:
   - Full instructions: the "Task 1" section below.
 - [x] 2. Worker segmenter and measurement core
   - Full instructions: the "Task 2" section below.
-- [ ] 3. Scale sources, card calibration and the measuring panel
+- [x] 3. Scale sources, card calibration and the measuring panel
   - Full instructions: the "Task 3" section below.
 - [ ] 4. Wearing any object, adjusting by hand, stability and the fit map
   - Full instructions: the "Task 4" section below.
@@ -131,7 +131,7 @@ The tracking worker gains the multiclass selfie segmenter on a rotated wrist cro
 
 ## Task 3 — Scale sources, card calibration and the measuring panel
 
-`[ ]` · P0 · R7, R8, R10–R17, R21, R24–R28, R73, R76–R81
+`[x]` · P0 · R7, R8, R10–R17, R21, R24–R28, R73, R76–R81
 
 The fit panel with its scale source, the guided wrist measurement (width, thickness, passage), the card calibration with the guide frame and the frozen frame, and the tape input with the error line. Body fit can be opened and measured; the object is not worn yet (T4).
 

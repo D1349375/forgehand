@@ -535,6 +535,18 @@ describe('robust median and spread (R23, R73)', () => {
     expect(spread([3])).toBe(0);
   });
 
+  it('keeps near values when 4 of 7 are identical (the deviation is 0), and still drops a far outlier', () => {
+    const result = robustMedian([30, 30, 30, 30, 30.2, 29.9, 45])!;
+    expect(result.value).toBe(30);
+    expect(result.kept).toBe(6);
+    expect(result.dropped).toBe(1);
+    // The step of the measurement needs at least MEASURE_MIN_KEPT (5) frames: seven frames with 4 equal ones pass now.
+    expect(robustMedian([42.5, 42.5, 42.5, 42.5, 42.9, 42.1, 42.6])!.kept).toBe(7);
+    // All seven equal, and values just outside the tolerance (0.5) next to four equal ones.
+    expect(robustMedian([20, 20, 20, 20, 20, 20, 20])).toEqual({ value: 20, spread: 0, kept: 7, dropped: 0 });
+    expect(robustMedian([20, 20, 20, 20, 21, 19, 20.4])).toMatchObject({ value: 20, kept: 5, dropped: 2 });
+  });
+
   it('is the median and a non-negative spread, stays within the data, and ignores one far outlier', () => {
     checkProperty('robust median lies in the data range and ignores a far outlier', fc.property(
       fc.array(fc.double({ min: 20, max: 80, noNaN: true }), { minLength: 5, maxLength: 20 }), (values) => {

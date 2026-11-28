@@ -28,6 +28,10 @@ import { JOINT_NOTICES } from './joints/labels';
 import { mouseJoinStep, previewPoses, type MouseJoinEvent, type MouseJoinState } from './joints/mouse-join';
 import { loadPrinterProfile, savePrinterProfile } from './joints/printer-store';
 import { useArmTracking, type ArmTrackingStatus } from './try-on/useArmTracking';
+import { CardGuide } from './fit/CardGuide';
+import { FitPanel, type FitPanelState } from './fit/FitPanel';
+import { createFitStore } from './fit/store';
+import { useBodyFit } from './fit/useBodyFit';
 import { HandOverlay, type HandOverlayHandle } from './hands/HandOverlay';
 import { handGate, initialSpeedState, parseLossMs, parseMinFps, speedStep, type SpeedState } from './hands/gate';
 import { HandDebugPanel, handDebugRequested } from './hands/HandDebugPanel';
@@ -152,14 +156,23 @@ export default function App() {
   /** Speed threshold: MIN_CONTROL_FPS, or ?hands-min-fps=<number> for slow machines. Read once at load. */
   const [minFps] = useState(() => parseMinFps(window.location.search));
   const [lossMs] = useState(() => parseLossMs(window.location.search));
+  /** Body fit (spec body-fit): the session store of measurements and the crop request the tracking worker reads on every frame. Session state, never part of the workspace. */
+  const fitStore = useMemo(createFitStore, []);
   const tracking = useHandTracking(videoRef, {
     running: camera === 'on', needed: handsOn || tryOnActive, wantPose: tryOnActive, mirrored,
+    segment: fitStore.segment, onSegmenter: state => fitStore.setSegmenter(state),
     onRate: (fps, now) => {
       speed.current = speedStep(speed.current, fps, now, minFps);
       setSlow(speed.current.slow);
     },
   });
   const armTracking = useArmTracking(tracking.source, tracking.status, tryOnActive);
+  const bodyFit = useBodyFit({ store: fitStore, source: tracking.source, enabled: tryOnActive, videoRef, mirrored });
+  useEffect(() => { if (!tryingOn) fitStore.reset(); }, [tryingOn, fitStore]);
+  useEffect(() => { if (camera !== 'on') fitStore.setSegmenter('idle'); }, [camera, fitStore]);
+  const fitState: FitPanelState = !tryingOn ? 'off' : camera !== 'on' ? 'loading'
+    : armTracking.status === 'tracking' ? 'worn' : armTracking.status === 'load-error' || armTracking.status === 'track-error' ? 'error'
+    : armTracking.status === 'searching' ? 'searching' : 'loading';
   const overlayRef = useRef<HandOverlayHandle>(null);
   const handControlOn = camera === 'on' && handsOn;
   const sceneRef = useRef<SceneHandle>(null);
@@ -827,6 +840,7 @@ export default function App() {
             if (timed && timed.objectId === item.id) { setTiming(performance.now() - timed.startedAt); timingRef.current = null; }
             if (first) setMessage(item.source === 'demo' ? '示範模型已就緒。可拖曳旋轉、滾輪縮放，點擊零件即可選取。' : '3D 草案已建立。請旋轉檢查主要結構與分件，點擊零件即可選取。');
           }} />
+          {tryOnActive && <CardGuide bodyFit={bodyFit} />}
           {handControlOn && <HandOverlay ref={overlayRef} />}
           <div className="stage-label"><span className="tiny-cross">＋</span>{tryingOn ? '護臂試戴' : '虛擬展示位置'}<span>{tryingOn ? '' : 'CONCEPT / 01'}</span></div>
           {!active && !tryingOn && <div className="empty-scene"><div className="reticle"><span /><i /></div><h2>讓第一個想法成形</h2><p>描述物件的外形、顏色與組成，<br />在這裡旋轉檢視立體概念。</p><button className="button ghost" onClick={loadDemo} disabled={agentActive || atLimit}>載入示範模型</button></div>}
@@ -861,6 +875,7 @@ export default function App() {
         {exportRequest && <Suspense fallback={<p className="notice" role="status">正在載入匯出功能…</p>}>
           <ExportDialog workspace={workspace} printer={printer} request={exportRequest} viewDirection={() => sceneRef.current?.viewDirection() ?? null} onClose={() => setExportRequest(null)} />
         </Suspense>}
+        {tryingOn && <FitPanel store={fitStore} bodyFit={bodyFit} state={fitState} objectName={active?.model.name ?? null} onClose={toggleTryOn} />}
         <AgentPanel agent={agent} disabled={Boolean(busy)} />
         <section className="panel prompt-panel">
           <DetailModeSwitch value={detailMode} onChange={changeDetailMode} disabled={agentActive} />

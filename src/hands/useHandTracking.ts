@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import type { ArmWorkerFrame, ArmWorkerResult, LandmarkFrame, SegmentCrop, SegmentMask, TrackingDelegate } from '../try-on/arm-pose';
+import type { ArmWorkerFrame, ArmWorkerResult, LandmarkFrame, SegmentCrop, SegmenterState, SegmentMask, TrackingDelegate } from '../try-on/arm-pose';
 import { frameClockStep, RateWindow, trackingPlan, VIDEO_FRAME_STALL_MS, type FrameClock } from './tracking-plan';
 
 export type TrackerStatus = 'off' | 'loading' | 'ready' | 'load-error' | 'track-error';
@@ -78,6 +78,8 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
   onRate?: (fps: number, now: number) => void;
   /** Body fit: a ref read on every captured frame. A crop in it asks the worker to segment that crop of the frame; null or absent asks for nothing. */
   segment?: RefObject<SegmentCrop | null>;
+  /** Body fit: called when the worker reports that its segmenter is loading, ready or could not load. Never called without a `segment` request. */
+  onSegmenter?: (state: SegmenterState) => void;
 }): { source: HandSource; status: TrackerStatus } {
   const { running, needed, wantPose, mirrored } = options;
   const store = useMemo(createSourceStore, []);
@@ -92,11 +94,13 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
   const mirror = useRef(mirrored);
   const onRate = useRef(options.onRate);
   const segment = useRef(options.segment);
+  const onSegmenter = useRef(options.onSegmenter);
   sendFrames.current = plan.sendFrames;
   pose.current = wantPose;
   mirror.current = mirrored;
   onRate.current = options.onRate;
   segment.current = options.segment;
+  onSegmenter.current = options.onSegmenter;
 
   useEffect(() => {
     const video = videoRef.current;
@@ -215,7 +219,7 @@ export function useHandTracking(videoRef: RefObject<HTMLVideoElement | null>, op
       const message = event.data;
       if (message.type === 'error') { fail(message.stage === 'load' ? 'load-error' : 'track-error'); return; }
       // Not an answer to a frame: the pending frame stays pending.
-      if (message.type === 'segmenter') return;
+      if (message.type === 'segmenter') { onSegmenter.current?.(message.state); return; }
       if (message.type === 'ready') {
         clearTimeout(loadTimeout);
         store.setDelegate(message.delegate);
